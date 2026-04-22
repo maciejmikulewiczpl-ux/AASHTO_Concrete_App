@@ -124,7 +124,7 @@ if exist "requirements.txt" (
 echo.
 echo ============================================
 echo  Done! App is up to date.
-echo  Run app.py to start the application.
+echo  Double-click run.bat to start the application.
 echo ============================================
 echo.
 pause
