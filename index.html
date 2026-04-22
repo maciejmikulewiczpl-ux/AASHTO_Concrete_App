@@ -4859,15 +4859,8 @@ function setupExcelTable(tbodyId, cellClasses, opts){
     const inp = e.target.closest(selector); if(!inp) return;
     const cell = cellOf(inp); if(!cell) return;
     // Only collapse the selection to this cell if there is no active multi-cell range
-    if(!hasMultiCellSelection() || (state.anchor && state.anchor.r===state.focus.r && state.anchor.c===state.focus.c)){
+    if(!hasMultiCellSelection()){
       state.anchor = cell; state.focus = cell; applySelectionStyles();
-    }
-  });
-  // Clicking outside the table clears selection styling
-  document.addEventListener('mousedown',(e)=>{
-    if(!e.target.closest('#'+tbodyId)){
-      // keep selection state but remove styles to reduce visual noise
-      // (Excel also keeps the selection when focus moves to formula bar; we just hide highlight)
     }
   });
 
@@ -5004,6 +4997,8 @@ function setupExcelTable(tbodyId, cellClasses, opts){
     const ta=document.createElement('textarea');
     ta.style.position='fixed'; ta.style.left='-9999px';
     document.body.appendChild(ta); ta.focus();
+    // Give the browser a moment to deliver the OS paste into the textarea
+    // before we read its value (no native promise for execCommand('paste')).
     setTimeout(()=>{ const v=ta.value; document.body.removeChild(ta); cb(v); }, 50);
   }
 
