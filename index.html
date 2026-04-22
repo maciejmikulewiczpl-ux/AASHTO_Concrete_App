@@ -131,7 +131,6 @@ canvas { width: 100% !important; height: 100% !important; }
 .demand-table td.xl-selected input[type=number] { background:transparent; }
 .demand-table td.xl-anchor { outline:2px solid #1a5276; outline-offset:-2px; }
 .demand-table.xl-dragging { user-select:none; -webkit-user-select:none; cursor:cell; }
-.demand-table.xl-dragging input[type=number] { pointer-events:none; }
 .demand-btn-bar { display:flex; gap:8px; margin-top:10px; }
 .demand-btn { padding:5px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); cursor:pointer; font-size:0.8rem; color:var(--text); transition:all 0.15s; }
 .demand-btn:hover { background:var(--primary); color:white; border-color:var(--primary); }
@@ -1950,9 +1949,9 @@ function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
     }
     runAllCalculations();
   });
-  // wire auto-recalculation on demand row changes
+  // wire auto-recalculation on demand row changes (debounced for perf)
   tr.querySelectorAll('input').forEach(inp=>{
-    inp.addEventListener('change',()=>runAllCalculations());
+    inp.addEventListener('change',()=>debouncedCalculate());
   });
   if(demandRowCount===1) selectDemandRow(1);
 }
@@ -4746,10 +4745,10 @@ window.addEventListener('load',()=>{
   // Column order must match the order of editable inputs in addDemandRow().
   setupExcelTable('demandBody',
     ['dr-x','dr-dp','dr-fpe','dr-Vp','dr-Pu','dr-Mu','dr-Vu','dr-Tu','dr-Ps','dr-Ms'],
-    { ensureRows: ()=>addDemandRow(), onChange: ()=>runAllCalculations() }
+    { ensureRows: ()=>addDemandRow(), onChange: ()=>debouncedCalculate() }
   );
 });
-window.addEventListener('resize',()=>runAllCalculations());
+window.addEventListener('resize',()=>debouncedCalculate());
 window.addEventListener('beforeunload',(e)=>{
   if(_projectDirty){e.preventDefault();e.returnValue='';}
 });
@@ -4794,19 +4793,35 @@ function setupExcelTable(tbodyId, cellClasses, opts){
       td.classList.remove('xl-selected'); td.classList.remove('xl-anchor');
     });
   }
+  // rAF-throttled selection re-paint to keep drag smooth on big tables
+  let _styleRaf = 0;
   function applySelectionStyles(){
-    clearSelectionStyles();
-    if(!state.anchor || !state.focus) return;
-    const r0=Math.min(state.anchor.r,state.focus.r), r1=Math.max(state.anchor.r,state.focus.r);
-    const c0=Math.min(state.anchor.c,state.focus.c), c1=Math.max(state.anchor.c,state.focus.c);
-    for(let r=r0;r<=r1;r++){
-      for(let c=c0;c<=c1;c++){
-        const inp = inputAt(r,c); if(!inp) continue;
-        const td = inp.closest('td'); if(td) td.classList.add('xl-selected');
+    if(_styleRaf) return;
+    _styleRaf = requestAnimationFrame(()=>{
+      _styleRaf = 0;
+      clearSelectionStyles();
+      if(!state.anchor || !state.focus) return;
+      const r0=Math.min(state.anchor.r,state.focus.r), r1=Math.max(state.anchor.r,state.focus.r);
+      const c0=Math.min(state.anchor.c,state.focus.c), c1=Math.max(state.anchor.c,state.focus.c);
+      for(let r=r0;r<=r1;r++){
+        for(let c=c0;c<=c1;c++){
+          const inp = inputAt(r,c); if(!inp) continue;
+          const td = inp.closest('td'); if(td) td.classList.add('xl-selected');
+        }
       }
+      const anchorInp = inputAt(state.anchor.r, state.anchor.c);
+      if(anchorInp){ const td = anchorInp.closest('td'); if(td) td.classList.add('xl-anchor'); }
+    });
+  }
+  function focusAnchor(){
+    if(!state.anchor) return;
+    const inp = inputAt(state.anchor.r, state.anchor.c);
+    if(inp && document.activeElement !== inp){
+      // Preserve scroll position so the table doesn't jump when we refocus
+      const x = window.scrollX, y = window.scrollY;
+      try{ inp.focus({preventScroll:true}); }catch(_){ inp.focus(); }
+      if(window.scrollX!==x || window.scrollY!==y) window.scrollTo(x,y);
     }
-    const anchorInp = inputAt(state.anchor.r, state.anchor.c);
-    if(anchorInp){ const td = anchorInp.closest('td'); if(td) td.classList.add('xl-anchor'); }
   }
   function selectionRect(){
     if(!state.anchor || !state.focus) return null;
@@ -4821,28 +4836,26 @@ function setupExcelTable(tbodyId, cellClasses, opts){
   }
 
   // --- mouse: drag to select ---
+  // We intentionally do NOT blur the input during drag — keeping it focused is
+  // what allows the OS to deliver Ctrl+C / Ctrl+V as native `copy` / `paste`
+  // events on the input (and bubble to our listeners below).
   tbody.addEventListener('mousedown',(e)=>{
     const inp = e.target.closest(selector);
     if(!inp) return;
     const cell = cellOf(inp); if(!cell) return;
     state.anchor = cell; state.focus = cell; state.dragging = true;
     applySelectionStyles();
-    // Note: we intentionally do NOT preventDefault here so a single click
-    // still focuses the input for normal typing. The dragging class is added
-    // only once the user enters a different cell (see mouseenter below).
   });
   tbody.addEventListener('mouseover',(e)=>{
     if(!state.dragging) return;
     const inp = e.target.closest(selector);
     if(!inp) return;
     const cell = cellOf(inp); if(!cell) return;
-    if(cell.r===state.focus.r && cell.c===state.focus.c) return;
+    if(state.focus && cell.r===state.focus.r && cell.c===state.focus.c) return;
     state.focus = cell;
     if(cell.r!==state.anchor.r || cell.c!==state.anchor.c){
-      // Multi-cell drag: stop the input from absorbing further mouse events
-      // and clear any text selection inside it.
+      // Multi-cell drag: prevent native text selection inside any input
       table.classList.add('xl-dragging');
-      if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
       const sel = window.getSelection && window.getSelection();
       if(sel && sel.removeAllRanges) sel.removeAllRanges();
     }
@@ -4852,6 +4865,9 @@ function setupExcelTable(tbodyId, cellClasses, opts){
     if(!state.dragging) return;
     state.dragging = false;
     table.classList.remove('xl-dragging');
+    // Make sure the anchor input has keyboard focus so the next Ctrl+C / Ctrl+V
+    // is delivered to it as a native clipboard event we can intercept.
+    focusAnchor();
   });
 
   // Track focus inside cells so Ctrl+C/V works even without a drag selection
@@ -4923,105 +4939,49 @@ function setupExcelTable(tbodyId, cellClasses, opts){
 
   function recalc(){ if(typeof opts.onChange === 'function') opts.onChange(); }
 
-  // --- keyboard: Ctrl+C / Ctrl+V / Delete ---
+  // --- keyboard: Delete / Backspace clears multi-cell selection ---
+  // Ctrl+C and Ctrl+V are intentionally NOT handled here. Instead we let the
+  // browser deliver the OS clipboard via native `copy` / `paste` events on
+  // the focused input — see the `tbody` listeners below. That path works
+  // reliably inside pywebview / WebView2, where `navigator.clipboard.readText`
+  // is usually rejected without user permission.
   document.addEventListener('keydown',(e)=>{
-    // Only act when the user is interacting with the demand table
     const inFocus = document.activeElement && document.activeElement.closest && document.activeElement.closest('#'+tbodyId);
     const haveSel = !!selectionRect();
     if(!inFocus && !haveSel) return;
-    const ctrl = e.ctrlKey || e.metaKey;
-
-    // Copy
-    if(ctrl && (e.key==='c' || e.key==='C')){
-      const rect = selectionRect(); if(!rect) return;
-      // If the user is editing inside a single cell and has selected text inside it, leave native copy alone
-      const ae = document.activeElement;
-      if(!hasMultiCellSelection() && ae && ae.tagName==='INPUT' && typeof ae.selectionStart==='number'
-          && ae.selectionStart !== ae.selectionEnd){
-        return;
-      }
-      const tsv = buildTSV(rect);
-      e.preventDefault();
-      if(navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(tsv).catch(()=>fallbackCopy(tsv));
-      } else {
-        fallbackCopy(tsv);
-      }
-      return;
-    }
-
-    // Paste
-    if(ctrl && (e.key==='v' || e.key==='V')){
-      const rect = selectionRect();
-      const ae = document.activeElement;
-      // If the user is editing a single cell with text-selection inside, allow native paste
-      if(!hasMultiCellSelection() && ae && ae.tagName==='INPUT' && typeof ae.selectionStart==='number'
-          && ae.selectionStart !== ae.selectionEnd){
-        return;
-      }
-      e.preventDefault();
-      const origin = rect ? {r:rect.r0, c:rect.c0} : (ae && cellOf(ae));
-      if(!origin) return;
-      const doPaste = (text)=>{
-        const grid = parseTSV(text);
-        writeCells(origin.r, origin.c, grid);
-        recalc();
-      };
-      if(navigator.clipboard && navigator.clipboard.readText){
-        navigator.clipboard.readText().then(doPaste).catch(()=>fallbackPaste(doPaste));
-      } else {
-        fallbackPaste(doPaste);
-      }
-      return;
-    }
-
-    // Delete / Backspace clears multi-cell selection
     if((e.key==='Delete' || e.key==='Backspace') && hasMultiCellSelection()){
       e.preventDefault();
       clearSelection();
       applySelectionStyles();
       recalc();
-      return;
     }
   });
 
-  // Clipboard fallbacks for environments without async Clipboard API
-  function fallbackCopy(text){
-    const ta=document.createElement('textarea');
-    ta.style.position='fixed'; ta.style.left='-9999px'; ta.value=text;
-    document.body.appendChild(ta); ta.select();
-    try{ document.execCommand('copy'); } catch(_){}
-    document.body.removeChild(ta);
-  }
-  function fallbackPaste(cb){
-    const ta=document.createElement('textarea');
-    ta.style.position='fixed'; ta.style.left='-9999px';
-    document.body.appendChild(ta); ta.focus();
-    // Give the browser a moment to deliver the OS paste into the textarea
-    // before we read its value (no native promise for execCommand('paste')).
-    setTimeout(()=>{ const v=ta.value; document.body.removeChild(ta); cb(v); }, 50);
-  }
-
-  // Native paste event (works when an input is focused — most common case)
+  // Native paste — fires on the focused input when the user hits Ctrl+V.
+  // `clipboardData` is populated synchronously by the browser, so this works
+  // in pywebview / WebView2 without any clipboard permission prompt.
   tbody.addEventListener('paste',(e)=>{
     const inp = e.target.closest(selector); if(!inp) return;
-    const rect = selectionRect();
-    const origin = rect ? {r:rect.r0, c:rect.c0} : cellOf(inp);
-    if(!origin) return;
     const cd = e.clipboardData || window.clipboardData;
     if(!cd) return;
     const text = cd.getData('text/plain') || cd.getData('Text') || '';
-    // If single-line, single-column paste into a focused input, let native handle it
+    // Single value (no tab, no newline) into a single-cell selection: let
+    // the native input do its thing so the user can still paste e.g. "1.5e3".
     if(!hasMultiCellSelection() && text.indexOf('\t')<0 && text.indexOf('\n')<0) return;
     e.preventDefault();
+    const rect = selectionRect();
+    const origin = rect ? {r:rect.r0, c:rect.c0} : cellOf(inp);
+    if(!origin) return;
     const grid = parseTSV(text);
     writeCells(origin.r, origin.c, grid);
     recalc();
   });
 
-  // Native copy event — provide the TSV when copying from inside the table
+  // Native copy — fires on the focused input when the user hits Ctrl+C.
   tbody.addEventListener('copy',(e)=>{
     const rect = selectionRect(); if(!rect) return;
+    // If there's an active text-selection inside the focused single-cell
+    // input, leave native copy alone so the user can copy substrings.
     if(!hasMultiCellSelection()){
       const ae = document.activeElement;
       if(ae && ae.tagName==='INPUT' && typeof ae.selectionStart==='number'
