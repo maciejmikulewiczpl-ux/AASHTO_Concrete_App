@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 
 set REPO_URL=https://github.com/LukaszTetiorka/Maciej_Cocnrete_App.git
 
@@ -21,12 +21,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: If .git folder exists -> pull, otherwise clone into current folder
+:: ── Clone or fetch ───────────────────────────────────────────────────────────
 if exist ".git" (
-    echo [INFO] Repository found. Pulling latest changes...
-    git pull
+    echo [INFO] Repository found. Fetching all branches...
+    git fetch --all --prune
     if errorlevel 1 (
-        echo [ERROR] git pull failed.
+        echo [ERROR] git fetch failed.
         pause
         exit /b 1
     )
@@ -38,12 +38,73 @@ if exist ".git" (
         pause
         exit /b 1
     )
+    goto :install_python
 )
 
+:: ── Switch to main ────────────────────────────────────────────────────────────
+git checkout main
+if errorlevel 1 (
+    echo [ERROR] Could not switch to branch main.
+    pause
+    exit /b 1
+)
+
+:: Pull latest main first
+git pull origin main
+if errorlevel 1 (
+    echo [ERROR] git pull main failed.
+    pause
+    exit /b 1
+)
+
+:: ── Merge all remote branches into main ──────────────────────────────────────
+echo.
+echo [INFO] Merging all remote branches into main...
+
+set MERGE_ERRORS=0
+
+for /f "tokens=*" %%b in ('git branch -r --format "%%(refname:short)"') do (
+    set BRANCH=%%b
+
+    :: Skip origin/main and origin/HEAD
+    if /i "!BRANCH!" neq "origin/main" (
+        echo !BRANCH! | findstr /i "HEAD" >nul
+        if errorlevel 1 (
+            set LOCAL=!BRANCH:origin/=!
+            echo.
+            echo [INFO] Merging !BRANCH! into main...
+            git merge !BRANCH! --no-edit --no-ff -m "Merge !LOCAL! into main [auto]"
+            if errorlevel 1 (
+                echo [WARN] Merge conflict on !BRANCH! — aborting this merge and skipping.
+                git merge --abort >nul 2>&1
+                set /a MERGE_ERRORS+=1
+            ) else (
+                echo [OK]   !BRANCH! merged successfully.
+            )
+        )
+    )
+)
+
+:: ── Push merged main to GitHub ────────────────────────────────────────────────
+echo.
+echo [INFO] Pushing updated main to GitHub...
+git push origin main
+if errorlevel 1 (
+    echo [ERROR] git push failed.
+    pause
+    exit /b 1
+)
+
+if !MERGE_ERRORS! gtr 0 (
+    echo.
+    echo [WARN] !MERGE_ERRORS! branch(es) had conflicts and were skipped.
+)
+
+:install_python
+:: ── Python environment ────────────────────────────────────────────────────────
 echo.
 echo [INFO] Updating Python environment...
 
-:: Create venv if it doesn't exist
 if not exist ".venv\Scripts\python.exe" (
     echo [INFO] Creating virtual environment...
     python -m venv .venv
@@ -55,7 +116,6 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-:: Install / update requirements
 if exist "requirements.txt" (
     echo [INFO] Installing requirements...
     .venv\Scripts\pip install -r requirements.txt --quiet
