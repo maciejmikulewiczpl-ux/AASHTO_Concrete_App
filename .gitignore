@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Documents
+*.pdf
+*.xlsm
+*.xlsx
+
+# Chat/debug
+chat.json
+verify_out.txt
