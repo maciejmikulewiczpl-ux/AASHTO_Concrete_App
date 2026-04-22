@@ -126,6 +126,12 @@ canvas { width: 100% !important; height: 100% !important; }
 .demand-table thead th.grp-status { background:#6c3483; }
 .demand-table tbody tr:hover { background:#f0f7ff; }
 .demand-table tbody tr.active-row { background:#e8f4fd; }
+/* Excel-like cell selection in demand table */
+.demand-table td.xl-selected { background:#cfe4f7 !important; }
+.demand-table td.xl-selected input[type=number] { background:transparent; }
+.demand-table td.xl-anchor { outline:2px solid #1a5276; outline-offset:-2px; }
+.demand-table.xl-dragging { user-select:none; -webkit-user-select:none; cursor:cell; }
+.demand-table.xl-dragging input[type=number] { pointer-events:none; }
 .demand-btn-bar { display:flex; gap:8px; margin-top:10px; }
 .demand-btn { padding:5px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); cursor:pointer; font-size:0.8rem; color:var(--text); transition:all 0.15s; }
 .demand-btn:hover { background:var(--primary); color:white; border-color:var(--primary); }
@@ -490,6 +496,7 @@ canvas { width: 100% !important; height: 100% !important; }
   <div class="sign-note">
     <strong>Sign Convention:</strong> P<sub>u</sub>, P<sub>s</sub> &mdash; positive = tension. M<sub>u</sub>, M<sub>s</sub> &mdash; positive = sagging.
     Each row is an independent load case. Capacities and D/C ratios update when you press <b>Calculate</b>.
+    <br><strong>Tip:</strong> click and drag to select a range of input cells, then use <b>Ctrl+C</b> / <b>Ctrl+V</b> to copy &amp; paste from Excel. Press <b>Delete</b> to clear the selected range.
   </div>
   <div class="card">
     <div class="card-header red">Force Demands &amp; Capacity Summary</div>
@@ -4734,11 +4741,301 @@ window.addEventListener('load',()=>{
   saveCurrentSectionState();
   updateSectionDropdown();
   clearDirty();
+
+  // Excel-like cell selection + clipboard for the Force Demands table.
+  // Column order must match the order of editable inputs in addDemandRow().
+  setupExcelTable('demandBody',
+    ['dr-x','dr-dp','dr-fpe','dr-Vp','dr-Pu','dr-Mu','dr-Vu','dr-Tu','dr-Ps','dr-Ms'],
+    { ensureRows: ()=>addDemandRow(), onChange: ()=>runAllCalculations() }
+  );
 });
 window.addEventListener('resize',()=>runAllCalculations());
 window.addEventListener('beforeunload',(e)=>{
   if(_projectDirty){e.preventDefault();e.returnValue='';}
 });
+
+/* =========================================================================
+ * Excel-like cell selection + clipboard for the Force Demands table.
+ * - Click and drag across cells to select a rectangular range
+ * - Ctrl+C copies the selection to the clipboard as TSV
+ * - Ctrl+V pastes TSV (e.g. from Excel) starting at the top-left of the
+ *   selection or the focused cell, and grows the table with new demand rows
+ *   if the pasted block is taller than the current table
+ * - Delete / Backspace clears the selected range (when more than one cell)
+ * Single-cell typing/editing is preserved.
+ * ========================================================================= */
+function setupExcelTable(tbodyId, cellClasses, opts){
+  opts = opts || {};
+  const tbody = document.getElementById(tbodyId);
+  if(!tbody) return;
+  const table = tbody.closest('table');
+  const selector = cellClasses.map(c=>'.'+c).join(',');
+
+  // grid state
+  const state = { anchor:null, focus:null, dragging:false };
+
+  function rows(){ return Array.from(tbody.children); }
+  function inputAt(r,c){
+    const tr = rows()[r]; if(!tr) return null;
+    const cls = cellClasses[c]; if(!cls) return null;
+    return tr.querySelector('.'+cls);
+  }
+  function cellOf(input){
+    if(!input) return null;
+    const tr = input.closest('tr'); if(!tr) return null;
+    const r = rows().indexOf(tr); if(r<0) return null;
+    for(let c=0;c<cellClasses.length;c++){
+      if(input.classList.contains(cellClasses[c])) return {r,c};
+    }
+    return null;
+  }
+  function clearSelectionStyles(){
+    tbody.querySelectorAll('td.xl-selected,td.xl-anchor').forEach(td=>{
+      td.classList.remove('xl-selected'); td.classList.remove('xl-anchor');
+    });
+  }
+  function applySelectionStyles(){
+    clearSelectionStyles();
+    if(!state.anchor || !state.focus) return;
+    const r0=Math.min(state.anchor.r,state.focus.r), r1=Math.max(state.anchor.r,state.focus.r);
+    const c0=Math.min(state.anchor.c,state.focus.c), c1=Math.max(state.anchor.c,state.focus.c);
+    for(let r=r0;r<=r1;r++){
+      for(let c=c0;c<=c1;c++){
+        const inp = inputAt(r,c); if(!inp) continue;
+        const td = inp.closest('td'); if(td) td.classList.add('xl-selected');
+      }
+    }
+    const anchorInp = inputAt(state.anchor.r, state.anchor.c);
+    if(anchorInp){ const td = anchorInp.closest('td'); if(td) td.classList.add('xl-anchor'); }
+  }
+  function selectionRect(){
+    if(!state.anchor || !state.focus) return null;
+    return {
+      r0:Math.min(state.anchor.r,state.focus.r), r1:Math.max(state.anchor.r,state.focus.r),
+      c0:Math.min(state.anchor.c,state.focus.c), c1:Math.max(state.anchor.c,state.focus.c),
+    };
+  }
+  function hasMultiCellSelection(){
+    const r = selectionRect(); if(!r) return false;
+    return (r.r0!==r.r1) || (r.c0!==r.c1);
+  }
+
+  // --- mouse: drag to select ---
+  tbody.addEventListener('mousedown',(e)=>{
+    const inp = e.target.closest(selector);
+    if(!inp) return;
+    const cell = cellOf(inp); if(!cell) return;
+    state.anchor = cell; state.focus = cell; state.dragging = true;
+    applySelectionStyles();
+    // Note: we intentionally do NOT preventDefault here so a single click
+    // still focuses the input for normal typing. The dragging class is added
+    // only once the user enters a different cell (see mouseenter below).
+  });
+  tbody.addEventListener('mouseover',(e)=>{
+    if(!state.dragging) return;
+    const inp = e.target.closest(selector);
+    if(!inp) return;
+    const cell = cellOf(inp); if(!cell) return;
+    if(cell.r===state.focus.r && cell.c===state.focus.c) return;
+    state.focus = cell;
+    if(cell.r!==state.anchor.r || cell.c!==state.anchor.c){
+      // Multi-cell drag: stop the input from absorbing further mouse events
+      // and clear any text selection inside it.
+      table.classList.add('xl-dragging');
+      if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      const sel = window.getSelection && window.getSelection();
+      if(sel && sel.removeAllRanges) sel.removeAllRanges();
+    }
+    applySelectionStyles();
+  });
+  document.addEventListener('mouseup',()=>{
+    if(!state.dragging) return;
+    state.dragging = false;
+    table.classList.remove('xl-dragging');
+  });
+
+  // Track focus inside cells so Ctrl+C/V works even without a drag selection
+  tbody.addEventListener('focusin',(e)=>{
+    const inp = e.target.closest(selector); if(!inp) return;
+    const cell = cellOf(inp); if(!cell) return;
+    // Only collapse the selection to this cell if there is no active multi-cell range
+    if(!hasMultiCellSelection() || (state.anchor && state.anchor.r===state.focus.r && state.anchor.c===state.focus.c)){
+      state.anchor = cell; state.focus = cell; applySelectionStyles();
+    }
+  });
+  // Clicking outside the table clears selection styling
+  document.addEventListener('mousedown',(e)=>{
+    if(!e.target.closest('#'+tbodyId)){
+      // keep selection state but remove styles to reduce visual noise
+      // (Excel also keeps the selection when focus moves to formula bar; we just hide highlight)
+    }
+  });
+
+  // --- helpers for clipboard ---
+  function buildTSV(rect){
+    const lines=[];
+    for(let r=rect.r0;r<=rect.r1;r++){
+      const cells=[];
+      for(let c=rect.c0;c<=rect.c1;c++){
+        const inp = inputAt(r,c);
+        cells.push(inp ? (inp.value ?? '') : '');
+      }
+      lines.push(cells.join('\t'));
+    }
+    return lines.join('\n');
+  }
+  function parseTSV(text){
+    // Normalize line endings; drop a single trailing newline if present
+    text = String(text).replace(/\r\n?/g,'\n');
+    if(text.endsWith('\n')) text = text.slice(0,-1);
+    if(text==='') return [['']];
+    return text.split('\n').map(line=>line.split('\t'));
+  }
+
+  function ensureRows(needed){
+    if(typeof opts.ensureRows === 'function'){
+      while(rows().length < needed){ opts.ensureRows(); }
+    }
+  }
+  function writeCells(originR, originC, grid){
+    const needed = originR + grid.length;
+    ensureRows(needed);
+    let lastR = originR, lastC = originC;
+    for(let i=0;i<grid.length;i++){
+      const r = originR + i;
+      for(let j=0;j<grid[i].length;j++){
+        const c = originC + j;
+        if(c >= cellClasses.length) break;
+        const inp = inputAt(r,c);
+        if(!inp) continue;
+        // Treat "" as blank (some inputs accept blank meaning null)
+        inp.value = grid[i][j];
+        lastR = r; lastC = Math.max(lastC, c);
+      }
+    }
+    // Update selection rectangle to the pasted region
+    state.anchor = {r:originR, c:originC};
+    state.focus  = {r:lastR,   c:lastC};
+    applySelectionStyles();
+  }
+
+  function clearSelection(){
+    const rect = selectionRect(); if(!rect) return;
+    for(let r=rect.r0;r<=rect.r1;r++){
+      for(let c=rect.c0;c<=rect.c1;c++){
+        const inp = inputAt(r,c); if(inp) inp.value = '';
+      }
+    }
+  }
+
+  function recalc(){ if(typeof opts.onChange === 'function') opts.onChange(); }
+
+  // --- keyboard: Ctrl+C / Ctrl+V / Delete ---
+  document.addEventListener('keydown',(e)=>{
+    // Only act when the user is interacting with the demand table
+    const inFocus = document.activeElement && document.activeElement.closest && document.activeElement.closest('#'+tbodyId);
+    const haveSel = !!selectionRect();
+    if(!inFocus && !haveSel) return;
+    const ctrl = e.ctrlKey || e.metaKey;
+
+    // Copy
+    if(ctrl && (e.key==='c' || e.key==='C')){
+      const rect = selectionRect(); if(!rect) return;
+      // If the user is editing inside a single cell and has selected text inside it, leave native copy alone
+      const ae = document.activeElement;
+      if(!hasMultiCellSelection() && ae && ae.tagName==='INPUT' && typeof ae.selectionStart==='number'
+          && ae.selectionStart !== ae.selectionEnd){
+        return;
+      }
+      const tsv = buildTSV(rect);
+      e.preventDefault();
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(tsv).catch(()=>fallbackCopy(tsv));
+      } else {
+        fallbackCopy(tsv);
+      }
+      return;
+    }
+
+    // Paste
+    if(ctrl && (e.key==='v' || e.key==='V')){
+      const rect = selectionRect();
+      const ae = document.activeElement;
+      // If the user is editing a single cell with text-selection inside, allow native paste
+      if(!hasMultiCellSelection() && ae && ae.tagName==='INPUT' && typeof ae.selectionStart==='number'
+          && ae.selectionStart !== ae.selectionEnd){
+        return;
+      }
+      e.preventDefault();
+      const origin = rect ? {r:rect.r0, c:rect.c0} : (ae && cellOf(ae));
+      if(!origin) return;
+      const doPaste = (text)=>{
+        const grid = parseTSV(text);
+        writeCells(origin.r, origin.c, grid);
+        recalc();
+      };
+      if(navigator.clipboard && navigator.clipboard.readText){
+        navigator.clipboard.readText().then(doPaste).catch(()=>fallbackPaste(doPaste));
+      } else {
+        fallbackPaste(doPaste);
+      }
+      return;
+    }
+
+    // Delete / Backspace clears multi-cell selection
+    if((e.key==='Delete' || e.key==='Backspace') && hasMultiCellSelection()){
+      e.preventDefault();
+      clearSelection();
+      applySelectionStyles();
+      recalc();
+      return;
+    }
+  });
+
+  // Clipboard fallbacks for environments without async Clipboard API
+  function fallbackCopy(text){
+    const ta=document.createElement('textarea');
+    ta.style.position='fixed'; ta.style.left='-9999px'; ta.value=text;
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); } catch(_){}
+    document.body.removeChild(ta);
+  }
+  function fallbackPaste(cb){
+    const ta=document.createElement('textarea');
+    ta.style.position='fixed'; ta.style.left='-9999px';
+    document.body.appendChild(ta); ta.focus();
+    setTimeout(()=>{ const v=ta.value; document.body.removeChild(ta); cb(v); }, 50);
+  }
+
+  // Native paste event (works when an input is focused — most common case)
+  tbody.addEventListener('paste',(e)=>{
+    const inp = e.target.closest(selector); if(!inp) return;
+    const rect = selectionRect();
+    const origin = rect ? {r:rect.r0, c:rect.c0} : cellOf(inp);
+    if(!origin) return;
+    const cd = e.clipboardData || window.clipboardData;
+    if(!cd) return;
+    const text = cd.getData('text/plain') || cd.getData('Text') || '';
+    // If single-line, single-column paste into a focused input, let native handle it
+    if(!hasMultiCellSelection() && text.indexOf('\t')<0 && text.indexOf('\n')<0) return;
+    e.preventDefault();
+    const grid = parseTSV(text);
+    writeCells(origin.r, origin.c, grid);
+    recalc();
+  });
+
+  // Native copy event — provide the TSV when copying from inside the table
+  tbody.addEventListener('copy',(e)=>{
+    const rect = selectionRect(); if(!rect) return;
+    if(!hasMultiCellSelection()){
+      const ae = document.activeElement;
+      if(ae && ae.tagName==='INPUT' && typeof ae.selectionStart==='number'
+          && ae.selectionStart !== ae.selectionEnd) return;
+    }
+    const tsv = buildTSV(rect);
+    if(e.clipboardData){ e.clipboardData.setData('text/plain', tsv); e.preventDefault(); }
+  });
+}
 </script>
 <!-- Multi-Row Reinforcement Modal -->
 <div class="mr-overlay" id="mrOverlay" onclick="if(event.target===this)closeMR()">
