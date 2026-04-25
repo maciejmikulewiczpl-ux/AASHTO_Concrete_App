@@ -24,7 +24,8 @@
 body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
 
 .header { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 12px rgba(0,0,0,0.15); position: sticky; top: 0; z-index: 100; }
-.header h1 { font-size: 1.2rem; font-weight: 600; }
+.header h1 { font-size: 1.2rem; font-weight: 600; margin:0; }
+.file-name-display { font-size: 0.75rem; color: rgba(255,255,255,0.65); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
 .header-controls { display: flex; gap: 8px; align-items: center; }
 .toggle-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 6px 14px; border-radius: var(--radius); cursor: pointer; font-size: 0.8rem; transition: all 0.2s; }
 .toggle-btn:hover, .toggle-btn.active { background: rgba(255,255,255,0.3); }
@@ -104,15 +105,72 @@ canvas { width: 100% !important; height: 100% !important; }
 .data-table th { background: var(--primary); color: white; padding: 7px 8px; text-align: left; font-weight: 500; white-space: nowrap; }
 .data-table td { padding: 5px 8px; border-bottom: 1px solid #eee; font-family: 'Consolas', monospace; }
 .data-table tr:hover { background: #f8f9fa; }
+.proj-summary-table th { text-align: center; vertical-align: middle; }
+.proj-summary-table td { vertical-align: middle; padding: 8px; }
+.proj-summary-table td.ps-name { font-family: inherit; font-weight: 600; color: var(--primary); font-size: 0.9rem; }
+.proj-summary-table td.ps-canvas { text-align: center; padding: 4px; }
+.proj-summary-table td.ps-canvas canvas { border: 1px solid var(--border); background: #fff; border-radius: 3px; }
+.proj-summary-table td.ps-geom { font-size: 0.76rem; line-height: 1.5; }
+.proj-summary-table td.ps-reinf { font-size: 0.76rem; line-height: 1.5; font-family: inherit; }
+.proj-summary-table td.ps-reinf .ps-reinf-line { margin: 2px 0; }
+.proj-summary-table td.ps-dc { text-align: center; font-size: 0.95rem; font-weight: 700; }
+.proj-summary-table td.ps-dc.ps-pass { color: #1e8449; }
+.proj-summary-table td.ps-dc.ps-fail { color: #c0392b; }
+.proj-summary-table td.ps-dc.ps-na { color: var(--text-light); font-style: italic; font-weight: normal; }
+.proj-summary-table td.ps-dc .ps-dc-sub { font-size: 0.7rem; color: var(--text-light); font-weight: normal; display: block; margin-top: 2px; }
+.proj-summary-table tbody tr { border-top: 2px solid var(--border); }
+.proj-summary-table tbody tr:first-child { border-top: none; }
+.proj-summary-table td.ps-actions { text-align:center; padding:6px 8px; white-space:nowrap; }
+.proj-summary-table td.ps-actions .ps-opt-btn { padding:6px 14px; font-size:0.78rem; }
+.ps-opt-status { font-size:0.7rem; font-style:italic; color:var(--text-light); margin-top:4px; min-height:0.9rem; }
+.ps-opt-status.ps-opt-ok { color:#1e8449; font-weight:600; font-style:normal; }
+.ps-opt-status.ps-opt-fail { color:#c0392b; font-weight:600; font-style:normal; }
+
+.opt-panel { background:#f7f9fc; border:1px solid #d7dde5; border-radius:var(--radius); padding:10px 14px; margin-bottom:12px; }
+.opt-panel h4 { margin:0 0 8px; font-size:0.82rem; color:var(--primary); font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
+.opt-panel .opt-row { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:flex-end; }
+.opt-panel .opt-field { display:flex; flex-direction:column; gap:2px; }
+.opt-panel .opt-field label { font-size:0.72rem; color:var(--text-light); font-weight:500; }
+.opt-panel .opt-field input, .opt-panel .opt-field select { width:82px; padding:4px 6px; border:1px solid #c0c8d2; border-radius:3px; font-size:0.82rem; }
+.opt-panel .opt-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:6px; }
+.opt-panel .opt-intro { font-size:0.78rem; color:#6b7480; flex:1; }
+
+.opt-preview-modal { background:#fff; border-radius:8px; padding:20px 24px; max-width:760px; width:95%; max-height:88vh; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25); }
+.opt-preview-modal h3 { margin:0 0 4px; color:var(--primary); }
+.opt-preview-modal .opt-sub { font-size:0.8rem; color:var(--text-light); margin-bottom:12px; }
+.opt-preview-modal .opt-cols { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.opt-preview-modal .opt-col { border:1px solid #e0e6ed; border-radius:5px; padding:10px 12px; background:#fbfcfd; }
+.opt-preview-modal .opt-col h4 { margin:0 0 6px; font-size:0.85rem; color:var(--primary); }
+.opt-preview-modal .opt-col .opt-line { font-size:0.84rem; line-height:1.6; }
+.opt-preview-modal .opt-col .opt-line b { color:var(--primary); }
+.opt-preview-modal .opt-cv-wrap { text-align:center; margin:4px 0 8px; }
+.opt-preview-modal .opt-cv-wrap canvas { border:1px solid var(--border); background:#fff; border-radius:3px; }
+.opt-preview-modal .opt-dc-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:12px; }
+.opt-preview-modal .opt-dc-cell { border:1px solid #e0e6ed; border-radius:5px; padding:8px; text-align:center; background:#fbfcfd; }
+.opt-preview-modal .opt-dc-cell .opt-dc-label { font-size:0.72rem; color:var(--text-light); }
+.opt-preview-modal .opt-dc-cell .opt-dc-val { font-size:1.1rem; font-weight:700; margin-top:3px; }
+.opt-preview-modal .opt-dc-cell.pass .opt-dc-val { color:#1e8449; }
+.opt-preview-modal .opt-dc-cell.fail .opt-dc-val { color:#c0392b; }
+.opt-preview-modal .opt-dc-cell.na .opt-dc-val { color:var(--text-light); font-weight:500; font-style:italic; }
+.opt-preview-modal .opt-dc-cell .opt-dc-tgt { font-size:0.68rem; color:var(--text-light); margin-top:2px; }
+.opt-preview-modal .opt-warn { background:#fde4e1; border:1px solid #e74c3c; color:#a93226; padding:8px 10px; border-radius:4px; font-size:0.82rem; margin-top:12px; }
 
 .section-heading { font-size: 0.92rem; font-weight: 600; color: var(--primary); margin: 16px 0 10px; padding-bottom: 5px; border-bottom: 2px solid var(--primary-light); }
 .section-heading:first-child { margin-top: 0; }
 
-.demand-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
-.demand-table th { background:var(--primary); color:white; padding:6px 8px; text-align:center; font-weight:500; white-space:nowrap; position:sticky; top:0; z-index:1; }
-.demand-table td { padding:4px 6px; border-bottom:1px solid #eee; text-align:center; vertical-align:middle; }
-.demand-table input[type=number] { width:80px; padding:3px 5px; border:1px solid var(--border); border-radius:3px; font-size:0.82rem; text-align:right; font-family:'Consolas',monospace; }
-.demand-table input[type=number]:focus { border-color:var(--primary-light); outline:none; box-shadow:0 0 0 2px rgba(41,128,185,0.15); }
+.demand-table { width:100%; border-collapse:collapse; font-size:0.76rem; border:1px solid #a8b3bd; }
+.demand-table th { background:var(--primary); color:white; padding:4px 5px; text-align:center; font-weight:500; white-space:nowrap; position:sticky; top:0; z-index:1; border:1px solid rgba(255,255,255,0.15); }
+.demand-table td { padding:0; border:1px solid #d0d7de; text-align:center; vertical-align:middle; background:#fff; }
+.demand-table input[type=number] { width:58px; padding:3px 5px; border:none; border-radius:0; font-size:0.76rem; text-align:right; font-family:'Consolas',monospace; background:transparent; margin:0; -moz-appearance:textfield; }
+.demand-table input[type=number]::-webkit-inner-spin-button,
+.demand-table input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.demand-table input[type=number]:focus { outline:none; background:#fff9c4; box-shadow:inset 0 0 0 2px var(--primary); position:relative; z-index:2; }
+.demand-table tbody td:first-child { padding:3px 5px; font-weight:600; color:#57606a; background:#eef1f4; }
+.demand-table td.dc-na, .demand-table td.dc-pass, .demand-table td.dc-fail,
+.demand-table td.dc-ok, .demand-table td.dc-warn, .demand-table td.cap-cell { padding:3px 4px; }
+.demand-table tbody td:last-child { padding:3px 4px; }
+.demand-table tbody tr:nth-child(even) td:not(:first-child) { background:#fafbfc; }
+.demand-table tbody tr:nth-child(even) td.xl-selected { background:#cfe4f7 !important; }
 .demand-table .cap-cell { font-family:'Consolas',monospace; font-weight:600; color:var(--primary); }
 .demand-table .dc-pass { font-weight:700; color:#1e8449; }
 .demand-table .dc-fail { font-weight:700; color:#c0392b; }
@@ -124,8 +182,8 @@ canvas { width: 100% !important; height: 100% !important; }
 .demand-table thead th.grp-capacity { background:#1e8449; }
 .demand-table thead th.grp-dc { background:#2471a3; }
 .demand-table thead th.grp-status { background:#6c3483; }
-.demand-table tbody tr:hover { background:#f0f7ff; }
-.demand-table tbody tr.active-row { background:#e8f4fd; }
+.demand-table tbody tr:hover td:not(:first-child) { background:#f0f7ff; }
+.demand-table tbody tr.active-row td:not(:first-child) { background:#e8f4fd; }
 /* Excel-like cell selection in demand table */
 .demand-table td.xl-selected { background:#cfe4f7 !important; }
 .demand-table td.xl-selected input[type=number] { background:transparent; }
@@ -207,7 +265,10 @@ canvas { width: 100% !important; height: 100% !important; }
 <body>
 
 <div class="header">
-  <h1>AASHTO LRFD &mdash; Reinforced Concrete Section Design</h1>
+  <div style="display:flex;flex-direction:column;gap:3px;min-width:0;">
+    <h1>AASHTO LRFD &mdash; Reinforced Concrete Section Design</h1>
+    <span id="fileNameDisplay" class="file-name-display" title="">New Project</span>
+  </div>
   <div class="section-mgr">
     <label class="section-mgr-label">Section:</label>
     <select id="sectionSelect" class="section-select"></select>
@@ -216,7 +277,9 @@ canvas { width: 100% !important; height: 100% !important; }
     <button class="section-btn" onclick="renameSection()" title="Rename current section">&#9998; Rename</button>
     <button class="section-btn section-btn-danger" onclick="deleteSection()" title="Delete current section">&#10005; Delete</button>
     <span class="section-sep"></span>
-    <button class="section-btn" onclick="saveProject()" title="Save project to file">&#128190; Save</button>
+    <button class="section-btn" onclick="newProject()" title="New project — start fresh">&#128196; New</button>
+    <button class="section-btn" id="quickSaveBtn" onclick="saveProjectQuick()" title="Save (Ctrl+S)">&#128190;</button>
+    <button class="section-btn" onclick="saveProject()" title="Save As — choose file location">&#128190; Save As</button>
     <button class="section-btn" onclick="loadProject()" title="Open project file">&#128194; Open</button>
     <span id="dirtyIndicator" class="dirty-dot" style="display:none" title="Unsaved changes">&#9679;</span>
   </div>
@@ -238,6 +301,7 @@ canvas { width: 100% !important; height: 100% !important; }
   <button class="tab-btn" data-tab="torsion">Torsion</button>
   <button class="tab-btn" data-tab="service">Service Flexure Stress</button>
   <button class="tab-btn" data-tab="report">Report</button>
+  <button class="tab-btn" data-tab="summary">Project Summary</button>
 </div>
 
 <div class="content">
@@ -499,7 +563,8 @@ canvas { width: 100% !important; height: 100% !important; }
   </div>
   <div class="card">
     <div class="card-header red">Force Demands &amp; Capacity Summary</div>
-    <div class="card-body" style="overflow-x:auto; padding:8px;">
+    <div class="card-body" style="padding:8px 0 0;">
+      <div id="demandTableScroll" style="overflow-x:auto; overflow-y:auto; max-height:62vh; padding:0 8px;">
       <table class="demand-table" id="demandTable">
         <thead>
           <tr>
@@ -511,7 +576,7 @@ canvas { width: 100% !important; height: 100% !important; }
             <th colspan="1" class="grp-capacity">Flexure</th>
             <th colspan="3" class="grp-capacity">Shear Capacity</th>
             <th colspan="1" class="grp-capacity">Torsion</th>
-            <th colspan="3" class="grp-dc">D/C Ratios</th>
+            <th colspan="3" class="grp-dc">D/C Ratios <button id="dcSortBtn" onclick="sortDemandByDC()" title="Sort rows by max D/C ratio" style="margin-left:6px;padding:1px 7px;font-size:0.72rem;border:1px solid rgba(255,255,255,0.5);border-radius:3px;background:rgba(255,255,255,0.15);color:white;cursor:pointer;vertical-align:middle;">&#x25BC; Sort</button></th>
             <th colspan="3" class="grp-status">Status</th>
             <th rowspan="2"></th>
           </tr>
@@ -533,7 +598,16 @@ canvas { width: 100% !important; height: 100% !important; }
             <th class="grp-capacity">B5<br><small>kip</small></th>
             <th class="grp-capacity">T<sub>r</sub><br><small>k-in</small></th>
             <th class="grp-dc">M</th>
-            <th class="grp-dc">V<sub>GP</sub></th>
+            <th class="grp-dc">
+              <div style="display:flex;gap:6px;align-items:center;justify-content:center;">
+                <span>V</span>
+                <select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()">
+                  <option value="gp" selected>GP</option>
+                  <option value="simp">Simp.</option>
+                  <option value="b5">B5</option>
+                </select>
+              </div>
+            </th>
             <th class="grp-dc">T</th>
             <th class="grp-status">Crack</th>
             <th class="grp-status">Flex.</th>
@@ -542,7 +616,8 @@ canvas { width: 100% !important; height: 100% !important; }
         </thead>
         <tbody id="demandBody"></tbody>
       </table>
-      <div class="demand-btn-bar">
+      </div><!-- end demandTableScroll -->
+      <div class="demand-btn-bar" style="padding:4px 8px 4px;">
         <button class="demand-btn" onclick="addDemandRow()">&#43; Add Row</button>
         <button class="demand-btn danger" onclick="removeLastDemandRow()">&#8722; Remove Last</button>
       </div>
@@ -641,6 +716,81 @@ canvas { width: 100% !important; height: 100% !important; }
   <div id="reportPreview" class="report-preview" style="display:none;margin-top:16px;"></div>
 </div>
 
+<!-- ==================== PROJECT SUMMARY TAB ==================== -->
+<div class="tab-panel" id="tab-summary" data-title="Project Summary">
+  <div class="sign-note" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+    <span><strong>Project Summary:</strong> One row per section, showing cross-section diagram, reinforcement quantities, and worst D/C ratios across all demand rows (moment, shear, torsion).</span>
+    <button class="calc-btn" onclick="refreshProjectSummary()" style="flex-shrink:0;">&#x21bb; Refresh</button>
+  </div>
+
+  <div class="opt-panel">
+    <div class="opt-header">
+      <div class="opt-intro"><strong>Optimization settings</strong> &mdash; click <em>Optimize</em> on any section row to solve for reinforcement that meets these targets within the constraints below. A preview dialog lets you review changes before applying.</div>
+    </div>
+    <h4>Target D/C ratios</h4>
+    <div class="opt-row">
+      <div class="opt-field"><label>M<sup>+</sup> (sagging)</label><input type="number" id="optTgtMpos" step="0.05" min="0.1" max="1.2" value="0.9"></div>
+      <div class="opt-field"><label>M<sup>&minus;</sup> (hogging)</label><input type="number" id="optTgtMneg" step="0.05" min="0.1" max="1.2" value="0.9"></div>
+      <div class="opt-field"><label>Shear</label><input type="number" id="optTgtV" step="0.05" min="0.1" max="1.2" value="0.9"></div>
+      <div class="opt-field"><label>Torsion</label><input type="number" id="optTgtT" step="0.05" min="0.1" max="1.2" value="0.9"></div>
+    </div>
+    <h4 style="margin-top:10px;">Flexure constraints</h4>
+    <div class="opt-row">
+      <div class="opt-field"><label>Min clear spacing (in)</label><input type="number" id="optMinSpacing" step="0.25" min="1.0" value="1.5"></div>
+      <div class="opt-field"><label>Vertical row spacing (in)</label><input type="number" id="optRowSpacing" step="0.25" min="1.0" value="1.5"></div>
+      <div class="opt-field"><label>Min bar size</label>
+        <select id="optMinFlexBar">
+          <option value="4">#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option>
+          <option value="8">#8</option><option value="9">#9</option><option value="10">#10</option><option value="11">#11</option>
+        </select>
+      </div>
+      <div class="opt-field"><label>Max bar size</label>
+        <select id="optMaxFlexBar">
+          <option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option>
+          <option value="9">#9</option><option value="10">#10</option><option value="11" selected>#11</option>
+        </select>
+      </div>
+      <div class="opt-field"><label>Max rows</label><input type="number" id="optMaxRows" step="1" min="1" max="4" value="3"></div>
+    </div>
+    <h4 style="margin-top:10px;">Stirrup constraints</h4>
+    <div class="opt-row">
+      <div class="opt-field"><label>Min bar size</label>
+        <select id="optMinStirBar"><option value="3" selected>#3</option><option value="4">#4</option><option value="5">#5</option><option value="6">#6</option></select>
+      </div>
+      <div class="opt-field"><label>Max bar size</label>
+        <select id="optMaxStirBar"><option value="3">#3</option><option value="4">#4</option><option value="5">#5</option><option value="6" selected>#6</option></select>
+      </div>
+      <div class="opt-field"><label>Min spacing (in)</label><input type="number" id="optShearSMin" step="0.5" min="1" value="3"></div>
+      <div class="opt-field"><label>Max spacing (in)</label><input type="number" id="optShearSMax" step="0.5" min="2" value="18"></div>
+      <div class="opt-field"><label>Step (in)</label><input type="number" id="optShearSStep" step="0.5" min="0.5" value="1"></div>
+      <div class="opt-field"><label>Max legs</label><input type="number" id="optMaxLegs" step="1" min="2" max="6" value="4"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header blue">Sections Overview</div>
+    <div class="card-body" style="overflow-x:auto;padding:8px;">
+      <table class="data-table proj-summary-table" id="summaryTable">
+        <thead>
+          <tr>
+            <th>Section</th>
+            <th>Cross-Section</th>
+            <th>Geometry</th>
+            <th>Reinforcement</th>
+            <th>Worst D/C<br><small>M<sup>+</sup> (sagging)</small></th>
+            <th>Worst D/C<br><small>M<sup>&minus;</sup> (hogging)</small></th>
+            <th>Worst D/C<br><small>Shear</small></th>
+            <th>Worst D/C<br><small>Torsion</small></th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="summaryTableBody"></tbody>
+      </table>
+      <div id="summaryEmpty" style="padding:24px;text-align:center;color:var(--text-light);display:none;">No sections to display. Add a section first.</div>
+    </div>
+  </div>
+</div>
+
 </div>
 
 <script>
@@ -667,6 +817,34 @@ function clearDirty(){
   _projectDirty=false;
   const dot=document.getElementById('dirtyIndicator');
   if(dot) dot.style.display='none';
+}
+
+/* ---------- Reinforcement optimization parameters ---------- */
+let optParams = {
+  tgt:  { mpos:0.9, mneg:0.9, v:0.9, t:0.9 },
+  flex: { minSpacing:1.5, rowSpacing:1.5, minBar:4, maxBar:11, maxRows:3 },
+  stir: { minBar:3, maxBar:6, sMin:3, sMax:18, sStep:1, maxLegs:4 }
+};
+function readOptParamsFromDOM(){
+  const num=(id,def)=>{const v=parseFloat(document.getElementById(id)?.value);return isNaN(v)?def:v;};
+  const sel=(id,def)=>{const v=parseInt(document.getElementById(id)?.value);return isNaN(v)?def:v;};
+  optParams.tgt  = { mpos:num('optTgtMpos',0.9), mneg:num('optTgtMneg',0.9), v:num('optTgtV',0.9), t:num('optTgtT',0.9) };
+  optParams.flex = { minSpacing:num('optMinSpacing',1.5), rowSpacing:num('optRowSpacing',1.5),
+                     minBar:sel('optMinFlexBar',4), maxBar:sel('optMaxFlexBar',11), maxRows:sel('optMaxRows',3) };
+  optParams.stir = { minBar:sel('optMinStirBar',3), maxBar:sel('optMaxStirBar',6),
+                     sMin:num('optShearSMin',3), sMax:num('optShearSMax',18),
+                     sStep:num('optShearSStep',1), maxLegs:sel('optMaxLegs',4) };
+  return optParams;
+}
+function writeOptParamsToDOM(){
+  const set=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null&&v!==undefined)el.value=v;};
+  set('optTgtMpos',optParams.tgt.mpos); set('optTgtMneg',optParams.tgt.mneg);
+  set('optTgtV',optParams.tgt.v); set('optTgtT',optParams.tgt.t);
+  set('optMinSpacing',optParams.flex.minSpacing); set('optRowSpacing',optParams.flex.rowSpacing);
+  set('optMinFlexBar',optParams.flex.minBar); set('optMaxFlexBar',optParams.flex.maxBar); set('optMaxRows',optParams.flex.maxRows);
+  set('optMinStirBar',optParams.stir.minBar); set('optMaxStirBar',optParams.stir.maxBar);
+  set('optShearSMin',optParams.stir.sMin); set('optShearSMax',optParams.stir.sMax);
+  set('optShearSStep',optParams.stir.sStep); set('optMaxLegs',optParams.stir.maxLegs);
 }
 
 /* ---------- Default state for a brand-new section ---------- */
@@ -935,6 +1113,18 @@ function switchSection(name){
   updateSectionDropdown();
 }
 
+function newProject(){
+  if(_projectDirty && !confirm('You have unsaved changes. Discard and start a new project?')) return;
+  sections = { 'Section 1': getDefaultSectionState() };
+  activeSection = 'Section 1';
+  optParams = { tgt:{mpos:0.9,mneg:0.9,v:0.9,t:0.9}, flex:{minSpacing:1.5,rowSpacing:1.5,minBar:4,maxBar:11,maxRows:3}, stir:{minBar:3,maxBar:6,sMin:3,sMax:18,sStep:1,maxLegs:4} };
+  try{ writeOptParamsToDOM(); }catch(e){}
+  loadSectionState(activeSection);
+  updateSectionDropdown();
+  updateFileDisplay(null);
+  clearDirty();
+}
+
 function createNewSection(){
   const name=prompt('Enter name for new section:');
   if(!name||!name.trim()) return;
@@ -989,12 +1179,49 @@ function deleteSection(){
 }
 
 /* ---------- Project Save / Load ---------- */
+let currentFilePath = null;
+
+function updateFileDisplay(filepath){
+  currentFilePath = filepath || null;
+  const el = document.getElementById('fileNameDisplay');
+  if(!el) return;
+  if(filepath){
+    const name = filepath.replace(/\\/g,'/').split('/').pop();
+    el.textContent = name;
+    el.title = filepath;
+  } else {
+    el.textContent = 'New Project';
+    el.title = '';
+  }
+  const btn = document.getElementById('quickSaveBtn');
+  if(btn) btn.style.opacity = filepath ? '1' : '0.5';
+}
+
+function saveProjectQuick(){
+  if(!currentFilePath){ saveProject(); return; }
+  saveCurrentSectionState();
+  try{ readOptParamsFromDOM(); }catch(e){}
+  const project={version:1,activeSection:activeSection,sections:sections,optParams:optParams};
+  const json=JSON.stringify(project,null,2);
+  if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project_to_path){
+    window.pywebview.api.save_project_to_path(json, currentFilePath).then(res=>{
+      try{
+        const r=JSON.parse(res);
+        if(r.error) alert('Save failed: '+r.error);
+        else clearDirty();
+      }catch(e){alert('Save error: '+e.message);}
+    });
+  }
+}
+
 function saveProject(){
   saveCurrentSectionState();
+  try{ readOptParamsFromDOM(); }catch(e){}
   const project={
     version:1,
     activeSection:activeSection,
-    sections:sections
+    sections:sections,
+    optParams:optParams
   };
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project){
@@ -1002,7 +1229,7 @@ function saveProject(){
       try{
         const r=JSON.parse(res);
         if(r.error) alert('Save failed: '+r.error);
-        else if(!r.cancelled) clearDirty();
+        else if(!r.cancelled){ updateFileDisplay(r.path); clearDirty(); }
       }catch(e){alert('Save error: '+e.message);}
     });
   } else {
@@ -1054,8 +1281,16 @@ function applyProjectData(data){
   const names=Object.keys(sections);
   if(names.length===0){alert('Project file contains no sections.');return;}
   activeSection=data.activeSection && sections[data.activeSection] ? data.activeSection : names[0];
+  // Restore optimization params (merge so missing keys keep defaults from old projects)
+  if(data.optParams){
+    if(data.optParams.tgt)  Object.assign(optParams.tgt,  data.optParams.tgt);
+    if(data.optParams.flex) Object.assign(optParams.flex, data.optParams.flex);
+    if(data.optParams.stir) Object.assign(optParams.stir, data.optParams.stir);
+  }
+  try{ writeOptParamsToDOM(); }catch(e){}
   loadSectionState(activeSection);
   updateSectionDropdown();
+  updateFileDisplay(data._filepath||null);
   clearDirty();
 }
 
@@ -1212,17 +1447,28 @@ function drawCrossSection(){
   if(db_stir>0){
     const stirCL=(cover+db_stir/2)*sc;
     const stirLW=Math.max(db_stir*sc,2);
-    ctx.strokeStyle='#27ae60'; ctx.lineWidth=stirLW; ctx.lineJoin='round';
+    const nLegs=Math.max(2,parseInt(document.getElementById('shear_legs').value)||2);
+    ctx.strokeStyle='#27ae60'; ctx.lineWidth=stirLW; ctx.lineJoin='round'; ctx.lineCap='round';
+    let stirL,stirT,stirW,stirHt;
     if(isRect){
-      const sL=ox+stirCL, sT=oy+stirCL, sW=secW-2*stirCL, sHt=secH-2*stirCL;
-      const cr=Math.min(db_stir*sc*2.5, sW/5, sHt/5);
-      _roundRect(ctx,sL,sT,sW,sHt,cr); ctx.stroke();
+      stirL=ox+stirCL; stirT=oy+stirCL; stirW=secW-2*stirCL; stirHt=secH-2*stirCL;
+      const cr=Math.min(db_stir*sc*2.5, stirW/5, stirHt/5);
+      _roundRect(ctx,stirL,stirT,stirW,stirHt,cr); ctx.stroke();
     } else {
       const wL=sx((b-bw)/2)+stirCL, wR=sx((b+bw)/2)-stirCL;
-      const sT=oy+stirCL, sB=sy(h)-stirCL;
-      const sW=wR-wL, sHt=sB-sT;
-      const cr=Math.min(db_stir*sc*2.5, sW/5, sHt/5);
-      _roundRect(ctx,wL,sT,sW,sHt,cr); ctx.stroke();
+      stirL=wL; stirT=oy+stirCL; stirW=wR-wL; stirHt=sy(h)-stirCL-stirT;
+      const cr=Math.min(db_stir*sc*2.5, stirW/5, stirHt/5);
+      _roundRect(ctx,stirL,stirT,stirW,stirHt,cr); ctx.stroke();
+    }
+    /* Interior legs — equally spaced between the two outer leg centerlines */
+    if(nLegs>2){
+      for(let i=1;i<nLegs-1;i++){
+        const xPos=stirL+stirW*i/(nLegs-1);
+        ctx.beginPath();
+        ctx.moveTo(xPos,stirT);
+        ctx.lineTo(xPos,stirT+stirHt);
+        ctx.stroke();
+      }
     }
   }
   /* ---- bottom bars ---- */
@@ -1382,7 +1628,8 @@ function drawCrossSection(){
   /* stirrup icon */
   ctx.strokeStyle='#27ae60'; ctx.lineWidth=2.5; ctx.lineJoin='round';
   _roundRect(ctx,legX,ly-5,12,10,2); ctx.stroke();
-  ctx.fillStyle='#444'; ctx.fillText('#'+shN_cs+' stirrup @ '+((parseFloat(document.getElementById('shear_s').value)||6).toFixed(1))+'" o.c.',legX+18,ly);
+  const nLegsLegend=Math.max(2,parseInt(document.getElementById('shear_legs').value)||2);
+  ctx.fillStyle='#444'; ctx.fillText('#'+shN_cs+' stirrup ('+nLegsLegend+' legs) @ '+((parseFloat(document.getElementById('shear_s').value)||6).toFixed(1))+'" o.c.',legX+18,ly);
   ly+=18;
   /* bottom bars */
   if(mrBot){
@@ -1901,6 +2148,7 @@ function drawServiceDiagram(fl, inp){
 let pmChartData=null, pmChartPu=0, pmChartMu=0;
 let demandRowCount=0;
 let activeRow=0;
+let shearCapacityMethod='gp'; // Global selection for D/C ratio shear capacity
 
 /* ====== DEMAND ROW MANAGEMENT ====== */
 function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
@@ -1911,10 +2159,10 @@ function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
   tr.id='dr_'+n;
   tr.dataset.idx=n;
   tr.innerHTML=`<td>${n}</td>`
-    +`<td><input type="number" class="dr-x" value="${x??''}" step="any" placeholder="—" style="width:52px">`
-    +`<select class="dr-pt-mode" style="width:58px;font-size:0.72rem;padding:1px;margin-top:2px;display:block"><option value="layout" selected>Layout</option><option value="override">Override</option></select></td>`
-    +`<td><input type="number" class="dr-dp" value="${dp??''}" step="any" placeholder="—" style="width:52px"></td>`
-    +`<td><input type="number" class="dr-fpe" value="${fpe??''}" step="any" placeholder="—" style="width:52px"></td>`
+    +`<td><input type="number" class="dr-x" value="${x??''}" step="any" placeholder="—" style="width:42px">`
+    +`<select class="dr-pt-mode" style="width:50px;font-size:0.68rem;padding:1px;margin-top:2px;display:block"><option value="layout" selected>Layout</option><option value="override">Override</option></select></td>`
+    +`<td><input type="number" class="dr-dp" value="${dp??''}" step="any" placeholder="—" style="width:42px"></td>`
+    +`<td><input type="number" class="dr-fpe" value="${fpe??''}" step="any" placeholder="—" style="width:42px"></td>`
     +`<td><input type="number" class="dr-Vp" value="${vp??0}" step="any"></td>`
     +`<td><input type="number" class="dr-Pu" value="${pu??0}" step="any"></td>`
     +`<td><input type="number" class="dr-Mu" value="${mu??6953}" step="any"></td>`
@@ -1985,6 +2233,892 @@ function setDC(n,type,demand,capacity){
   el.textContent=dc.toFixed(2);
   el.className=dc<=1?'dc-pass':'dc-fail';
 }
+function onShearCapacityChange(){
+  const select=document.getElementById('shearCapSelect');
+  shearCapacityMethod=select?select.value:'gp';
+  debouncedCalculate();
+}
+let _dcSortAsc=false;
+function sortDemandByDC(){
+  const tbody=document.getElementById('demandBody');
+  const rows=Array.from(tbody.querySelectorAll('tr'));
+  function parseDC(el){
+    if(!el) return -1;
+    const t=el.textContent.trim();
+    if(t==='∞'||t==='∞') return Infinity;
+    const v=parseFloat(t);
+    return isNaN(v)?-1:v;
+  }
+  rows.sort((a,b)=>{
+    const idA=a.dataset.idx, idB=b.dataset.idx;
+    const dcA=Math.max(
+      parseDC(document.getElementById('dc_M_'+idA)),
+      parseDC(document.getElementById('dc_V_'+idA)),
+      parseDC(document.getElementById('dc_T_'+idA))
+    );
+    const dcB=Math.max(
+      parseDC(document.getElementById('dc_M_'+idB)),
+      parseDC(document.getElementById('dc_V_'+idB)),
+      parseDC(document.getElementById('dc_T_'+idB))
+    );
+    return _dcSortAsc ? dcA-dcB : dcB-dcA;
+  });
+  _dcSortAsc=!_dcSortAsc;
+  const btn=document.getElementById('dcSortBtn');
+  if(btn) btn.textContent=(_dcSortAsc?'▲':'▼')+' Sort';
+  rows.forEach(r=>tbody.appendChild(r));
+}
+function setDCShear(n,demand,Vr1,Vr2,Vr3){
+  const el=document.getElementById('dc_V_'+n);
+  if(!el) return;
+  let capacity;
+  if(shearCapacityMethod==='simp') capacity=Vr1;
+  else if(shearCapacityMethod==='b5') capacity=Vr3;
+  else capacity=Vr2; // default to GP
+  setDC(n,'V',demand,capacity);
+}
+
+/* ====================================================================
+   PROJECT SUMMARY TAB
+   ==================================================================== */
+/* Build a Python-calc-ready "inputs" payload from a saved section state
+   (mirrors gatherInputs() but without touching the DOM). */
+function buildInputsFromState(state){
+  const inp=state.inputs||{};
+  const num=(v,d=0)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
+  const fc=num(inp.fc,5), fy=num(inp.fy,60), Es=num(inp.Es,29000);
+  const fpu=num(inp.fpu,270), Ept=num(inp.Ept,28500);
+  const ag=num(inp.ag,0.75), lam=num(inp.lam,1), phi_v=num(inp.phi_v,0.9);
+  const gamma_e=num(inp.gamma_e,0.75);
+  const codeEdition=inp.codeEdition||'CA';
+  const sectionClass=inp.sectionClass||'CIP_PT';
+  const Ec = inp.Ec_ovr ? num(inp.Ec_val) : 2500*Math.pow(fc,0.33);
+  const fpy = inp.fpy_ovr ? num(inp.fpy_val) : 0.9*fpu;
+  let ecl;
+  if(inp.ecl_ovr) ecl = num(inp.ecl_val,0.002);
+  else if(fy<=60) ecl=Math.min(fy/Es,0.002);
+  else if(fy>=100) ecl=0.004;
+  else ecl=0.002+(0.004-0.002)*(fy-60)/40;
+  let etl;
+  if(inp.etl_ovr) etl = num(inp.etl_val,0.005);
+  else if(fy<=75) etl=0.005;
+  else if(fy>=100) etl=0.008;
+  else etl=0.005+(0.008-0.005)*(fy-75)/25;
+  const secType=inp.secType||'RECTANGULAR';
+  const b=num(inp.b,16), h=num(inp.h,27);
+  const bw_input=num(inp.bw_input,12), hf_top=num(inp.hf_top,0), hf_bot=num(inp.hf_bot,0);
+  const cover=num(inp.cover,2);
+  const shN_raw=parseInt(inp.shN);
+  const shN_eff=isNaN(shN_raw)?4:shN_raw;
+  const shBar=(shN_eff===0)?null:(BARS[shN_eff]||BARS[4]);
+  const db_stir=shBar?shBar.d:0;
+  let shear_legs=num(inp.shear_legs,2), s_shear=num(inp.shear_s,4);
+  if(shN_eff===0){shear_legs=0; s_shear=0;}
+  const barN_top=parseInt(inp.barN_top)||0;
+  const nBars_top=num(inp.nBars_top,0);
+  const bar_top=BARS[barN_top]||null;
+  const d_top = inp.d_top_ovr ? num(inp.d_top_val,cover) : (bar_top?cover+db_stir+bar_top.d/2:cover);
+  const barN_bot=parseInt(inp.barN_bot)||7;
+  const nBars_bot=num(inp.nBars_bot,0);
+  const bar_bot=BARS[barN_bot]||BARS[7];
+  const d_bot = inp.d_bot_ovr ? num(inp.d_bot_val,h-cover) : (h-cover-db_stir-bar_bot.d/2);
+  const nStrands=num(inp.nStrands,0), strand_area=num(inp.strand_area,0.217);
+  const ductDia=num(inp.duct_dia,0);
+  const dp=num(inp.dp_input,0), fpe=num(inp.fpe_input,0);
+  const tN=(shN_eff===0)?4:shN_eff;
+  const s_torsion=s_shear;
+  // Multi-row reinforcement
+  const mrArrs={top:(state.mrData&&state.mrData.top)||null, bot:(state.mrData&&state.mrData.bot)||null};
+  const clearW=b-2*cover-2*db_stir;
+  function resolveArr(arr){
+    if(!arr||!arr.length) return null;
+    return arr.map(r=>{
+      const bar=BARS[r.barN]||BARS[7];
+      const nBars=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1):Math.max(Math.round(r.val),0);
+      return {d:r.d, As:nBars*bar.a};
+    });
+  }
+  const mr_rows_top=resolveArr(mrArrs.top);
+  const mr_rows_bot=resolveArr(mrArrs.bot);
+  const As_top_ovr=mr_rows_top?mr_rows_top.reduce((s,r)=>s+r.As,0):null;
+  const As_bot_ovr=mr_rows_bot?mr_rows_bot.reduce((s,r)=>s+r.As,0):null;
+  return {fc,fy,Ec,Es,fpu,fpy,Ept,ecl,etl,ecl_override:!!inp.ecl_ovr,etl_override:!!inp.etl_ovr,
+    ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
+    b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,
+    nStrands,strand_area,dp,fpe,ductDia,
+    shN:shN_eff===0?4:shN_eff,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
+}
+
+/* Draw a simplified cross-section to a small canvas from a section state. */
+function drawMiniCrossSection(canvas, state){
+  const inp=state.inputs||{};
+  const num=(v,d=0)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
+  const dpr=window.devicePixelRatio||1;
+  const cssW=parseInt(canvas.style.width)||170;
+  const cssH=parseInt(canvas.style.height)||150;
+  canvas.width=cssW*dpr; canvas.height=cssH*dpr;
+  const ctx=canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,cssW,cssH);
+  const isRect=(inp.secType||'RECTANGULAR')==='RECTANGULAR';
+  const b=num(inp.b,16), h=num(inp.h,27);
+  const bw=isRect?b:num(inp.bw_input,12);
+  const hf_top=isRect?0:num(inp.hf_top,0);
+  const hf_bot=isRect?0:num(inp.hf_bot,0);
+  const cover=num(inp.cover,2);
+  const shN=parseInt(inp.shN); const shBar=(isNaN(shN)||shN===0)?null:(BARS[shN]||BARS[4]);
+  const db_stir=shBar?shBar.d:0;
+  const nLegs=Math.max(2,parseInt(inp.shear_legs)||2);
+  const barN_bot=parseInt(inp.barN_bot)||7, bar_bot=BARS[barN_bot]||BARS[7];
+  const nBars_bot=parseInt(inp.nBars_bot)||0;
+  const barN_top=parseInt(inp.barN_top)||0, bar_top=BARS[barN_top]||null;
+  const nBars_top=parseInt(inp.nBars_top)||0;
+  const nStrands=parseInt(inp.nStrands)||0;
+  const dp=num(inp.dp_input,0);
+  const mL=6,mR=6,mT=6,mB=6;
+  const drawW=cssW-mL-mR, drawH=cssH-mT-mB;
+  const sc=Math.min(drawW/b, drawH/h)*0.92;
+  const secW=b*sc, secH=h*sc;
+  const ox=mL+(drawW-secW)/2, oy=mT+(drawH-secH)/2;
+  const sx=x=>ox+x*sc, sy=y=>oy+y*sc;
+  function sectionPath(){
+    ctx.beginPath();
+    if(isRect){ ctx.rect(ox,oy,secW,secH); }
+    else {
+      ctx.moveTo(sx(0),sy(0)); ctx.lineTo(sx(b),sy(0)); ctx.lineTo(sx(b),sy(hf_top));
+      ctx.lineTo(sx((b+bw)/2),sy(hf_top)); ctx.lineTo(sx((b+bw)/2),sy(h-hf_bot));
+      ctx.lineTo(sx(b),sy(h-hf_bot)); ctx.lineTo(sx(b),sy(h)); ctx.lineTo(sx(0),sy(h));
+      ctx.lineTo(sx(0),sy(h-hf_bot)); ctx.lineTo(sx((b-bw)/2),sy(h-hf_bot));
+      ctx.lineTo(sx((b-bw)/2),sy(hf_top)); ctx.lineTo(sx(0),sy(hf_top)); ctx.closePath();
+    }
+  }
+  ctx.fillStyle='#e0e0e0'; sectionPath(); ctx.fill();
+  ctx.strokeStyle='#444'; ctx.lineWidth=1.5; sectionPath(); ctx.stroke();
+  // Stirrup
+  if(db_stir>0){
+    const stirCL=(cover+db_stir/2)*sc;
+    const stirLW=Math.max(db_stir*sc,1.2);
+    ctx.strokeStyle='#27ae60'; ctx.lineWidth=stirLW; ctx.lineJoin='round'; ctx.lineCap='round';
+    let sL,sT,sW,sHt;
+    if(isRect){
+      sL=ox+stirCL; sT=oy+stirCL; sW=secW-2*stirCL; sHt=secH-2*stirCL;
+    } else {
+      sL=sx((b-bw)/2)+stirCL; sT=oy+stirCL;
+      sW=sx((b+bw)/2)-stirCL-sL; sHt=sy(h)-stirCL-sT;
+    }
+    const cr=Math.min(db_stir*sc*2, sW/5, sHt/5);
+    _roundRect(ctx,sL,sT,sW,sHt,cr); ctx.stroke();
+    if(nLegs>2){
+      for(let i=1;i<nLegs-1;i++){
+        const xPos=sL+sW*i/(nLegs-1);
+        ctx.beginPath(); ctx.moveTo(xPos,sT); ctx.lineTo(xPos,sT+sHt); ctx.stroke();
+      }
+    }
+  }
+  // Bars — bottom
+  const visR=db=>Math.max(db/2*sc,1.6);
+  const innerW=db=>((isRect?b:bw)-2*(cover+db_stir+visR(db)/sc));
+  const innerOX=db=>((isRect?0:(b-bw)/2)+cover+db_stir+visR(db)/sc);
+  const clampY=(d,db)=>{const vr=visR(db)/sc;return Math.max(cover+db_stir+vr,Math.min(h-cover-db_stir-vr,d));};
+  function drawRow(n,bar,d,color){
+    if(n<=0||!bar) return;
+    const r=visR(bar.d), yy=sy(clampY(d,bar.d));
+    const iw=innerW(bar.d), _ox=innerOX(bar.d);
+    ctx.fillStyle=color;
+    for(let i=0;i<n;i++){
+      const xx=(n===1?b/2:_ox+iw*i/(n-1));
+      ctx.beginPath(); ctx.arc(sx(xx),yy,r,0,Math.PI*2); ctx.fill();
+    }
+  }
+  // Multi-row data if present
+  const mrBot=state.mrData&&state.mrData.bot;
+  const mrTop=state.mrData&&state.mrData.top;
+  const clearWMR=(isRect?b:bw)-2*cover-2*db_stir;
+  if(mrBot&&mrBot.length){
+    mrBot.forEach(r=>{
+      const bar=BARS[r.barN]||BARS[7];
+      const n=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearWMR/r.val)+1,1):1):Math.max(Math.round(r.val),0);
+      drawRow(n,bar,r.d,'#2c3e50');
+    });
+  } else {
+    const d_bot = inp.d_bot_ovr ? num(inp.d_bot_val) : (h-cover-db_stir-bar_bot.d/2);
+    drawRow(nBars_bot,bar_bot,d_bot,'#2c3e50');
+  }
+  if(mrTop&&mrTop.length){
+    mrTop.forEach(r=>{
+      const bar=BARS[r.barN]||BARS[7];
+      const n=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearWMR/r.val)+1,1):1):Math.max(Math.round(r.val),0);
+      drawRow(n,bar,r.d,'#8e44ad');
+    });
+  } else if(bar_top&&nBars_top>0){
+    const d_top = inp.d_top_ovr ? num(inp.d_top_val) : (cover+db_stir+bar_top.d/2);
+    drawRow(nBars_top,bar_top,d_top,'#8e44ad');
+  }
+  // PT strands
+  if(nStrands>0 && dp>0){
+    const strandR=Math.max(1.8,visR(0.5)*0.6);
+    ctx.fillStyle='#e74c3c';
+    const cols=Math.min(nStrands,6), rows=Math.ceil(nStrands/cols);
+    const spacing=strandR*2.5;
+    let si=0;
+    for(let r=0;r<rows&&si<nStrands;r++){
+      const rowN=Math.min(cols,nStrands-si); const rowW=(rowN-1)*spacing;
+      for(let c=0;c<rowN&&si<nStrands;c++){
+        ctx.beginPath();
+        ctx.arc(sx(b/2)-rowW/2+c*spacing, sy(dp)-(rows-1)*spacing/2+r*spacing, strandR, 0, Math.PI*2);
+        ctx.fill(); si++;
+      }
+    }
+  }
+}
+
+/* Build a compact reinforcement summary HTML for a section state. */
+function summarizeReinf(state){
+  const inp=state.inputs||{};
+  const parts=[];
+  // Bottom
+  const mrBot=state.mrData&&state.mrData.bot;
+  const barN_bot=parseInt(inp.barN_bot)||7;
+  const nBars_bot=parseInt(inp.nBars_bot)||0;
+  const bar_bot=BARS[barN_bot]||BARS[7];
+  if(mrBot&&mrBot.length){
+    const b=parseFloat(inp.b)||16, cover=parseFloat(inp.cover)||2;
+    const shN=parseInt(inp.shN); const shBar=(isNaN(shN)||shN===0)?null:(BARS[shN]||BARS[4]);
+    const db_stir=shBar?shBar.d:0;
+    const clearW=b-2*cover-2*db_stir;
+    let totAs=0, totN=0;
+    mrBot.forEach(r=>{
+      const bar=BARS[r.barN]||BARS[7];
+      const n=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1):Math.max(Math.round(r.val),0);
+      totAs+=n*bar.a; totN+=n;
+    });
+    parts.push('<div class="ps-reinf-line"><b>Bot:</b> '+mrBot.length+' rows, '+totN+' bars, A<sub>s</sub> = '+totAs.toFixed(2)+' in&sup2;</div>');
+  } else if(nBars_bot>0){
+    parts.push('<div class="ps-reinf-line"><b>Bot:</b> '+nBars_bot+'-#'+barN_bot+' (A<sub>s</sub> = '+(nBars_bot*bar_bot.a).toFixed(2)+' in&sup2;)</div>');
+  }
+  // Top
+  const mrTop=state.mrData&&state.mrData.top;
+  const barN_top=parseInt(inp.barN_top)||0;
+  const nBars_top=parseInt(inp.nBars_top)||0;
+  const bar_top=BARS[barN_top]||null;
+  if(mrTop&&mrTop.length){
+    const b=parseFloat(inp.b)||16, cover=parseFloat(inp.cover)||2;
+    const shN=parseInt(inp.shN); const shBar=(isNaN(shN)||shN===0)?null:(BARS[shN]||BARS[4]);
+    const db_stir=shBar?shBar.d:0;
+    const clearW=b-2*cover-2*db_stir;
+    let totAs=0, totN=0;
+    mrTop.forEach(r=>{
+      const bar=BARS[r.barN]||BARS[7];
+      const n=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1):Math.max(Math.round(r.val),0);
+      totAs+=n*bar.a; totN+=n;
+    });
+    parts.push('<div class="ps-reinf-line"><b>Top:</b> '+mrTop.length+' rows, '+totN+' bars, A\'<sub>s</sub> = '+totAs.toFixed(2)+' in&sup2;</div>');
+  } else if(bar_top&&nBars_top>0){
+    parts.push('<div class="ps-reinf-line"><b>Top:</b> '+nBars_top+'-#'+barN_top+' (A\'<sub>s</sub> = '+(nBars_top*bar_top.a).toFixed(2)+' in&sup2;)</div>');
+  }
+  // Stirrups
+  const shN=parseInt(inp.shN);
+  if(!isNaN(shN)&&shN>0){
+    const shBar=BARS[shN]||BARS[4];
+    const legs=parseInt(inp.shear_legs)||2;
+    const s=parseFloat(inp.shear_s)||0;
+    const Av=legs*shBar.a;
+    parts.push('<div class="ps-reinf-line"><b>Stirrups:</b> #'+shN+' &times; '+legs+' legs @ '+s.toFixed(1)+'" (A<sub>v</sub> = '+Av.toFixed(2)+' in&sup2;)</div>');
+  } else {
+    parts.push('<div class="ps-reinf-line"><b>Stirrups:</b> <em>none</em></div>');
+  }
+  // PT strands
+  const nStrands=parseInt(inp.nStrands)||0;
+  if(nStrands>0){
+    const sa=parseFloat(inp.strand_area)||0.217;
+    parts.push('<div class="ps-reinf-line"><b>PT:</b> '+nStrands+' strands (A<sub>ps</sub> = '+(nStrands*sa).toFixed(3)+' in&sup2;)</div>');
+  }
+  return parts.join('');
+}
+
+function summarizeGeom(state){
+  const inp=state.inputs||{};
+  const isRect=(inp.secType||'RECTANGULAR')==='RECTANGULAR';
+  const parts=[];
+  parts.push('<div><b>'+(isRect?'Rect':'I-Sec')+'</b></div>');
+  parts.push('<div>b = '+(parseFloat(inp.b)||0).toFixed(1)+'"</div>');
+  parts.push('<div>h = '+(parseFloat(inp.h)||0).toFixed(1)+'"</div>');
+  if(!isRect){
+    parts.push('<div>b<sub>w</sub> = '+(parseFloat(inp.bw_input)||0).toFixed(1)+'"</div>');
+  }
+  parts.push('<div>cover = '+(parseFloat(inp.cover)||0).toFixed(2)+'"</div>');
+  parts.push('<div>f\'<sub>c</sub> = '+(parseFloat(inp.fc)||0).toFixed(1)+' ksi</div>');
+  parts.push('<div>f<sub>y</sub> = '+(parseFloat(inp.fy)||0).toFixed(0)+' ksi</div>');
+  return parts.join('');
+}
+
+function formatDCCell(dc, rowIdx){
+  if(dc==null||!isFinite(dc)) return '<td class="ps-dc ps-na">&mdash;</td>';
+  const cls=dc<=1?'ps-pass':'ps-fail';
+  const sub=rowIdx!=null?'<span class="ps-dc-sub">row '+rowIdx+'</span>':'';
+  return '<td class="ps-dc '+cls+'">'+dc.toFixed(2)+sub+'</td>';
+}
+
+let _summaryInFlight=false;
+async function refreshProjectSummary(){
+  if(_summaryInFlight) return;
+  _summaryInFlight=true;
+  try{
+    // Save current section so any unsaved edits are reflected,
+    // but don't flip the project-dirty flag if there were no real changes.
+    const wasDirty=_projectDirty;
+    try{ saveCurrentSectionState(); }catch(e){}
+    if(!wasDirty) clearDirty();
+    const tbody=document.getElementById('summaryTableBody');
+    const emptyMsg=document.getElementById('summaryEmpty');
+    if(!tbody) return;
+    const names=Object.keys(sections||{});
+    tbody.innerHTML='';
+    if(names.length===0){
+      if(emptyMsg) emptyMsg.style.display='';
+      return;
+    }
+    if(emptyMsg) emptyMsg.style.display='none';
+    // Create rows up front with a placeholder row; compute sequentially.
+    names.forEach((name,idx)=>{
+      const tr=document.createElement('tr');
+      tr.id='ps-row-'+idx;
+      tr.innerHTML=
+        '<td class="ps-name">'+escapeHtml(name)+(name===activeSection?' <span style="font-size:0.68rem;color:var(--text-light);font-weight:normal;">(active)</span>':'')+'</td>'
+        +'<td class="ps-canvas"><canvas id="ps-cv-'+idx+'" style="width:170px;height:150px;"></canvas></td>'
+        +'<td class="ps-geom">'+summarizeGeom(sections[name])+'</td>'
+        +'<td class="ps-reinf">'+summarizeReinf(sections[name])+'</td>'
+        +'<td class="ps-dc ps-na" id="ps-dcMsag-'+idx+'">&hellip;</td>'
+        +'<td class="ps-dc ps-na" id="ps-dcMhog-'+idx+'">&hellip;</td>'
+        +'<td class="ps-dc ps-na" id="ps-dcV-'+idx+'">&hellip;</td>'
+        +'<td class="ps-dc ps-na" id="ps-dcT-'+idx+'">&hellip;</td>'
+        +'<td class="ps-actions"><button class="calc-btn ps-opt-btn" id="ps-opt-btn-'+idx+'" onclick="optimizeSection('+idx+')">Optimize</button><div class="ps-opt-status" id="ps-opt-status-'+idx+'"></div></td>';
+      tbody.appendChild(tr);
+      // Draw mini cross-section
+      try{ drawMiniCrossSection(document.getElementById('ps-cv-'+idx), sections[name]); }catch(e){ console.error('mini xsec error:',e); }
+    });
+    if(!(window.pywebview&&window.pywebview.api)){
+      // No backend — leave placeholders
+      return;
+    }
+    // Compute D/C sequentially for each section
+    for(let idx=0; idx<names.length; idx++){
+      const name=names[idx];
+      const state=sections[name];
+      const demandRows=(state.demandRows||[]).map(d=>({Pu:+d.Pu||0,Mu:+d.Mu||0,Vu:+d.Vu||0,Tu:+d.Tu||0,Vp:+d.Vp||0,Ps:+d.Ps||0,Ms:+d.Ms||0,x:d.x==null?null:+d.x,dp:d.dp==null?null:+d.dp,fpe:d.fpe==null?null:+d.fpe}));
+      if(demandRows.length===0){
+        document.getElementById('ps-dcMsag-'+idx).innerHTML='&mdash;';
+        document.getElementById('ps-dcMhog-'+idx).innerHTML='&mdash;';
+        document.getElementById('ps-dcV-'+idx).innerHTML='&mdash;';
+        document.getElementById('ps-dcT-'+idx).innerHTML='&mdash;';
+        continue;
+      }
+      let inputs;
+      try{ inputs=buildInputsFromState(state); }catch(e){
+        console.error('buildInputsFromState error for '+name+':',e);
+        continue;
+      }
+      const payload=JSON.stringify({inputs,demandRows,activeRow:0});
+      let res;
+      try{
+        const json=await window.pywebview.api.calculate(payload);
+        res=JSON.parse(json);
+      }catch(e){
+        console.error('Summary calc failed for '+name+':',e);
+        continue;
+      }
+      if(!res||res.error){
+        console.error('Summary calc error for '+name+':',res&&res.error);
+        continue;
+      }
+      const rowResults=res.row_results||[];
+      let worstMsag=-1, worstMhog=-1, worstV=-1, worstT=-1;
+      let idxMsag=null, idxMhog=null, idxV=null, idxT=null;
+      for(let i=0;i<demandRows.length;i++){
+        const d=demandRows[i], c=rowResults[i];
+        if(!c) continue;
+        // c.Mr is signed: positive for sagging rows, negative for hogging rows (from calc_engine)
+        const MrAbs=Math.abs(c.Mr);
+        if(MrAbs>0 && Math.abs(d.Mu)>1e-9){
+          const dc=Math.abs(d.Mu)/MrAbs;
+          if(d.Mu>=0){ if(dc>worstMsag){worstMsag=dc;idxMsag=i+1;} }
+          else       { if(dc>worstMhog){worstMhog=dc;idxMhog=i+1;} }
+        }
+        const Vcap = shearCapacityMethod==='simp'?c.Vr1 : (shearCapacityMethod==='b5'?c.Vr3 : c.Vr2);
+        if(Vcap>0){ const dc=Math.abs(d.Vu)/Vcap; if(dc>worstV){worstV=dc;idxV=i+1;} }
+        if(c.Tr>0){ const dc=Math.abs(d.Tu)/c.Tr; if(dc>worstT){worstT=dc;idxT=i+1;} }
+      }
+      const setCell=(el,dc,rowIdx)=>{
+        if(!el) return;
+        if(dc<0||!isFinite(dc)){ el.innerHTML='&mdash;'; el.className='ps-dc ps-na'; return; }
+        el.innerHTML=dc.toFixed(2)+(rowIdx!=null?'<span class="ps-dc-sub">row '+rowIdx+'</span>':'');
+        el.className='ps-dc '+(dc<=1?'ps-pass':'ps-fail');
+      };
+      setCell(document.getElementById('ps-dcMsag-'+idx),worstMsag,idxMsag);
+      setCell(document.getElementById('ps-dcMhog-'+idx),worstMhog,idxMhog);
+      setCell(document.getElementById('ps-dcV-'+idx),worstV,idxV);
+      setCell(document.getElementById('ps-dcT-'+idx),worstT,idxT);
+    }
+  } finally {
+    _summaryInFlight=false;
+  }
+}
+
+/* ====================================================================
+   REINFORCEMENT OPTIMIZATION
+   ==================================================================== */
+const _optInFlight = new Set();
+let _optPreviewApply = null;
+let _optPreviewCancel = null;
+
+function yieldFrame(){ return new Promise(r=>requestAnimationFrame(r)); }
+
+/* Max bars that fit in one row given section width, cover, stirrup diam,
+   bar diameter, and minimum clear spacing. */
+function countMaxBarsInRow(b, cover, db_stirrup, db, minClear){
+  const usable = b - 2*cover - 2*db_stirrup;
+  if(usable < db) return 0;
+  // usable >= n*db + (n-1)*minClear  →  n <= (usable + minClear) / (db + minClear)
+  const n = Math.floor((usable + minClear) / (db + minClear));
+  return Math.max(1, n);
+}
+
+/* Compute worst D/C ratios for {Msag, Mhog, V, T} by calling the Python bridge. */
+async function computeDCsForState(state){
+  const empty = {dcMsag:NaN, dcMhog:NaN, dcV:NaN, dcT:NaN};
+  if(!(window.pywebview && window.pywebview.api)) return empty;
+  const demandRows=(state.demandRows||[]).map(d=>({
+    Pu:+d.Pu||0, Mu:+d.Mu||0, Vu:+d.Vu||0, Tu:+d.Tu||0, Vp:+d.Vp||0,
+    Ps:+d.Ps||0, Ms:+d.Ms||0,
+    x:d.x==null?null:+d.x, dp:d.dp==null?null:+d.dp, fpe:d.fpe==null?null:+d.fpe
+  }));
+  if(demandRows.length===0) return empty;
+  let inputs;
+  try{ inputs=buildInputsFromState(state); }catch(e){ return Object.assign({},empty,{error:e.message}); }
+  const payload=JSON.stringify({inputs, demandRows, activeRow:0});
+  let res;
+  try{
+    const json=await window.pywebview.api.calculate(payload);
+    res=JSON.parse(json);
+  }catch(e){ return Object.assign({},empty,{error:String(e)}); }
+  if(!res || res.error) return Object.assign({},empty,{error:res&&res.error});
+  const rows=res.row_results||[];
+  let wMsag=-1, wMhog=-1, wV=-1, wT=-1;
+  for(let i=0;i<demandRows.length;i++){
+    const d=demandRows[i], c=rows[i];
+    if(!c) continue;
+    const MrAbs=Math.abs(c.Mr);
+    if(MrAbs>0 && Math.abs(d.Mu)>1e-9){
+      const dc=Math.abs(d.Mu)/MrAbs;
+      if(d.Mu>=0){ if(dc>wMsag) wMsag=dc; }
+      else       { if(dc>wMhog) wMhog=dc; }
+    }
+    const Vcap = shearCapacityMethod==='simp'?c.Vr1 : (shearCapacityMethod==='b5'?c.Vr3 : c.Vr2);
+    if(Vcap>0){ const dc=Math.abs(d.Vu)/Vcap; if(dc>wV) wV=dc; }
+    if(c.Tr>0){ const dc=Math.abs(d.Tu)/c.Tr; if(dc>wT) wT=dc; }
+  }
+  return {
+    dcMsag: wMsag<0?NaN:wMsag,
+    dcMhog: wMhog<0?NaN:wMhog,
+    dcV:    wV<0?NaN:wV,
+    dcT:    wT<0?NaN:wT
+  };
+}
+
+/* Ascending sweep: single-row flexure, then multi-row with largest bars on the
+   tension face and smaller bars on inner rows. Returns first combo that meets target. */
+async function optimizeFlexure(state, face, targetDC, params){
+  const trial = JSON.parse(JSON.stringify(state));
+  trial.mrData = trial.mrData || {top:null, bot:null};
+  trial.mrData[face] = null;
+  const inp = trial.inputs;
+  const b = parseFloat(inp.b) || 16;
+  const h = parseFloat(inp.h) || 27;
+  const cover = parseFloat(inp.cover) || 2;
+  const shN = parseInt(inp.shN);
+  const db_stir = (isNaN(shN)||shN===0) ? 0 : ((BARS[shN]&&BARS[shN].d)||0.5);
+  const dcKey = (face==='bot') ? 'dcMsag' : 'dcMhog';
+  let bestDC = Infinity, bestConfig = null;
+
+  // --- Single-row sweep ---
+  for(let barN = params.flex.minBar; barN <= params.flex.maxBar; barN++){
+    if(!BARS[barN]) continue;
+    const db = BARS[barN].d;
+    const nMax = countMaxBarsInRow(b, cover, db_stir, db, params.flex.minSpacing);
+    if(nMax < 2) continue;
+    for(let nBars=2; nBars<=nMax; nBars++){
+      inp['barN_'+face] = barN;
+      inp['nBars_'+face] = nBars;
+      inp['d_'+face+'_ovr'] = false;
+      inp['d_'+face+'_val'] = '';
+      const dcs = await computeDCsForState(trial);
+      await yieldFrame();
+      const dc = dcs[dcKey];
+      if(isFinite(dc) && dc < bestDC){ bestDC = dc; }
+      if(isFinite(dc) && dc <= targetDC){
+        return { ok:true, config:{ kind:'single', barN, nBars, As: nBars*BARS[barN].a }, dc, allDCs: dcs };
+      }
+    }
+  }
+
+  // --- Multi-row: row 1 = maxBar at max-fit (outermost tension face), smaller bars inward ---
+  const maxBar = params.flex.maxBar;
+  if(!BARS[maxBar]) return { ok:false, config:null, dc: bestDC };
+  const db1 = BARS[maxBar].d;
+  const n1 = countMaxBarsInRow(b, cover, db_stir, db1, params.flex.minSpacing);
+  if(n1 < 2) return { ok:false, config:null, dc: bestDC };
+  const d1 = (face==='bot') ? (h - cover - db_stir - db1/2) : (cover + db_stir + db1/2);
+  const rowDelta = (barPrev, barK) => {
+    const direction = (face==='bot') ? -1 : 1;
+    return direction * (BARS[barPrev].d/2 + params.flex.rowSpacing + BARS[barK].d/2);
+  };
+  const maxRows = Math.max(2, Math.min(4, params.flex.maxRows||3));
+
+  for(let numRows=2; numRows<=maxRows; numRows++){
+    // Row 1 always fixed at maxBar/maxFit
+    if(numRows===2){
+      for(let bar2 = maxBar; bar2 >= params.flex.minBar; bar2--){
+        if(!BARS[bar2]) continue;
+        const db2 = BARS[bar2].d;
+        const n2Max = countMaxBarsInRow(b, cover, db_stir, db2, params.flex.minSpacing);
+        if(n2Max < 2) continue;
+        const d2 = d1 + rowDelta(maxBar, bar2);
+        for(let n2=2; n2<=n2Max; n2++){
+          const rows=[{barN:maxBar,nBars:n1,d:d1},{barN:bar2,nBars:n2,d:d2}];
+          trial.mrData[face] = rows.map(r=>({d:r.d, barN:r.barN, mode:'count', val:r.nBars}));
+          const dcs = await computeDCsForState(trial);
+          await yieldFrame();
+          const dc = dcs[dcKey];
+          if(isFinite(dc) && dc < bestDC){ bestDC = dc; }
+          if(isFinite(dc) && dc <= targetDC){
+            const totalAs = rows.reduce((s,r)=>s + r.nBars*BARS[r.barN].a, 0);
+            return { ok:true, config:{ kind:'multi', rows:JSON.parse(JSON.stringify(rows)), As: totalAs }, dc, allDCs: dcs };
+          }
+        }
+      }
+    } else if(numRows===3){
+      for(let bar2 = maxBar; bar2 >= params.flex.minBar; bar2--){
+        if(!BARS[bar2]) continue;
+        const db2 = BARS[bar2].d;
+        const n2Max = countMaxBarsInRow(b, cover, db_stir, db2, params.flex.minSpacing);
+        if(n2Max < 2) continue;
+        const d2 = d1 + rowDelta(maxBar, bar2);
+        for(let bar3 = bar2; bar3 >= params.flex.minBar; bar3--){
+          if(!BARS[bar3]) continue;
+          const db3 = BARS[bar3].d;
+          const n3Max = countMaxBarsInRow(b, cover, db_stir, db3, params.flex.minSpacing);
+          if(n3Max < 2) continue;
+          const d3 = d2 + rowDelta(bar2, bar3);
+          for(let n3=2; n3<=n3Max; n3++){
+            const rows=[
+              {barN:maxBar,nBars:n1,d:d1},
+              {barN:bar2,nBars:n2Max,d:d2},
+              {barN:bar3,nBars:n3,d:d3}
+            ];
+            trial.mrData[face] = rows.map(r=>({d:r.d, barN:r.barN, mode:'count', val:r.nBars}));
+            const dcs = await computeDCsForState(trial);
+            await yieldFrame();
+            const dc = dcs[dcKey];
+            if(isFinite(dc) && dc < bestDC){ bestDC = dc; }
+            if(isFinite(dc) && dc <= targetDC){
+              const totalAs = rows.reduce((s,r)=>s + r.nBars*BARS[r.barN].a, 0);
+              return { ok:true, config:{ kind:'multi', rows:JSON.parse(JSON.stringify(rows)), As: totalAs }, dc, allDCs: dcs };
+            }
+          }
+        }
+      }
+    }
+    // If 2-row not feasible and maxRows==2, we'll exit loop.
+  }
+  return { ok:false, config:null, dc: bestDC };
+}
+
+/* Coarse-to-fine shear sweep: smallest bar × fewest legs × largest spacing first. */
+async function optimizeShear(state, tgtV, tgtT, params){
+  const trial = JSON.parse(JSON.stringify(state));
+  const legsStart = Math.max(2, parseInt(trial.inputs.shear_legs)||2);
+  let bestV = Infinity, bestT = Infinity;
+  for(let shN = params.stir.minBar; shN <= params.stir.maxBar; shN++){
+    if(!BARS[shN]) continue;
+    for(let legs = legsStart; legs <= params.stir.maxLegs; legs++){
+      let s = params.stir.sMax;
+      const sMin = params.stir.sMin;
+      const step = Math.max(0.25, params.stir.sStep);
+      while(s >= sMin - 1e-6){
+        trial.inputs.shN = shN;
+        trial.inputs.shear_legs = legs;
+        trial.inputs.shear_s = s;
+        const dcs = await computeDCsForState(trial);
+        await yieldFrame();
+        const dcV = isFinite(dcs.dcV) ? dcs.dcV : Infinity;
+        const dcT = dcs.dcT;
+        if(isFinite(dcV) && dcV < bestV) bestV = dcV;
+        if(isFinite(dcT) && dcT < bestT) bestT = dcT;
+        const passV = !isFinite(dcV) ? true : (dcV <= tgtV);
+        const passT = !isFinite(dcT) ? true : (dcT <= tgtT);
+        if(passV && passT){
+          return { ok:true, config:{ shN, legs, s:+s.toFixed(2) }, dc:{ v:dcV, t:dcT }, allDCs: dcs };
+        }
+        s -= step;
+      }
+    }
+  }
+  return { ok:false, config:null, dc:{ v:bestV, t:bestT } };
+}
+
+/* Describe a flexure configuration from a state — used for the preview modal. */
+function describeFlexureConfig(state, face){
+  const inp = state.inputs || {};
+  const mr = state.mrData && state.mrData[face];
+  if(mr && mr.length){
+    const b = parseFloat(inp.b)||16, cover = parseFloat(inp.cover)||2;
+    const shN = parseInt(inp.shN); const shBar=(isNaN(shN)||shN===0)?null:(BARS[shN]||BARS[4]);
+    const db_stir = shBar ? shBar.d : 0;
+    const clearW = b - 2*cover - 2*db_stir;
+    let totAs=0, totN=0;
+    const lines = mr.map(r=>{
+      const bar = BARS[r.barN] || BARS[7];
+      const n = r.mode==='spacing' ? (r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1) : Math.max(Math.round(r.val),0);
+      totAs += n*bar.a; totN += n;
+      return n+'-#'+r.barN+' @ d='+(+r.d).toFixed(2)+'&quot;';
+    });
+    return { summary: mr.length+' rows: '+lines.join(', ')+' (A<sub>s</sub>='+totAs.toFixed(2)+' in&sup2;)', As: totAs };
+  }
+  const barN = parseInt(inp['barN_'+face])||0;
+  const nBars = parseInt(inp['nBars_'+face])||0;
+  const bar = BARS[barN];
+  if(bar && nBars>0){
+    return { summary: nBars+'-#'+barN+' (A<sub>s</sub>='+(nBars*bar.a).toFixed(2)+' in&sup2;)', As: nBars*bar.a };
+  }
+  return { summary: '<em>none</em>', As: 0 };
+}
+function describeShearConfig(state){
+  const inp = state.inputs || {};
+  const shN = parseInt(inp.shN);
+  if(isNaN(shN) || shN===0) return { summary:'<em>none</em>', Av:0 };
+  const bar = BARS[shN] || BARS[4];
+  const legs = parseInt(inp.shear_legs)||2;
+  const s = parseFloat(inp.shear_s)||0;
+  const Av = legs*bar.a;
+  return { summary:'#'+shN+' &times; '+legs+' legs @ '+s.toFixed(1)+'&quot; (A<sub>v</sub>='+Av.toFixed(2)+' in&sup2;)', Av };
+}
+
+function applyFlexureToState(state, face, result){
+  if(!result || !result.ok) return;
+  state.mrData = state.mrData || { top:null, bot:null };
+  if(result.config.kind==='single'){
+    state.inputs['barN_'+face] = result.config.barN;
+    state.inputs['nBars_'+face] = result.config.nBars;
+    state.inputs['d_'+face+'_ovr'] = false;
+    state.inputs['d_'+face+'_val'] = '';
+    state.mrData[face] = null;
+  } else {
+    state.mrData[face] = result.config.rows.map(r=>({ d:r.d, barN:r.barN, mode:'count', val:r.nBars }));
+    // Keep single-row fields pointing at row 1 for legacy display paths
+    state.inputs['barN_'+face] = result.config.rows[0].barN;
+    state.inputs['nBars_'+face] = result.config.rows[0].nBars;
+    state.inputs['d_'+face+'_ovr'] = false;
+    state.inputs['d_'+face+'_val'] = '';
+  }
+}
+function applyShearToState(state, result){
+  if(!result || !result.ok) return;
+  state.inputs.shN = result.config.shN;
+  state.inputs.shear_legs = result.config.legs;
+  state.inputs.shear_s = result.config.s;
+}
+
+/* Orchestrator: run flexure (bot/top as needed) and shear/torsion, then preview. */
+async function optimizeSection(idx){
+  if(_optInFlight.has(idx)) return;
+  _optInFlight.add(idx);
+  const btn = document.getElementById('ps-opt-btn-'+idx);
+  const statusEl = document.getElementById('ps-opt-status-'+idx);
+  const setStatus = (txt, cls)=>{
+    if(!statusEl) return;
+    statusEl.textContent = txt || '';
+    statusEl.className = 'ps-opt-status' + (cls?(' ps-opt-'+cls):'');
+  };
+  if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; }
+  try{
+    readOptParamsFromDOM();
+    const params = optParams;
+    const names = Object.keys(sections);
+    const name = names[idx];
+    if(!name){ setStatus(''); return; }
+    // Ensure the current active section's DOM edits are committed before cloning
+    try{ saveCurrentSectionState(); }catch(e){}
+    const state = sections[name];
+    if(!state || !(state.demandRows||[]).length){
+      setStatus('No demand rows — nothing to optimize.', 'fail');
+      return;
+    }
+    setStatus('Analyzing demands...');
+    const hasMpos = state.demandRows.some(d=>+d.Mu>0);
+    const hasMneg = state.demandRows.some(d=>+d.Mu<0);
+    const hasV    = state.demandRows.some(d=>Math.abs(+d.Vu)>0);
+    const hasT    = state.demandRows.some(d=>Math.abs(+d.Tu)>0);
+    if(!(hasMpos||hasMneg||hasV||hasT)){
+      setStatus('All demands are zero — nothing to optimize.', 'fail');
+      return;
+    }
+
+    setStatus('Baseline D/C...');
+    const beforeDCs = await computeDCsForState(state);
+
+    const trial = JSON.parse(JSON.stringify(state));
+    const results = { flexBot:null, flexTop:null, shear:null };
+
+    if(hasMpos){
+      setStatus('Optimizing bottom flexure...');
+      results.flexBot = await optimizeFlexure(trial, 'bot', params.tgt.mpos, params);
+      applyFlexureToState(trial, 'bot', results.flexBot);
+    }
+    if(hasMneg){
+      setStatus('Optimizing top flexure...');
+      results.flexTop = await optimizeFlexure(trial, 'top', params.tgt.mneg, params);
+      applyFlexureToState(trial, 'top', results.flexTop);
+    }
+    if(hasV || hasT){
+      setStatus('Optimizing shear/torsion...');
+      results.shear = await optimizeShear(trial, params.tgt.v, params.tgt.t, params);
+      applyShearToState(trial, results.shear);
+    }
+
+    setStatus('Finalizing...');
+    const afterDCs = await computeDCsForState(trial);
+
+    const beforeConfig = {
+      bot: describeFlexureConfig(state,'bot'),
+      top: describeFlexureConfig(state,'top'),
+      shear: describeShearConfig(state)
+    };
+    const afterConfig = {
+      bot: describeFlexureConfig(trial,'bot'),
+      top: describeFlexureConfig(trial,'top'),
+      shear: describeShearConfig(trial)
+    };
+
+    setStatus('');
+    openOptPreview({
+      sectionName: name,
+      before: { config: beforeConfig, dcs: beforeDCs, state: state },
+      after:  { config: afterConfig,  dcs: afterDCs,  state: trial },
+      results: results,
+      targets: params.tgt,
+      active: { hasMpos, hasMneg, hasV, hasT },
+      onApply: ()=>{
+        sections[name] = JSON.parse(JSON.stringify(trial));
+        markDirty();
+        // If the section is active, sync the DOM *before* refreshing the summary.
+        // refreshProjectSummary() calls saveCurrentSectionState() at its top, which
+        // would otherwise overwrite our new state with the still-stale DOM values.
+        if(name === activeSection){
+          try{ loadSectionState(name); }catch(e){ console.error('reload after optimize failed:',e); }
+        }
+        refreshProjectSummary();
+        setStatus('Applied.', 'ok');
+      },
+      onCancel: ()=>{ setStatus(''); }
+    });
+  } catch(e){
+    console.error('optimizeSection error:', e);
+    setStatus('Error: '+e.message, 'fail');
+  } finally {
+    _optInFlight.delete(idx);
+    if(btn){ btn.disabled = false; btn.style.opacity = '1'; }
+  }
+}
+
+/* ----- Preview modal ----- */
+function openOptPreview(data){
+  const fmtDC = (dc, tgt) => {
+    if(!isFinite(dc) || dc<0) return { cls:'na', txt:'&mdash;', tgtTxt: 'n/a' };
+    const cls = dc<=tgt ? 'pass' : 'fail';
+    return { cls, txt: dc.toFixed(2), tgtTxt: 'target &le; '+tgt.toFixed(2) };
+  };
+  const title = document.getElementById('optPreviewTitle');
+  const sub   = document.getElementById('optPreviewSub');
+  if(title) title.textContent = 'Optimization result — ' + data.sectionName;
+  if(sub)   sub.innerHTML = 'Proposed changes shown below. Click <b>Apply</b> to write them into this section or <b>Cancel</b> to discard.';
+
+  const beforeHtml =
+    '<div class="opt-line"><b>Bottom flexure:</b> '+data.before.config.bot.summary+'</div>'+
+    '<div class="opt-line"><b>Top flexure:</b> '+data.before.config.top.summary+'</div>'+
+    '<div class="opt-line"><b>Stirrups:</b> '+data.before.config.shear.summary+'</div>';
+  const afterHtml =
+    '<div class="opt-line"><b>Bottom flexure:</b> '+data.after.config.bot.summary+'</div>'+
+    '<div class="opt-line"><b>Top flexure:</b> '+data.after.config.top.summary+'</div>'+
+    '<div class="opt-line"><b>Stirrups:</b> '+data.after.config.shear.summary+'</div>';
+  document.getElementById('optPreviewBefore').innerHTML = beforeHtml;
+  document.getElementById('optPreviewAfter').innerHTML  = afterHtml;
+
+  const dcs = data.after.dcs;
+  const dcMsag = fmtDC(dcs.dcMsag, data.targets.mpos);
+  const dcMhog = fmtDC(dcs.dcMhog, data.targets.mneg);
+  const dcV    = fmtDC(dcs.dcV,    data.targets.v);
+  const dcT    = fmtDC(dcs.dcT,    data.targets.t);
+  document.getElementById('optPreviewDCs').innerHTML =
+    '<div class="opt-dc-cell '+dcMsag.cls+'"><div class="opt-dc-label">M<sup>+</sup> D/C</div><div class="opt-dc-val">'+dcMsag.txt+'</div><div class="opt-dc-tgt">'+dcMsag.tgtTxt+'</div></div>'+
+    '<div class="opt-dc-cell '+dcMhog.cls+'"><div class="opt-dc-label">M<sup>&minus;</sup> D/C</div><div class="opt-dc-val">'+dcMhog.txt+'</div><div class="opt-dc-tgt">'+dcMhog.tgtTxt+'</div></div>'+
+    '<div class="opt-dc-cell '+dcV.cls+'"><div class="opt-dc-label">Shear D/C</div><div class="opt-dc-val">'+dcV.txt+'</div><div class="opt-dc-tgt">'+dcV.tgtTxt+'</div></div>'+
+    '<div class="opt-dc-cell '+dcT.cls+'"><div class="opt-dc-label">Torsion D/C</div><div class="opt-dc-val">'+dcT.txt+'</div><div class="opt-dc-tgt">'+dcT.tgtTxt+'</div></div>';
+
+  const warns = [];
+  if(data.active.hasMpos && data.results.flexBot && !data.results.flexBot.ok){
+    warns.push('Bottom flexure: target M<sup>+</sup> &le; '+data.targets.mpos.toFixed(2)+' not reached. Best D/C = '+(isFinite(data.results.flexBot.dc)?data.results.flexBot.dc.toFixed(2):'&infin;')+' within constraints (max bar #'+optParams.flex.maxBar+', up to '+optParams.flex.maxRows+' rows).');
+  }
+  if(data.active.hasMneg && data.results.flexTop && !data.results.flexTop.ok){
+    warns.push('Top flexure: target M<sup>&minus;</sup> &le; '+data.targets.mneg.toFixed(2)+' not reached. Best D/C = '+(isFinite(data.results.flexTop.dc)?data.results.flexTop.dc.toFixed(2):'&infin;')+' within constraints.');
+  }
+  if((data.active.hasV||data.active.hasT) && data.results.shear && !data.results.shear.ok){
+    const v = data.results.shear.dc.v, t = data.results.shear.dc.t;
+    warns.push('Shear/torsion: targets not reached. Best Shear D/C = '+(isFinite(v)?v.toFixed(2):'&infin;')+', Torsion D/C = '+(isFinite(t)?t.toFixed(2):'&mdash;')+'.');
+  }
+  document.getElementById('optPreviewWarnings').innerHTML = warns.length ? '<div class="opt-warn">'+warns.join('<br>')+'</div>' : '';
+
+  _optPreviewApply = data.onApply;
+  _optPreviewCancel = data.onCancel;
+  document.getElementById('optPreviewOverlay').classList.add('show');
+  // Draw before/after cross-sections after the overlay is visible (requestAnimationFrame
+  // lets the layout settle so the canvas gets correct dimensions on hi-DPI displays).
+  requestAnimationFrame(()=>{
+    try{
+      const cvB=document.getElementById('optPreviewCvBefore');
+      const cvA=document.getElementById('optPreviewCvAfter');
+      if(cvB && data.before.state) drawMiniCrossSection(cvB, data.before.state);
+      if(cvA && data.after.state)  drawMiniCrossSection(cvA, data.after.state);
+    }catch(e){ console.error('preview mini xsec error:', e); }
+  });
+}
+function closeOptPreview(){
+  document.getElementById('optPreviewOverlay').classList.remove('show');
+  const cb = _optPreviewCancel;
+  _optPreviewApply = null; _optPreviewCancel = null;
+  if(cb){ try{ cb(); }catch(e){} }
+}
+function applyOptPreview(){
+  document.getElementById('optPreviewOverlay').classList.remove('show');
+  const cb = _optPreviewApply;
+  _optPreviewApply = null; _optPreviewCancel = null;
+  if(cb){ try{ cb(); }catch(e){ console.error('apply error:',e); } }
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* Set the second demand-table header row's top offset = first row's rendered height,
+   so both rows stick correctly within the scrollable container. */
+function fixDemandStickyHeader(){
+  const table=document.getElementById('demandTable');
+  if(!table) return;
+  const row1=table.querySelector('thead tr:first-child');
+  if(!row1) return;
+  const h=Math.round(row1.getBoundingClientRect().height);
+  if(h===0) return; // not yet painted
+  table.querySelectorAll('thead tr:nth-child(2) th').forEach(th=>{th.style.top=h+'px';});
+}
 
 /* ====== HELPERS ====== */
 const V=id=>{const el=document.getElementById(id);const v=parseFloat(el.value);return isNaN(v)?0:v;};
@@ -2013,6 +3147,9 @@ document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>
     requestAnimationFrame(()=>{
       if(window._ptResult) drawPtCharts(window._ptResult);
     });
+  }
+  if(b.dataset.tab==='summary'){
+    refreshProjectSummary();
   }
 }));
 function toggleShowAll(){
@@ -2173,7 +3310,7 @@ function runAllCalculations(){
           document.getElementById('cap_Vr3_'+n).textContent=F(cap.Vr3,0);
           document.getElementById('cap_Tr_'+n).textContent=F(cap.Tr,0);
           setDC(n,'M',demandRows[i].Mu,cap.Mr);
-          setDC(n,'V',demandRows[i].Vu,cap.Vr2);
+          setDCShear(n,demandRows[i].Vu,cap.Vr1,cap.Vr2,cap.Vr3);
           setDC(n,'T',demandRows[i].Tu,cap.Tr);
           const stCrack=document.getElementById('st_crack_'+n);
           const stFlex=document.getElementById('st_flex_'+n);
@@ -4732,6 +5869,8 @@ window.addEventListener('load',()=>{
   const fpuEl=document.getElementById('fpu'),fpjEl=document.getElementById('pt_fpj');
   if(fpuEl&&fpjEl){fpjEl.value=(0.75*parseFloat(fpuEl.value||270)).toFixed(1);fpuEl.addEventListener('input',()=>{fpjEl.value=(0.75*parseFloat(fpuEl.value||270)).toFixed(1);});}
   setupAutoCalculate();runAllCalculations();
+  // Fix two-row sticky header: second header row needs top = first row's height
+  requestAnimationFrame(fixDemandStickyHeader);
   // Initial PT calc after backend is ready
   setTimeout(()=>runPtCalc(),800);
 
@@ -4748,7 +5887,7 @@ window.addEventListener('load',()=>{
     { ensureRows: ()=>addDemandRow(), onChange: ()=>debouncedCalculate() }
   );
 });
-window.addEventListener('resize',()=>debouncedCalculate());
+window.addEventListener('resize',()=>{debouncedCalculate();fixDemandStickyHeader();});
 window.addEventListener('beforeunload',(e)=>{
   if(_projectDirty){e.preventDefault();e.returnValue='';}
 });
@@ -4991,7 +6130,43 @@ function setupExcelTable(tbodyId, cellClasses, opts){
     if(e.clipboardData){ e.clipboardData.setData('text/plain', tsv); e.preventDefault(); }
   });
 }
+
+document.addEventListener('keydown',(e)=>{
+  if((e.ctrlKey||e.metaKey) && e.key==='s'){
+    e.preventDefault();
+    saveProjectQuick();
+  }
+});
+
+// Initialise file display on load
+updateFileDisplay(null);
 </script>
+<!-- Optimization Preview Modal -->
+<div class="mr-overlay" id="optPreviewOverlay" onclick="if(event.target===this)closeOptPreview()">
+  <div class="opt-preview-modal">
+    <h3 id="optPreviewTitle">Optimization result</h3>
+    <div class="opt-sub" id="optPreviewSub"></div>
+    <div class="opt-cols">
+      <div class="opt-col">
+        <h4>Before</h4>
+        <div class="opt-cv-wrap"><canvas id="optPreviewCvBefore" style="width:220px;height:200px;"></canvas></div>
+        <div id="optPreviewBefore"></div>
+      </div>
+      <div class="opt-col">
+        <h4>After (proposed)</h4>
+        <div class="opt-cv-wrap"><canvas id="optPreviewCvAfter" style="width:220px;height:200px;"></canvas></div>
+        <div id="optPreviewAfter"></div>
+      </div>
+    </div>
+    <div class="opt-dc-grid" id="optPreviewDCs"></div>
+    <div id="optPreviewWarnings"></div>
+    <div class="mr-btns">
+      <button class="mr-cancel" onclick="closeOptPreview()">Cancel</button>
+      <button class="mr-apply" onclick="applyOptPreview()">Apply</button>
+    </div>
+  </div>
+</div>
+
 <!-- Multi-Row Reinforcement Modal -->
 <div class="mr-overlay" id="mrOverlay" onclick="if(event.target===this)closeMR()">
   <div class="mr-modal">

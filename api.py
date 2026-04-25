@@ -11,7 +11,15 @@ import pt_engine
 
 class Api:
     def __init__(self):
-        self.window = None  # set by app.py after create_window
+        self._window = None  # set by app.py after create_window (private to avoid pywebview introspection issues)
+
+    @property
+    def window(self):
+        return self._window
+
+    @window.setter
+    def window(self, value):
+        self._window = value
 
     def calculate(self, inputs_json):
         """
@@ -41,9 +49,9 @@ class Api:
             return json.dumps({"error": str(e)})
 
     def save_project(self, project_json):
-        """Save project data to a user-chosen .aashto.json file."""
+        """Save project data to a user-chosen .aashto.json file (Save As dialog)."""
         try:
-            result = self.window.create_file_dialog(
+            result = self._window.create_file_dialog(
                 dialog_type=webview.SAVE_DIALOG,
                 save_filename='project.aashto.json',
                 file_types=('AASHTO Project (*.aashto.json)',)
@@ -53,7 +61,18 @@ class Api:
             filepath = result if isinstance(result, str) else result[0]
             if not filepath.endswith('.aashto.json'):
                 filepath += '.aashto.json'
-            # Validate JSON before writing
+            json.loads(project_json)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(project_json)
+            return json.dumps({"path": filepath})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def save_project_to_path(self, project_json, filepath):
+        """Overwrite an existing project file without showing a dialog."""
+        try:
+            if not filepath or not os.path.isfile(filepath):
+                return json.dumps({"error": "File not found: " + str(filepath)})
             json.loads(project_json)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(project_json)
@@ -62,9 +81,9 @@ class Api:
             return json.dumps({"error": str(e)})
 
     def load_project(self):
-        """Open a file dialog and return the project JSON contents."""
+        """Open a file dialog and return the project JSON contents plus the filepath."""
         try:
-            result = self.window.create_file_dialog(
+            result = self._window.create_file_dialog(
                 dialog_type=webview.OPEN_DIALOG,
                 file_types=('AASHTO Project (*.aashto.json)',)
             )
@@ -73,11 +92,11 @@ class Api:
             filepath = result if isinstance(result, str) else result[0]
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
-            # Validate JSON
             data = json.loads(content)
             if 'version' not in data or 'sections' not in data:
                 return json.dumps({"error": "Invalid project file: missing 'version' or 'sections'"})
-            return content
+            data['_filepath'] = filepath
+            return json.dumps(data)
         except json.JSONDecodeError:
             return json.dumps({"error": "File is not valid JSON"})
         except Exception as e:
