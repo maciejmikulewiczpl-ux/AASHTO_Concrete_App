@@ -181,9 +181,23 @@ def derive_constants(I):
     fpu = I["fpu"]
     fpy = I["fpy"]
 
-    I["beta1"] = max(min(0.85, 0.85 - 0.05 * (fc - 4)), 0.65)
-    # alpha1: 0.85 for fc <= 10, reduced by 0.02 per ksi above 10, min 0.75  (5.6.2.2)
-    I["alpha1"] = max(0.75, 0.85 - 0.02 * max(fc - 10, 0))
+    # Apply factor overrides if provided
+    fo = I.get("factor_overrides", {})
+    if "alpha1_f" in fo:
+        I["alpha1"] = fo["alpha1_f"]
+    else:
+        I["alpha1"] = max(0.75, 0.85 - 0.02 * max(fc - 10, 0))
+    if "beta1_f" in fo:
+        I["beta1"] = fo["beta1_f"]
+    else:
+        I["beta1"] = max(min(0.85, 0.85 - 0.05 * (fc - 4)), 0.65)
+    if "phi_v_f" in fo:
+        I["phi_v"] = fo["phi_v_f"]
+    if "lambda_f" in fo:
+        I["lam"] = fo["lambda_f"]
+    if "gamma_e_f" in fo:
+        I["gamma_e"] = fo["gamma_e_f"]
+
     I["k_pt"] = 2 * (1.04 - fpy / fpu) if fpu > 0 else 0
     I["n_mod"] = Es / Ec if Ec > 0 else 0
     I["ey"] = fy / Es if Es > 0 else 0
@@ -946,6 +960,9 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
                      f"", 0, "")
     
     phi_f = get_phi_flex(code_edition, section_class, eps_t, ecl, etl)
+    fo = I.get("factor_overrides", {})
+    if "phi_f_f" in fo:
+        phi_f = fo["phi_f_f"]
     if abs(eps_t) >= etl:
         sec_status = "TENSION CONTROLLED"
         phi_breakdown.add(f"εt = {fmt_num(eps_t, 4)} ≥ εtl = {fmt_num(etl, 4)} → TENSION CONTROLLED → φ = {fmt_num(phi_f, 2)}",
@@ -983,9 +1000,13 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     pm_eq = get_pm_equilibrium_at_pu(pm_curve, Pu)
 
     # ── Minimum flexure reinforcement (5.6.3.3) ──
-    gamma1 = 1.6
-    # γ3 per Table 5.6.3.3-1: 0.67 for Grade 60, 0.75 for Grade 75/80/100
-    gamma3 = 0.67 if fy <= 60 else 0.75
+    fo = I.get("factor_overrides", {})
+    gamma1 = fo.get("gamma1_f", 1.6)  # Table 5.6.3.3-1: flexural cracking variability factor (all sections other than precast segmental)
+    gamma2 = fo.get("gamma2_f", 1.1)  # Table 5.6.3.3-1: prestress factor (bonded tendons)
+    # γ3 per Table 5.6.3.3-1: depends on ASTM spec of reinforcement
+    astm_spec = I.get("astm_spec", "A615")
+    gamma3_default = 0.67 if astm_spec == "A615" else 0.75
+    gamma3 = fo.get("gamma3_f", gamma3_default)
     fr = 0.24 * math.sqrt(fc) if fc > 0 else 0
     if is_rect:
         Sc = b * h * h / 6
@@ -1000,7 +1021,32 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
               + bw * hw ** 3 / 12 + A2 * (yb - y2) ** 2
               + b * hf_bot ** 3 / 12 + A3 * (yb - y3) ** 2)
         Sc = It / max(yb, h - yb) if max(yb, h - yb) > 0 else 0
-    Mcr = gamma1 * gamma3 * fr * Sc
+    # fcpe: compressive stress at extreme tension fiber due to effective prestress (5.6.3.3)
+    # fcpe = P/A + P*e*yt/I  where P = Aps*fpe, e = eccentricity from centroid to PT
+    Aps_mcr = I.get("Aps", 0)
+    fpe_mcr = I.get("fpe", 0)
+    Ag_mcr = I.get("Ag", b * h)
+    Ig_mcr = I.get("Ig", b * h ** 3 / 12.0)
+    yb_c = I.get("yb_centroid", h / 2.0)  # centroid from top
+    dp_mcr = I.get("dp", h / 2.0)
+    P_eff = Aps_mcr * fpe_mcr  # effective prestress force (kip)
+    # Eccentricity: distance from section centroid to PT centroid (positive if PT below centroid)
+    e_pt = dp_mcr - yb_c
+    # Distance from centroid to extreme tension fiber
+    # For positive moment (top compression): tension fiber is at bottom, yt = h - yb_c
+    # For negative moment (bottom compression): tension fiber is at top, yt = yb_c
+    if Mu >= 0:
+        yt_mcr = h - yb_c
+    else:
+        yt_mcr = yb_c
+    if Ag_mcr > 0 and Ig_mcr > 0 and P_eff > 0:
+        fcpe = P_eff / Ag_mcr + P_eff * e_pt * yt_mcr / Ig_mcr
+        fcpe = max(fcpe, 0)  # fcpe is compressive stress, must be >= 0
+    else:
+        fcpe = 0
+    # Full AASHTO 5.6.3.3-1: Mcr = γ₃·(γ₁·fr + γ₂·fcpe)·Sc - Mdnc·(Sc/Snc - 1)
+    # Non-composite assumption: Sc = Snc, so Mdnc term = 0
+    Mcr = gamma3 * (gamma1 * fr + gamma2 * fcpe) * Sc
     Mcond = min(1.33 * abs(Mu), Mcr)
     min_flex_ok = Mr >= Mcond
 
@@ -1159,7 +1205,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
         # P-M data
         "pm_data": pm_data, "pm_curve": pm_curve, "pm_eq": pm_eq,
         # Min flexure
-        "gamma1": gamma1, "gamma3": gamma3, "fr": fr, "Sc": Sc, "Mcr": Mcr, "Mcond": Mcond, "min_flex_ok": min_flex_ok,
+        "gamma1": gamma1, "gamma2": gamma2, "gamma3": gamma3, "fcpe": fcpe,
+        "fr": fr, "Sc": Sc, "Mcr": Mcr, "Mcond": Mcond, "min_flex_ok": min_flex_ok,
         # Crack control
         "dc": dc, "beta_s": beta_s, "fss_simp": fss_simp, "s_crack": s_crack,
         # Spacing
@@ -1247,9 +1294,13 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     Ec = I["Ec"]
 
     fpo = 0.7 * fpu
-    lambda_duct = 1.0
-    if duct_dia > 0 and bv > 0:
-        lambda_duct = max(1 - 2 * (duct_dia / bv) ** 2, 0.5)
+    fo = I.get("factor_overrides", {})
+    if "lambda_duct_f" in fo:
+        lambda_duct = fo["lambda_duct_f"]
+    else:
+        lambda_duct = 1.0
+        if duct_dia > 0 and bv > 0:
+            lambda_duct = max(1 - 2 * (duct_dia / bv) ** 2, 0.5)
 
     # Torsion info for Veff (5.7.3.4.2-5)
     torsion_consider = tors_info["consider"] if tors_info else False
@@ -1516,13 +1567,16 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     s_max_sh = min(0.8 * dv, 24) if vu < 0.125 * fc else min(0.4 * dv, 12)
 
     # Longitudinal reinforcement (5.7.3.5-1 without torsion, 5.7.3.6.3-1 with torsion)
-    phi_c = 0.75
-    Vs_des = min(Vs2, abs(Vu) / phi_v) if phi_v > 0 else Vs2
-    cott = 1 / math.tan(math.radians(th2)) if th2 > 0 else 0
+    fo = I.get("factor_overrides", {})
+    phi_c = fo.get("phi_c_f", 0.75)
     ld_M = abs(Mu) / (dv * phi_f) if (dv * phi_f) > 0 else 0
     ld_N = 0.5 * Pu / phi_c
+    long_cap = As * fy + (Aps_tens * fps_calc if Aps_tens > 0 else 0)
+
+    # --- Method 2 (General Procedure) - existing logic, kept as primary ---
+    Vs_des = min(Vs2, abs(Vu) / phi_v) if phi_v > 0 else Vs2
+    cott = 1 / math.tan(math.radians(th2)) if th2 > 0 else 0
     ld_V_shear = max(abs(Vu) / phi_v - Vp, 0) - 0.5 * Vs_des if phi_v > 0 else 0
-    # Per 5.7.3.6.3-1: when torsion considered, use SRSS of shear and torsion terms
     if torsion_consider and tors_Ao > 0:
         ld_T_tors = 0.45 * tors_ph * abs(Tu) / (2 * tors_Ao * phi_v) if phi_v > 0 else 0
         ld_VT = math.sqrt(max(ld_V_shear, 0) ** 2 + ld_T_tors ** 2)
@@ -1531,8 +1585,36 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         ld_VT = max(ld_V_shear, 0)
     ld_V = ld_V_shear  # keep for display
     long_dem = ld_M + ld_N + ld_VT * cott
-    long_cap = As * fy + (Aps_tens * fps_calc if Aps_tens > 0 else 0)
     long_ok = long_cap >= long_dem
+
+    # --- Method 1 (Simplified, θ=45°) ---
+    Vs_des_1 = min(Vs1, abs(Vu) / phi_v) if phi_v > 0 else Vs1
+    cott_1 = 1.0  # cot(45°) = 1.0
+    ld_V_shear_1 = max(abs(Vu) / phi_v - Vp, 0) - 0.5 * Vs_des_1 if phi_v > 0 else 0
+    if torsion_consider and tors_Ao > 0:
+        ld_VT_1 = math.sqrt(max(ld_V_shear_1, 0) ** 2 + ld_T_tors ** 2)
+    else:
+        ld_VT_1 = max(ld_V_shear_1, 0)
+    long_dem_1 = ld_M + ld_N + ld_VT_1 * cott_1
+    long_ok_1 = long_cap >= long_dem_1
+
+    # --- Method 3 (Appendix B5) ---
+    if b5_valid and th3 > 0:
+        Vs_des_3 = min(Vs3, abs(Vu) / phi_v) if phi_v > 0 else Vs3
+        cott_3 = 1 / math.tan(math.radians(th3))
+        ld_V_shear_3 = max(abs(Vu) / phi_v - Vp, 0) - 0.5 * Vs_des_3 if phi_v > 0 else 0
+        if torsion_consider and tors_Ao > 0:
+            ld_VT_3 = math.sqrt(max(ld_V_shear_3, 0) ** 2 + ld_T_tors ** 2)
+        else:
+            ld_VT_3 = max(ld_V_shear_3, 0)
+        long_dem_3 = ld_M + ld_N + ld_VT_3 * cott_3
+        long_ok_3 = long_cap >= long_dem_3
+    else:
+        Vs_des_3 = None
+        cott_3 = None
+        ld_VT_3 = None
+        long_dem_3 = None
+        long_ok_3 = None
 
     # Per AASHTO 5.7.2.3: transverse reinf required if Vu > 0.5φ(Vc+Vp)
     # OR where torsion must be considered (Tu > 0.25φTcr per 5.7.2.1-3)
@@ -1573,6 +1655,12 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         "phi_c": phi_c, "Vs_des": Vs_des, "th_des": th2, "cott": cott,
         "ld_M": ld_M, "ld_N": ld_N, "ld_V": ld_V, "ld_T_tors": ld_T_tors, "ld_VT": ld_VT,
         "long_dem": long_dem, "long_cap": long_cap, "long_ok": long_ok,
+        # Longitudinal - Method 1 (Simplified, θ=45°)
+        "cott_1": cott_1, "Vs_des_1": Vs_des_1, "ld_VT_1": ld_VT_1,
+        "long_dem_1": long_dem_1, "long_ok_1": long_ok_1,
+        # Longitudinal - Method 3 (Appendix B5)
+        "cott_3": cott_3, "Vs_des_3": Vs_des_3, "ld_VT_3": ld_VT_3,
+        "long_dem_3": long_dem_3, "long_ok_3": long_ok_3,
         # Shear Method Breakdowns
         "breakdown_shear_m1": shear_breakdown_m1.to_dict(),
         "breakdown_shear_m2": shear_breakdown_m2.to_dict(),
@@ -2045,11 +2133,60 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
     # Sign convention: Mr follows Mu sign (positive sagging, negative hogging)
     Mr_signed = -Mr if Mu < 0 else Mr
 
+    # Longitudinal reinforcement check (5.7.3.5-1 / 5.7.3.6.3-1) per row
+    fo = I.get("factor_overrides", {})
+    phi_c_row = fo.get("phi_c_f", 0.75)
+    eps_t_row = 0.003 * (ds - c) / c if c > 0 else 0.005
+    phi_f_row = get_phi_flex(code_edition, section_class, eps_t_row, ecl, etl)
+    if "phi_f_f" in fo:
+        phi_f_row = fo["phi_f_f"]
+    ld_M_row = abs(Mu) / (dv * phi_f_row) if (dv * phi_f_row) > 0 else 0
+    ld_N_row = 0.5 * Pu / phi_c_row
+    long_cap_row = As * fy + (Aps_tens * fps_calc if Aps_tens > 0 else 0)
+
+    # Torsion longitudinal component (SRSS per 5.7.3.6.3)
+    if torsion_consider_row and tors_Ao > 0:
+        ld_T_tors_row = 0.45 * tors_ph * abs(Tu) / (2 * tors_Ao * phi_v) if phi_v > 0 else 0
+    else:
+        ld_T_tors_row = 0
+
+    # Method 1 (theta=45)
+    Vs_des_1_r = min(Vs1, abs(Vu) / phi_v) if phi_v > 0 else Vs1
+    ld_V_1_r = max(abs(Vu) / phi_v - Vp, 0) - 0.5 * Vs_des_1_r if phi_v > 0 else 0
+    ld_VT_1_r = math.sqrt(max(ld_V_1_r, 0) ** 2 + ld_T_tors_row ** 2) if ld_T_tors_row > 0 else max(ld_V_1_r, 0)
+    long_dem_1_r = ld_M_row + ld_N_row + ld_VT_1_r * 1.0
+    long_ok_1_r = long_cap_row >= long_dem_1_r
+
+    # Method 2 (General Procedure)
+    Vs_des_2_r = min(Vs2, abs(Vu) / phi_v) if phi_v > 0 else Vs2
+    cott_2_r = 1 / math.tan(math.radians(th2)) if th2 > 0 else 0
+    ld_V_2_r = max(abs(Vu) / phi_v - Vp, 0) - 0.5 * Vs_des_2_r if phi_v > 0 else 0
+    ld_VT_2_r = math.sqrt(max(ld_V_2_r, 0) ** 2 + ld_T_tors_row ** 2) if ld_T_tors_row > 0 else max(ld_V_2_r, 0)
+    long_dem_2_r = ld_M_row + ld_N_row + ld_VT_2_r * cott_2_r
+    long_ok_2_r = long_cap_row >= long_dem_2_r
+
+    # Method 3 (Appendix B5)
+    if b5_valid and th3 > 0:
+        Vs_des_3_r = min(Vs3, abs(Vu) / phi_v) if phi_v > 0 else Vs3
+        cott_3_r = 1 / math.tan(math.radians(th3))
+        ld_V_3_r = max(abs(Vu) / phi_v - Vp, 0) - 0.5 * Vs_des_3_r if phi_v > 0 else 0
+        ld_VT_3_r = math.sqrt(max(ld_V_3_r, 0) ** 2 + ld_T_tors_row ** 2) if ld_T_tors_row > 0 else max(ld_V_3_r, 0)
+        long_dem_3_r = ld_M_row + ld_N_row + ld_VT_3_r * cott_3_r
+        long_ok_3_r = long_cap_row >= long_dem_3_r
+    else:
+        long_ok_3_r = None
+
+    long_dc_1_r = long_dem_1_r / long_cap_row if long_cap_row > 0 else None
+    long_dc_2_r = long_dem_2_r / long_cap_row if long_cap_row > 0 else None
+    long_dc_3_r = (long_dem_3_r / long_cap_row if long_cap_row > 0 else None) if long_ok_3_r is not None else None
+
     return {
         "Mr": Mr_signed, "Vr1": Vr1, "Vr2": Vr2, "Vr3": Vr3, "Tr": Tr,
         "crackStatus": crack_status, "flexStatus": flex_status, "shearStatus": shear_status,
         "torsionConsider": torsion_consider_row,
         "shReqd": sh_reqd, "hasMinAv": has_min_av,
+        "long_ok_1": long_ok_1_r, "long_ok_2": long_ok_2_r, "long_ok_3": long_ok_3_r,
+        "long_dc_1": long_dc_1_r, "long_dc_2": long_dc_2_r, "long_dc_3": long_dc_3_r,
     }
 
 
@@ -2160,7 +2297,8 @@ def calculate_all(raw_inputs, demand_rows, active_row_idx):
             "Aps": I["Aps"],
             "isRect": I["isRect"], "bw": I["bw"],
             "hasPT": I["hasPT"],
-            "ecl": I["ecl"], "etl": I["etl"], "alpha1": I["alpha1"],
+            "ecl": I["ecl"], "etl": I["etl"], "alpha1": I["alpha1"], "beta1": I["beta1"],
+            "phi_v": I["phi_v"], "gamma_e": I["gamma_e"], "lam": I["lam"],
             "Ag": I["Ag"], "Ig": I["Ig"], "yb_centroid": I["yb_centroid"],
         },
         "demands": {"Pu": Pu, "Mu": Mu, "Vu": Vu, "Tu": Tu, "Vp": Vp, "Ms": Ms, "Ps": Ps},

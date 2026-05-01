@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import webview.platforms; import os; print\\(os.listdir\\(os.path.dirname\\(webview.platforms.__file__\\)\\)\\)\")",
+      "Bash(python -c \"import webview; import os; pkg = os.path.dirname\\(webview.__file__\\); print\\(pkg\\); print\\(os.listdir\\(pkg\\)\\)\")",
+      "Bash(python -c \"import clr; import os; print\\(os.path.dirname\\(clr.__file__\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import clr; import os; d=os.path.dirname\\(clr.__file__\\); print\\(d\\); import os; print\\(os.listdir\\(d\\)\\)\")",
+      "Bash(node --check \"c:/Users/maciej.mikulewicz/Test/Maciej_Cocnrete_App/index.html\")",
+      "Bash(python _check.py)",
+      "Bash(git stash *)",
+      "Bash(python -c ' *)",
+      "Bash(python _check2.py)",
+      "Bash(grep -n \"raw_inputs\\\\|I\\\\[\\\\\"fc\\\\\"\\\\]\\\\|I\\\\[\\\\\"fy\\\\\"\\\\]\" c:\\\\\\\\Users\\\\\\\\maciej.mikulewicz\\\\\\\\Test\\\\\\\\Maciej_Cocnrete_App\\\\\\\\calc_engine.py)"
+    ]
+  }
+}

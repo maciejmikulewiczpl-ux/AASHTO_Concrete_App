@@ -37,4 +37,8 @@ if __name__ == '__main__':
         js_api=api,
     )
     api.window = window
-    webview.start(debug=False)
+
+    def on_started():
+        window.maximize()
+
+    webview.start(on_started, debug=False)

@@ -80,6 +80,12 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background
 .ovr-label { display:inline-flex; align-items:center; gap:3px; font-size:0.72rem; color:var(--text-light); cursor:pointer; white-space:nowrap; margin-left:auto; min-width:70px; justify-content:center; }
 .ovr-col-header { font-size:0.72rem; color:var(--text-light); font-weight:600; margin-left:auto; min-width:70px; text-align:center; }
 .ovr-cb { width:16px !important; height:16px !important; min-width:16px; min-height:16px; margin:0; cursor:pointer; -webkit-appearance:checkbox; appearance:auto; }
+.factor-ovr-input::-webkit-inner-spin-button, .factor-ovr-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.factor-ovr-input { -moz-appearance: textfield; }
+.subtab-bar { border-bottom: 2px solid var(--border); padding-bottom: 0; }
+.subtab-btn { padding: 6px 18px; font-size: 0.82rem; font-weight: 600; border: none; border-bottom: 3px solid transparent; background: none; color: var(--text-light); cursor: pointer; border-radius: 4px 4px 0 0; }
+.subtab-btn.active { color: var(--primary); border-bottom-color: var(--primary); background: rgba(41,128,185,0.06); }
+.subtab-btn:hover:not(.active) { background: rgba(0,0,0,0.03); }
 .recalc-banner { background:#fff3cd; border-bottom:1px solid #ffc107; padding:6px 24px; font-size:0.82rem; color:#856404; text-align:center; }
 .form-row .unit { font-size: 0.78rem; color: var(--text-light); min-width: 35px; }
 .form-row .note { font-size: 0.73rem; color: var(--text-light); font-style: italic; }
@@ -105,6 +111,7 @@ canvas { width: 100% !important; height: 100% !important; }
 .data-table th { background: var(--primary); color: white; padding: 7px 8px; text-align: left; font-weight: 500; white-space: nowrap; }
 .data-table td { padding: 5px 8px; border-bottom: 1px solid #eee; font-family: 'Consolas', monospace; }
 .data-table tr:hover { background: #f8f9fa; }
+
 .proj-summary-table th { text-align: center; vertical-align: middle; }
 .proj-summary-table td { vertical-align: middle; padding: 8px; }
 .proj-summary-table td.ps-name { font-family: inherit; font-weight: 600; color: var(--primary); font-size: 0.9rem; }
@@ -277,7 +284,6 @@ canvas { width: 100% !important; height: 100% !important; }
     <button class="section-btn" onclick="renameSection()" title="Rename current section">&#9998; Rename</button>
     <button class="section-btn section-btn-danger" onclick="deleteSection()" title="Delete current section">&#10005; Delete</button>
     <span class="section-sep"></span>
-    <button class="section-btn" onclick="newProject()" title="New project — start fresh">&#128196; New</button>
     <button class="section-btn" id="quickSaveBtn" onclick="saveProjectQuick()" title="Save (Ctrl+S)">&#128190;</button>
     <button class="section-btn" onclick="saveProject()" title="Save As — choose file location">&#128190; Save As</button>
     <button class="section-btn" onclick="loadProject()" title="Open project file">&#128194; Open</button>
@@ -294,14 +300,16 @@ canvas { width: 100% !important; height: 100% !important; }
 
 <div class="tab-bar" id="tabBar">
   <button class="tab-btn active" data-tab="inputs">Inputs</button>
+  <button class="tab-btn" data-tab="section">Section Definition</button>
   <button class="tab-btn" data-tab="pt">PT Design</button>
-  <button class="tab-btn" data-tab="demands">Force Demands</button>
+  <button class="tab-btn" data-tab="demands">Demands &amp; Results</button>
   <button class="tab-btn" data-tab="flexure">Flexure</button>
   <button class="tab-btn" data-tab="shear">Shear</button>
   <button class="tab-btn" data-tab="torsion">Torsion</button>
   <button class="tab-btn" data-tab="service">Service Flexure Stress</button>
   <button class="tab-btn" data-tab="report">Report</button>
   <button class="tab-btn" data-tab="summary">Project Summary</button>
+  <button class="tab-btn" data-tab="limitations">Limitations</button>
 </div>
 
 <div class="content">
@@ -317,6 +325,12 @@ canvas { width: 100% !important; height: 100% !important; }
       <div class="card-header blue">Material Properties</div>
       <div class="card-body">
         <div class="form-row"><label>f'<sub>c</sub></label><input type="number" id="fc" value="5" step="any"><span class="unit">ksi</span></div>
+        <div class="form-row"><label>Reinforcement ASTM</label>
+          <select id="astm_spec" class="wide">
+            <option value="A615" selected>ASTM A615 (Grade 60)</option>
+            <option value="A706">ASTM A706 (Grade 60)</option>
+          </select>
+        </div>
         <div class="form-row"><label>f<sub>y</sub></label><input type="number" id="fy" value="60" step="any"><span class="unit">ksi</span></div>
         <div class="form-row"><label></label><span style="width:100px"></span><span class="unit"></span><span class="ovr-col-header">Override</span></div>
         <div class="form-row"><label>E<sub>c</sub></label><input type="number" id="Ec" value="0" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="Ec_ovr" class="ovr-cb"></label><span class="note" id="ecNote">= 2500 f'c^0.33</span></div>
@@ -332,7 +346,7 @@ canvas { width: 100% !important; height: 100% !important; }
     </div>
 
     <div class="card">
-      <div class="card-header purple">Resistance &amp; Exposure Factors</div>
+      <div class="card-header purple">Checks, Resistance &amp; Exposure Factors</div>
       <div class="card-body">
         <div class="form-row"><label>Code edition</label>
           <select id="codeEdition" class="wide">
@@ -347,15 +361,68 @@ canvas { width: 100% !important; height: 100% !important; }
             <option value="CIP_PT" selected>CIP Post-Tensioned / PT Spliced Precast</option>
           </select>
         </div>
-        <div class="form-row"><label>&phi;<sub>v</sub> (shear)</label><input type="number" id="phi_v" value="0.9" step="any"></div>
+        <input type="hidden" id="phi_v" value="0.9">
         <div class="form-row"><label>Exposure factor, &gamma;<sub>e</sub></label>
           <select id="gamma_e" class="wide">
             <option value="1.00">1.00 &mdash; Class 1 (0.017 in)</option>
             <option value="0.75" selected>0.75 &mdash; Class 2 (0.013 in)</option>
           </select>
         </div>
+
+        <h4 style="margin:12px 0 6px 0;font-size:0.85em;color:#555;border-top:1px solid #ddd;padding-top:8px;">Safety Factors Summary</h4>
+        <table class="factors-table" id="factorsTable" style="width:100%;font-size:0.82em;border-collapse:collapse;">
+          <thead><tr><th style="text-align:left">Factor</th><th>Value</th><th>Override</th><th style="display:none"></th></tr></thead>
+          <tbody>
+            <tr><td>&phi;<sub>v</sub> &mdash; Shear resistance (5.5.4.2)</td><td id="fv_disp">0.90</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="phi_v_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="phi_v_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&phi;<sub>f</sub> &mdash; Flexural resistance (5.5.4.2)</td><td id="ff_disp">&mdash;</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="phi_f_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="phi_f_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&phi;<sub>c</sub> &mdash; Compression-controlled (5.5.4.2)</td><td id="fc_disp">0.75</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="phi_c_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="phi_c_f_ovr_val" value="0.75" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&gamma;<sub>e</sub> &mdash; Exposure factor (5.6.7)</td><td id="ge_disp">0.75</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma_e_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="gamma_e_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&lambda; &mdash; Lightweight concrete (5.4.2.8)</td><td id="lam_disp">1.00</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="lambda_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="lambda_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&lambda;<sub>duct</sub> &mdash; Duct width reduction (5.7.2.8)</td><td id="ld_disp">&mdash;</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="lambda_duct_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="lambda_duct_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&gamma;&#8321; &mdash; Cracking variability (5.6.3.3)<br><small style="color:#888">All sections other than precast segmental</small></td><td id="g1_disp">1.60</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma1_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="gamma1_f_ovr_val" value="1.6" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&gamma;&#8322; &mdash; Prestress factor (5.6.3.3)<br><small style="color:#888">Bonded tendons</small></td><td id="g2_disp">1.10</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma2_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="gamma2_f_ovr_val" value="1.1" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&gamma;&#8323; &mdash; Reinf. ratio correction (5.6.3.3)<br><small style="color:#888">Per ASTM spec selection</small></td><td id="g3_disp">0.67</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma3_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="gamma3_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&alpha;&#8321; &mdash; Stress block intensity (5.6.2.2)</td><td id="a1_disp">&mdash;</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="alpha1_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="alpha1_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>&beta;&#8321; &mdash; Stress block depth (5.6.2.2)</td><td id="b1_disp">&mdash;</td>
+                <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="beta1_f"></label></td>
+                <td><input type="number" class="factor-ovr-input" id="beta1_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+          </tbody>
+        </table>
+
+        <h4 style="margin:12px 0 6px 0;font-size:0.85em;color:#555;border-top:1px solid #ddd;padding-top:8px;">Shear Checks to Display</h4>
+        <div class="form-row"><label><input type="checkbox" id="chk_method1" checked> Method 1 &mdash; Simplified (5.7.3.4.1)</label></div>
+        <div class="form-row"><label><input type="checkbox" id="chk_method2" checked> Method 2 &mdash; General Procedure (5.7.3.4.2)</label></div>
+        <div class="form-row"><label><input type="checkbox" id="chk_method3" checked> Method 3 &mdash; Appendix B5 Iterative</label></div>
+        <div class="form-row"><label><input type="checkbox" id="chk_long_reinf" checked> Longitudinal Reinforcement Check (5.7.3.5)</label></div>
       </div>
     </div>
+
+  </div>
+</div>
+
+<!-- ==================== SECTION DEFINITION TAB ==================== -->
+<div class="tab-panel" id="tab-section" data-title="Section Definition">
+  <div class="grid grid-2">
 
     <div class="card">
       <div class="card-header green">Section Geometry</div>
@@ -555,69 +622,24 @@ canvas { width: 100% !important; height: 100% !important; }
 </div>
 
 <!-- ==================== FORCE DEMANDS TAB ==================== -->
-<div class="tab-panel" id="tab-demands" data-title="Force Demands">
+<div class="tab-panel" id="tab-demands" data-title="Demands &amp; Results">
   <div class="sign-note">
     <strong>Sign Convention:</strong> P<sub>u</sub>, P<sub>s</sub> &mdash; positive = tension. M<sub>u</sub>, M<sub>s</sub> &mdash; positive = sagging.
     Each row is an independent load case. Capacities and D/C ratios update when you press <b>Calculate</b>.
     <br><strong>Tip:</strong> click and drag to select a range of input cells, then use <b>Ctrl+C</b> / <b>Ctrl+V</b> to copy &amp; paste from Excel. Press <b>Delete</b> to clear the selected range.
   </div>
+  <div class="subtab-bar" style="display:flex;gap:4px;margin-bottom:10px;">
+    <button class="subtab-btn active" data-subtab="strength" onclick="switchDemandSubtab('strength')">Strength</button>
+    <button class="subtab-btn" data-subtab="service" onclick="switchDemandSubtab('service')">Service</button>
+  </div>
   <div class="card">
-    <div class="card-header red">Force Demands &amp; Capacity Summary</div>
-    <div class="card-body" style="padding:8px 0 0;">
-      <div id="demandTableScroll" style="overflow-x:auto; overflow-y:auto; max-height:62vh; padding:0 8px;">
+    <div class="card-header red">Demands &amp; Capacity Summary</div>
+    <div class="card-body" style="overflow-x:auto; padding:8px;">
       <table class="demand-table" id="demandTable">
-        <thead>
-          <tr>
-            <th rowspan="2">#</th>
-            <th colspan="4" class="grp-demand" style="background:#1a5276">Location &amp; PT Profile</th>
-            <th colspan="4" class="grp-demand">Strength Demands</th>
-            <th colspan="2" class="grp-service">Service Demands</th>
-            <th colspan="1" class="grp-status">Torsion</th>
-            <th colspan="1" class="grp-capacity">Flexure</th>
-            <th colspan="3" class="grp-capacity">Shear Capacity</th>
-            <th colspan="1" class="grp-capacity">Torsion</th>
-            <th colspan="3" class="grp-dc">D/C Ratios <button id="dcSortBtn" onclick="sortDemandByDC()" title="Sort rows by max D/C ratio" style="margin-left:6px;padding:1px 7px;font-size:0.72rem;border:1px solid rgba(255,255,255,0.5);border-radius:3px;background:rgba(255,255,255,0.15);color:white;cursor:pointer;vertical-align:middle;">&#x25BC; Sort</button></th>
-            <th colspan="3" class="grp-status">Status</th>
-            <th rowspan="2"></th>
-          </tr>
-          <tr>
-            <th class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>
-            <th class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small>in</small></th>
-            <th class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small>ksi</small></th>
-            <th class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>
-            <th class="grp-demand">P<sub>u</sub><br><small>kip</small></th>
-            <th class="grp-demand">M<sub>u</sub><br><small>k-in</small></th>
-            <th class="grp-demand">V<sub>u</sub><br><small>kip</small></th>
-            <th class="grp-demand">T<sub>u</sub><br><small>k-in</small></th>
-            <th class="grp-service">P<sub>s</sub><br><small>kip</small></th>
-            <th class="grp-service">M<sub>s</sub><br><small>k-in</small></th>
-            <th class="grp-status">Considered?</th>
-            <th class="grp-capacity">M<sub>r</sub><br><small>k-in</small></th>
-            <th class="grp-capacity">Simp.<br><small>kip</small></th>
-            <th class="grp-capacity">GP<br><small>kip</small></th>
-            <th class="grp-capacity">B5<br><small>kip</small></th>
-            <th class="grp-capacity">T<sub>r</sub><br><small>k-in</small></th>
-            <th class="grp-dc">M</th>
-            <th class="grp-dc">
-              <div style="display:flex;gap:6px;align-items:center;justify-content:center;">
-                <span>V</span>
-                <select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()">
-                  <option value="gp" selected>GP</option>
-                  <option value="simp">Simp.</option>
-                  <option value="b5">B5</option>
-                </select>
-              </div>
-            </th>
-            <th class="grp-dc">T</th>
-            <th class="grp-status">Crack</th>
-            <th class="grp-status">Flex.</th>
-            <th class="grp-status">Shear</th>
-          </tr>
-        </thead>
+        <thead id="demandThead"></thead>
         <tbody id="demandBody"></tbody>
       </table>
-      </div><!-- end demandTableScroll -->
-      <div class="demand-btn-bar" style="padding:4px 8px 4px;">
+      <div class="demand-btn-bar">
         <button class="demand-btn" onclick="addDemandRow()">&#43; Add Row</button>
         <button class="demand-btn danger" onclick="removeLastDemandRow()">&#8722; Remove Last</button>
       </div>
@@ -791,6 +813,24 @@ canvas { width: 100% !important; height: 100% !important; }
   </div>
 </div>
 
+<div class="tab-panel" id="tab-limitations" data-title="Limitations">
+  <div class="card">
+    <div class="card-header" style="background:linear-gradient(135deg,#e67e22,#f39c12);">Known Limitations &amp; Assumptions</div>
+    <div class="card-body">
+      <ul style="font-size:0.88rem;line-height:1.7;color:#333;">
+        <li><b>Non-composite sections only</b> &mdash; M<sub>cr</sub> is calculated assuming no staged construction. The term M<sub>dnc</sub>&middot;(S<sub>c</sub>/S<sub>nc</sub> &minus; 1) in AASHTO 5.6.3.3-1 is taken as zero (S<sub>c</sub> = S<sub>nc</sub>).</li>
+        <li><b>Bonded tendons only</b> &mdash; &gamma;&#8322; = 1.1 per Table 5.6.3.3-1 for bonded tendons. Unbonded tendons (&gamma;&#8322; = 1.0) are not considered.</li>
+        <li><b>Single cross-section analysis</b> &mdash; The app analyzes a single section at a time. Span-level effects, development lengths, and anchorage zone checks are not performed.</li>
+        <li><b>Appendix B5 convergence</b> &mdash; The iterative B5 method may not converge for all strain/geometry combinations. When convergence fails, B5 results are reported as N/A.</li>
+        <li><b>Longitudinal reinforcement check (5.7.3.5)</b> &mdash; Based on user judgment whether to apply. Not automatically enabled/disabled by section classification.</li>
+        <li><b>Torsion</b> &mdash; Torsional resistance follows the thin-walled tube analogy per AASHTO 5.7.3.6. The equivalent thin-walled tube is approximated from the gross section geometry.</li>
+        <li><b>PT effective prestress (f<sub>pe</sub>)</b> &mdash; Used directly as input or computed from the PT Design tab loss model. Long-term creep, shrinkage, and relaxation losses should be independently verified.</li>
+        <li><b>f<sub>cpe</sub> for M<sub>cr</sub></b> &mdash; Computed as P<sub>e</sub>/A<sub>g</sub> + P<sub>e</sub>&middot;e&middot;y<sub>t</sub>/I<sub>g</sub> using gross section properties. Transformed section effects are neglected.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
 </div>
 
 <script>
@@ -819,7 +859,6 @@ function clearDirty(){
   if(dot) dot.style.display='none';
 }
 
-/* ---------- Reinforcement optimization parameters ---------- */
 let optParams = {
   tgt:  { mpos:0.9, mneg:0.9, v:0.9, t:0.9 },
   flex: { minSpacing:1.5, rowSpacing:1.5, minBar:4, maxBar:11, maxRows:3 },
@@ -1113,18 +1152,6 @@ function switchSection(name){
   updateSectionDropdown();
 }
 
-function newProject(){
-  if(_projectDirty && !confirm('You have unsaved changes. Discard and start a new project?')) return;
-  sections = { 'Section 1': getDefaultSectionState() };
-  activeSection = 'Section 1';
-  optParams = { tgt:{mpos:0.9,mneg:0.9,v:0.9,t:0.9}, flex:{minSpacing:1.5,rowSpacing:1.5,minBar:4,maxBar:11,maxRows:3}, stir:{minBar:3,maxBar:6,sMin:3,sMax:18,sStep:1,maxLegs:4} };
-  try{ writeOptParamsToDOM(); }catch(e){}
-  loadSectionState(activeSection);
-  updateSectionDropdown();
-  updateFileDisplay(null);
-  clearDirty();
-}
-
 function createNewSection(){
   const name=prompt('Enter name for new section:');
   if(!name||!name.trim()) return;
@@ -1281,9 +1308,8 @@ function applyProjectData(data){
   const names=Object.keys(sections);
   if(names.length===0){alert('Project file contains no sections.');return;}
   activeSection=data.activeSection && sections[data.activeSection] ? data.activeSection : names[0];
-  // Restore optimization params (merge so missing keys keep defaults from old projects)
   if(data.optParams){
-    if(data.optParams.tgt)  Object.assign(optParams.tgt,  data.optParams.tgt);
+    if(data.optParams.tgt) Object.assign(optParams.tgt, data.optParams.tgt);
     if(data.optParams.flex) Object.assign(optParams.flex, data.optParams.flex);
     if(data.optParams.stir) Object.assign(optParams.stir, data.optParams.stir);
   }
@@ -1328,6 +1354,14 @@ function setupAutoCalculate(){
     if(e.target.closest('#tab-pt') && !e.target.closest('#tab-demands')){
       debouncedPtCalc();
     }
+    // Also push PT profile on change (e.g. when user commits value by blurring)
+    if(e.target.matches('.dr-x') && window._ptResult && window._ptResult.profile){
+      const row=e.target.closest('tr');
+      if(row){
+        const rNum=parseInt(row.id.replace('dr_',''));
+        if(!isNaN(rNum)) pushPtToRow(rNum, window._ptResult.profile);
+      }
+    }
   });
   document.addEventListener('input', (e)=>{
     if(e.target.matches('input[type="number"], input[type="text"]')){
@@ -1363,14 +1397,18 @@ function drawCrossSection(){
   const _db_stir2=(_shN2===0)?0:(BARS[_shN2]||BARS[4]).d;
   const _ag2=parseFloat(document.getElementById('ag').value)||0.75;
   const _isRect2=document.getElementById('sectionType').value==='RECTANGULAR';
-  const _barInnerW2=db=>((_isRect2?_b2:_bw2)-2*(_cover2+_db_stir2+db/2));
+  const _hf_top2=parseFloat(document.getElementById('hf_top').value)||0;
+  const _hf_bot2=parseFloat(document.getElementById('hf_bot').value)||0;
+  const _h2=parseFloat(document.getElementById('h_total').value)||27.5;
+  const _barInnerW2=(db,d_from_top)=>{let w=_isRect2?_b2:_bw2;if(!_isRect2&&d_from_top<=_hf_top2)w=_b2;if(!_isRect2&&d_from_top>=_h2-_hf_bot2)w=_b2;return w-2*(_cover2+_db_stir2+db/2);};
   function _countViolRows(side){
     const mr=resolveMRRows(side); let n=0;
-    if(mr){mr.forEach(r=>{if(r.nBars>=2){const s_min=Math.max(1.5*r.bar.d,1.5*_ag2,1.5);const clr=_barInnerW2(r.bar.d)/(r.nBars-1)-r.bar.d;if(clr<s_min-0.001)n++;}});}
+    if(mr){mr.forEach(r=>{if(r.nBars>=2){const s_min=Math.max(1.5*r.bar.d,1.5*_ag2,1.5);const clr=_barInnerW2(r.bar.d,r.d)/(r.nBars-1)-r.bar.d;if(clr<s_min-0.001)n++;}});}
     else{
       const _nBot=parseInt(document.getElementById(side==='bot'?'n_bars_bot':'n_bars_top').value)||0;
       const _barN=parseInt(document.getElementById(side==='bot'?'bot_bar':'top_bar').value)||7;
-      if(_nBot>=2){const db=BARS[_barN]?BARS[_barN].d:0.875;const s_min=Math.max(1.5*db,1.5*_ag2,1.5);const clr=_barInnerW2(db)/(_nBot-1)-db;if(clr<s_min-0.001)n++;}
+      const _d=side==='bot'?(_h2-_cover2-(BARS[_barN]?BARS[_barN].d:0.875)/2):(_cover2+(BARS[_barN]?BARS[_barN].d:0.875)/2);
+      if(_nBot>=2){const db=BARS[_barN]?BARS[_barN].d:0.875;const s_min=Math.max(1.5*db,1.5*_ag2,1.5);const clr=_barInnerW2(db,_d)/(_nBot-1)-db;if(clr<s_min-0.001)n++;}
     }
     return n;
   }
@@ -1447,28 +1485,17 @@ function drawCrossSection(){
   if(db_stir>0){
     const stirCL=(cover+db_stir/2)*sc;
     const stirLW=Math.max(db_stir*sc,2);
-    const nLegs=Math.max(2,parseInt(document.getElementById('shear_legs').value)||2);
-    ctx.strokeStyle='#27ae60'; ctx.lineWidth=stirLW; ctx.lineJoin='round'; ctx.lineCap='round';
-    let stirL,stirT,stirW,stirHt;
+    ctx.strokeStyle='#27ae60'; ctx.lineWidth=stirLW; ctx.lineJoin='round';
     if(isRect){
-      stirL=ox+stirCL; stirT=oy+stirCL; stirW=secW-2*stirCL; stirHt=secH-2*stirCL;
-      const cr=Math.min(db_stir*sc*2.5, stirW/5, stirHt/5);
-      _roundRect(ctx,stirL,stirT,stirW,stirHt,cr); ctx.stroke();
+      const sL=ox+stirCL, sT=oy+stirCL, sW=secW-2*stirCL, sHt=secH-2*stirCL;
+      const cr=Math.min(db_stir*sc*2.5, sW/5, sHt/5);
+      _roundRect(ctx,sL,sT,sW,sHt,cr); ctx.stroke();
     } else {
       const wL=sx((b-bw)/2)+stirCL, wR=sx((b+bw)/2)-stirCL;
-      stirL=wL; stirT=oy+stirCL; stirW=wR-wL; stirHt=sy(h)-stirCL-stirT;
-      const cr=Math.min(db_stir*sc*2.5, stirW/5, stirHt/5);
-      _roundRect(ctx,stirL,stirT,stirW,stirHt,cr); ctx.stroke();
-    }
-    /* Interior legs — equally spaced between the two outer leg centerlines */
-    if(nLegs>2){
-      for(let i=1;i<nLegs-1;i++){
-        const xPos=stirL+stirW*i/(nLegs-1);
-        ctx.beginPath();
-        ctx.moveTo(xPos,stirT);
-        ctx.lineTo(xPos,stirT+stirHt);
-        ctx.stroke();
-      }
+      const sT=oy+stirCL, sB=sy(h)-stirCL;
+      const sW=wR-wL, sHt=sB-sT;
+      const cr=Math.min(db_stir*sc*2.5, sW/5, sHt/5);
+      _roundRect(ctx,wL,sT,sW,sHt,cr); ctx.stroke();
     }
   }
   /* ---- bottom bars ---- */
@@ -1477,8 +1504,8 @@ function drawCrossSection(){
   /* helpers: visual bar radius (min 2px for visibility), and positioning
      that accounts for the visual radius so bars never overlap the stirrup */
   const visBarR=db=>Math.max(db/2*sc,2);
-  const barInnerW=db=>{const vr=visBarR(db)/sc;return(isRect?b:bw)-2*(cover+db_stir+vr);};
-  const barOriginX=db=>{const vr=visBarR(db)/sc;return(isRect?0:(b-bw)/2)+cover+db_stir+vr;};
+  const barInnerW=(db,d_from_top)=>{const vr=visBarR(db)/sc;let w=isRect?b:bw;if(!isRect&&d_from_top<=hf_top)w=b;if(!isRect&&d_from_top>=h-hf_bot)w=b;return w-2*(cover+db_stir+vr);};
+  const barOriginX=(db,d_from_top)=>{const vr=visBarR(db)/sc;let off=isRect?0:(b-bw)/2;if(!isRect&&d_from_top<=hf_top)off=0;if(!isRect&&d_from_top>=h-hf_bot)off=0;return off+cover+db_stir+vr;};
   /* clamp y position so bar circle stays inside stirrup vertically */
   const clampBarY=(d_from_top,db)=>{const vr=visBarR(db)/sc;return Math.max(cover+db_stir+vr,Math.min(h-cover-db_stir-vr,d_from_top));};
   /* legacy values used only for centroid reference lines */
@@ -1514,7 +1541,7 @@ function drawCrossSection(){
       const barR=visBarR(row.bar.d);
       const byy=sy(clampBarY(row.d,row.bar.d));
       const bxArr=[];
-      const _iw=barInnerW(row.bar.d), _ox=barOriginX(row.bar.d);
+      const _iw=barInnerW(row.bar.d,row.d), _ox=barOriginX(row.bar.d,row.d);
       for(let i=0;i<row.nBars;i++){
         bxArr.push(row.nBars===1?b/2:_ox+_iw*i/(row.nBars-1));
       }
@@ -1533,7 +1560,7 @@ function drawCrossSection(){
     const barR_bot=visBarR(bar_bot_cs.d);
     const barY_bot=sy(clampBarY(d_bot_cs,bar_bot_cs.d));
     const bxArr_bot=[];
-    const _iw_b=barInnerW(bar_bot_cs.d), _ox_b=barOriginX(bar_bot_cs.d);
+    const _iw_b=barInnerW(bar_bot_cs.d,d_bot_cs), _ox_b=barOriginX(bar_bot_cs.d,d_bot_cs);
     for(let i=0;i<nBars_bot_cs;i++){
       bxArr_bot.push(nBars_bot_cs===1?b/2:_ox_b+_iw_b*i/(nBars_bot_cs-1));
     }
@@ -1550,7 +1577,7 @@ function drawCrossSection(){
       const barR=visBarR(row.bar.d);
       const byy=sy(clampBarY(row.d,row.bar.d));
       const bxArr=[];
-      const _iw=barInnerW(row.bar.d), _ox=barOriginX(row.bar.d);
+      const _iw=barInnerW(row.bar.d,row.d), _ox=barOriginX(row.bar.d,row.d);
       for(let i=0;i<row.nBars;i++){
         bxArr.push(row.nBars===1?b/2:_ox+_iw*i/(row.nBars-1));
       }
@@ -1569,7 +1596,7 @@ function drawCrossSection(){
     const barR_top=visBarR(bar_top_cs.d);
     const barY_top=sy(clampBarY(d_top_cs,bar_top_cs.d));
     const bxArr_top=[];
-    const _iw_t=barInnerW(bar_top_cs.d), _ox_t=barOriginX(bar_top_cs.d);
+    const _iw_t=barInnerW(bar_top_cs.d,d_top_cs), _ox_t=barOriginX(bar_top_cs.d,d_top_cs);
     for(let i=0;i<nBars_top_cs;i++){
       bxArr_top.push(nBars_top_cs===1?b/2:_ox_t+_iw_t*i/(nBars_top_cs-1));
     }
@@ -1628,8 +1655,7 @@ function drawCrossSection(){
   /* stirrup icon */
   ctx.strokeStyle='#27ae60'; ctx.lineWidth=2.5; ctx.lineJoin='round';
   _roundRect(ctx,legX,ly-5,12,10,2); ctx.stroke();
-  const nLegsLegend=Math.max(2,parseInt(document.getElementById('shear_legs').value)||2);
-  ctx.fillStyle='#444'; ctx.fillText('#'+shN_cs+' stirrup ('+nLegsLegend+' legs) @ '+((parseFloat(document.getElementById('shear_s').value)||6).toFixed(1))+'" o.c.',legX+18,ly);
+  ctx.fillStyle='#444'; ctx.fillText('#'+shN_cs+' stirrup @ '+((parseFloat(document.getElementById('shear_s').value)||6).toFixed(1))+'" o.c.',legX+18,ly);
   ly+=18;
   /* bottom bars */
   if(mrBot){
@@ -2149,6 +2175,131 @@ let pmChartData=null, pmChartPu=0, pmChartMu=0;
 let demandRowCount=0;
 let activeRow=0;
 let shearCapacityMethod='gp'; // Global selection for D/C ratio shear capacity
+let demandSubtab='strength'; // active subtab: 'strength' or 'service'
+
+/* ====== DEMAND SUBTAB & DYNAMIC THEAD ====== */
+function getDemandShearFlags(){
+  return {
+    m1: document.getElementById('chk_method1').checked,
+    m2: document.getElementById('chk_method2').checked,
+    m3: document.getElementById('chk_method3').checked,
+    longReinf: document.getElementById('chk_long_reinf').checked
+  };
+}
+function switchDemandSubtab(tab){
+  demandSubtab=tab;
+  document.querySelectorAll('.subtab-btn').forEach(b=>b.classList.toggle('active',b.dataset.subtab===tab));
+  rebuildDemandThead();
+  applyDemandColVisibility();
+}
+function rebuildDemandThead(){
+  const thead=document.getElementById('demandThead');
+  const flags=getDemandShearFlags();
+  // Auto-select shear D/C method if only one method is checked
+  const checkedMethods=[];
+  if(flags.m1) checkedMethods.push('simp');
+  if(flags.m2) checkedMethods.push('gp');
+  if(flags.m3) checkedMethods.push('b5');
+  if(checkedMethods.length===1) shearCapacityMethod=checkedMethods[0];
+  let r1='',r2='';
+  if(demandSubtab==='strength'){
+    // Row 1
+    r1+=`<th rowspan="2">#</th>`;
+    r1+=`<th colspan="4" class="grp-demand" style="background:#1a5276">Location &amp; PT Profile</th>`;
+    r1+=`<th colspan="4" class="grp-demand">Strength Demands</th>`;
+    r1+=`<th colspan="1" class="grp-status">Torsion</th>`;
+    r1+=`<th colspan="1" class="grp-capacity">Flexure</th>`;
+    let shearCapCols=0;
+    if(flags.m1) shearCapCols++;
+    if(flags.m2) shearCapCols++;
+    if(flags.m3) shearCapCols++;
+    if(shearCapCols>0) r1+=`<th colspan="${shearCapCols}" class="grp-capacity">Shear Capacity</th>`;
+    r1+=`<th colspan="1" class="grp-capacity">Torsion</th>`;
+    // D/C area: M(rowspan=2) | Shear(colspan=1or2) | T(rowspan=2)
+    r1+=`<th rowspan="2" class="grp-dc">M</th>`;
+    if(flags.longReinf){
+      // Shear mother cell with dropdown (colspan=2 for V + Long sub-cols)
+      let shearLabel='Shear';
+      if(checkedMethods.length>1){
+        shearLabel=`<div style="display:flex;gap:6px;align-items:center;justify-content:center;"><span>Shear</span><select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()"><option value="gp"${shearCapacityMethod==='gp'?' selected':''}>GP</option><option value="simp"${shearCapacityMethod==='simp'?' selected':''}>Simp.</option><option value="b5"${shearCapacityMethod==='b5'?' selected':''}>B5</option></select></div>`;
+      }
+      r1+=`<th colspan="2" class="grp-dc">${shearLabel}</th>`;
+    } else {
+      // No long reinf — just V (rowspan=2)
+      if(checkedMethods.length>1){
+        r1+=`<th rowspan="2" class="grp-dc"><div style="display:flex;gap:6px;align-items:center;justify-content:center;"><span>V</span><select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()"><option value="gp"${shearCapacityMethod==='gp'?' selected':''}>GP</option><option value="simp"${shearCapacityMethod==='simp'?' selected':''}>Simp.</option><option value="b5"${shearCapacityMethod==='b5'?' selected':''}>B5</option></select></div></th>`;
+      } else {
+        r1+=`<th rowspan="2" class="grp-dc">V</th>`;
+      }
+    }
+    r1+=`<th rowspan="2" class="grp-dc">T <button id="dcSortBtn" onclick="sortDemandByDC()" title="Sort rows by max D/C ratio" style="padding:1px 5px;font-size:0.68rem;border:1px solid rgba(255,255,255,0.5);border-radius:3px;background:rgba(255,255,255,0.15);color:white;cursor:pointer;">&#x25BC;</button></th>`;
+    r1+=`<th colspan="2" class="grp-status">Status</th>`;
+    r1+=`<th rowspan="2"></th>`;
+    // Row 2
+    r2+=`<th class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small>in</small></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small>ksi</small></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>`;
+    r2+=`<th class="grp-demand">P<sub>u</sub><br><small>kip</small></th>`;
+    r2+=`<th class="grp-demand">M<sub>u</sub><br><small>k-in</small></th>`;
+    r2+=`<th class="grp-demand">V<sub>u</sub><br><small>kip</small></th>`;
+    r2+=`<th class="grp-demand">T<sub>u</sub><br><small>k-in</small></th>`;
+    r2+=`<th class="grp-status">Considered?</th>`;
+    r2+=`<th class="grp-capacity">M<sub>r</sub><br><small>k-in</small></th>`;
+    if(flags.m1) r2+=`<th class="grp-capacity">Simp.<br><small>kip</small></th>`;
+    if(flags.m2) r2+=`<th class="grp-capacity">GP<br><small>kip</small></th>`;
+    if(flags.m3) r2+=`<th class="grp-capacity">B5<br><small>kip</small></th>`;
+    r2+=`<th class="grp-capacity">T<sub>r</sub><br><small>k-in</small></th>`;
+    // Row 2 D/C sub-headers (M and T are rowspan=2, so only Shear sub-cols here)
+    if(flags.longReinf){
+      r2+=`<th class="grp-dc">V</th>`;
+      r2+=`<th class="grp-dc" style="background:#6c3483">Long.</th>`;
+    }
+    // (if no longReinf, V is rowspan=2 already — no row 2 cell needed)
+    r2+=`<th class="grp-status">Flex.</th>`;
+    r2+=`<th class="grp-status">Shear</th>`;
+  } else {
+    // Service subtab
+    r1+=`<th rowspan="2">#</th>`;
+    r1+=`<th colspan="4" class="grp-demand" style="background:#1a5276">Location &amp; PT Profile</th>`;
+    r1+=`<th colspan="2" class="grp-service">Service Demands</th>`;
+    r1+=`<th colspan="1" class="grp-status">Status</th>`;
+    r1+=`<th rowspan="2"></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small>in</small></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small>ksi</small></th>`;
+    r2+=`<th class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>`;
+    r2+=`<th class="grp-service">P<sub>s</sub><br><small>kip</small></th>`;
+    r2+=`<th class="grp-service">M<sub>s</sub><br><small>k-in</small></th>`;
+    r2+=`<th class="grp-status">Crack</th>`;
+  }
+  thead.innerHTML=`<tr>${r1}</tr><tr>${r2}</tr>`;
+}
+function applyDemandColVisibility(){
+  const flags=getDemandShearFlags();
+  document.querySelectorAll('#demandBody tr').forEach(tr=>{
+    // Strength demand inputs
+    tr.querySelectorAll('.col-str-demand').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    // Service demand inputs
+    tr.querySelectorAll('.col-svc-demand').forEach(td=>td.style.display=demandSubtab==='service'?'':'none');
+    // Torsion considered
+    tr.querySelectorAll('.col-tors-consider').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    // Capacities
+    tr.querySelectorAll('.col-cap-mr').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    tr.querySelectorAll('.col-cap-vr1').forEach(td=>td.style.display=(demandSubtab==='strength'&&flags.m1)?'':'none');
+    tr.querySelectorAll('.col-cap-vr2').forEach(td=>td.style.display=(demandSubtab==='strength'&&flags.m2)?'':'none');
+    tr.querySelectorAll('.col-cap-vr3').forEach(td=>td.style.display=(demandSubtab==='strength'&&flags.m3)?'':'none');
+    tr.querySelectorAll('.col-cap-tr').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    // D/C
+    tr.querySelectorAll('.col-dc').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    // Status
+    tr.querySelectorAll('.col-st-flex').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    tr.querySelectorAll('.col-st-shear').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
+    tr.querySelectorAll('.col-st-crack').forEach(td=>td.style.display=demandSubtab==='service'?'':'none');
+    // Longitudinal reinforcement
+    tr.querySelectorAll('.col-long').forEach(td=>td.style.display=(demandSubtab==='strength'&&flags.longReinf)?'':'none');
+  });
+}
 
 /* ====== DEMAND ROW MANAGEMENT ====== */
 function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
@@ -2158,30 +2309,31 @@ function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
   const tr=document.createElement('tr');
   tr.id='dr_'+n;
   tr.dataset.idx=n;
-  tr.innerHTML=`<td>${n}</td>`
-    +`<td><input type="number" class="dr-x" value="${x??''}" step="any" placeholder="—" style="width:42px">`
+  tr.innerHTML=`<td class="col-rownum">${n}</td>`
+    +`<td class="col-loc"><input type="number" class="dr-x" value="${x??''}" step="any" placeholder="\u2014" style="width:42px">`
     +`<select class="dr-pt-mode" style="width:50px;font-size:0.68rem;padding:1px;margin-top:2px;display:block"><option value="layout" selected>Layout</option><option value="override">Override</option></select></td>`
-    +`<td><input type="number" class="dr-dp" value="${dp??''}" step="any" placeholder="—" style="width:42px"></td>`
-    +`<td><input type="number" class="dr-fpe" value="${fpe??''}" step="any" placeholder="—" style="width:42px"></td>`
-    +`<td><input type="number" class="dr-Vp" value="${vp??0}" step="any"></td>`
-    +`<td><input type="number" class="dr-Pu" value="${pu??0}" step="any"></td>`
-    +`<td><input type="number" class="dr-Mu" value="${mu??6953}" step="any"></td>`
-    +`<td><input type="number" class="dr-Vu" value="${vu??108}" step="any"></td>`
-    +`<td><input type="number" class="dr-Tu" value="${tu??0}" step="any"></td>`
-    +`<td><input type="number" class="dr-Ps" value="${ps??-100}" step="any"></td>`
-    +`<td><input type="number" class="dr-Ms" value="${ms??2500}" step="any"></td>`
-    +`<td id="st_tors_${n}" class="dc-na">&mdash;</td>`
-    +`<td class="cap-cell" id="cap_Mr_${n}">&mdash;</td>`
-    +`<td class="cap-cell" id="cap_Vr1_${n}">&mdash;</td>`
-    +`<td class="cap-cell" id="cap_Vr2_${n}">&mdash;</td>`
-    +`<td class="cap-cell" id="cap_Vr3_${n}">&mdash;</td>`
-    +`<td class="cap-cell" id="cap_Tr_${n}">&mdash;</td>`
-    +`<td id="dc_M_${n}" class="dc-na">&mdash;</td>`
-    +`<td id="dc_V_${n}" class="dc-na">&mdash;</td>`
-    +`<td id="dc_T_${n}" class="dc-na">&mdash;</td>`
-    +`<td id="st_crack_${n}" class="dc-na">&mdash;</td>`
-    +`<td id="st_flex_${n}" class="dc-na">&mdash;</td>`
-    +`<td id="st_shear_${n}" class="dc-na">&mdash;</td>`
+    +`<td class="col-loc"><input type="number" class="dr-dp" value="${dp??''}" step="any" placeholder="\u2014" style="width:42px"></td>`
+    +`<td class="col-loc"><input type="number" class="dr-fpe" value="${fpe??''}" step="any" placeholder="\u2014" style="width:42px"></td>`
+    +`<td class="col-loc"><input type="number" class="dr-Vp" value="${vp??0}" step="any"></td>`
+    +`<td class="col-str-demand"><input type="number" class="dr-Pu" value="${pu??0}" step="any"></td>`
+    +`<td class="col-str-demand"><input type="number" class="dr-Mu" value="${mu??6953}" step="any"></td>`
+    +`<td class="col-str-demand"><input type="number" class="dr-Vu" value="${vu??108}" step="any"></td>`
+    +`<td class="col-str-demand"><input type="number" class="dr-Tu" value="${tu??0}" step="any"></td>`
+    +`<td class="col-svc-demand"><input type="number" class="dr-Ps" value="${ps??-100}" step="any"></td>`
+    +`<td class="col-svc-demand"><input type="number" class="dr-Ms" value="${ms??2500}" step="any"></td>`
+    +`<td class="col-tors-consider" id="st_tors_${n}">&mdash;</td>`
+    +`<td class="col-cap-mr cap-cell" id="cap_Mr_${n}">&mdash;</td>`
+    +`<td class="col-cap-vr1 cap-cell" id="cap_Vr1_${n}">&mdash;</td>`
+    +`<td class="col-cap-vr2 cap-cell" id="cap_Vr2_${n}">&mdash;</td>`
+    +`<td class="col-cap-vr3 cap-cell" id="cap_Vr3_${n}">&mdash;</td>`
+    +`<td class="col-cap-tr cap-cell" id="cap_Tr_${n}">&mdash;</td>`
+    +`<td class="col-dc" id="dc_M_${n}">&mdash;</td>`
+    +`<td class="col-dc" id="dc_V_${n}">&mdash;</td>`
+    +`<td class="col-long" id="dc_long_${n}">&mdash;</td>`
+    +`<td class="col-dc" id="dc_T_${n}">&mdash;</td>`
+    +`<td class="col-st-crack" id="st_crack_${n}">&mdash;</td>`
+    +`<td class="col-st-flex" id="st_flex_${n}">&mdash;</td>`
+    +`<td class="col-st-shear" id="st_shear_${n}">&mdash;</td>`
     +`<td><button class="demand-btn" style="padding:2px 8px;font-size:0.75rem" onclick="selectDemandRow(${n})">Detail</button></td>`;
   tb.appendChild(tr);
   // Wire mode toggle for PT profile override
@@ -2201,6 +2353,7 @@ function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
   tr.querySelectorAll('input').forEach(inp=>{
     inp.addEventListener('change',()=>debouncedCalculate());
   });
+  applyDemandColVisibility();
   if(demandRowCount===1) selectDemandRow(1);
 }
 function removeLastDemandRow(){
@@ -2227,11 +2380,12 @@ function getDemandRow(n){
 function setDC(n,type,demand,capacity){
   const el=document.getElementById('dc_'+type+'_'+n);
   if(!el) return;
-  if(capacity===0&&demand===0){el.textContent='\u2014';el.className='dc-na';return;}
-  if(capacity===0){el.textContent='\u221E';el.className='dc-fail';return;}
+  el.classList.remove('dc-na','dc-pass','dc-fail','dc-ok','dc-warn');
+  if(capacity===0&&demand===0){el.textContent='\u2014';el.classList.add('dc-na');return;}
+  if(capacity===0){el.textContent='\u221E';el.classList.add('dc-fail');return;}
   const dc=Math.abs(demand)/Math.abs(capacity);
   el.textContent=dc.toFixed(2);
-  el.className=dc<=1?'dc-pass':'dc-fail';
+  el.classList.add(dc<=1?'dc-pass':'dc-fail');
 }
 function onShearCapacityChange(){
   const select=document.getElementById('shearCapSelect');
@@ -2415,7 +2569,7 @@ function drawMiniCrossSection(canvas, state){
       }
     }
   }
-  // Bars — bottom
+  // Bars G�� bottom
   const visR=db=>Math.max(db/2*sc,1.6);
   const innerW=db=>((isRect?b:bw)-2*(cover+db_stir+visR(db)/sc));
   const innerOX=db=>((isRect?0:(b-bw)/2)+cover+db_stir+visR(db)/sc);
@@ -2598,7 +2752,7 @@ async function refreshProjectSummary(){
       try{ drawMiniCrossSection(document.getElementById('ps-cv-'+idx), sections[name]); }catch(e){ console.error('mini xsec error:',e); }
     });
     if(!(window.pywebview&&window.pywebview.api)){
-      // No backend — leave placeholders
+      // No backend G�� leave placeholders
       return;
     }
     // Compute D/C sequentially for each section
@@ -2678,7 +2832,7 @@ function yieldFrame(){ return new Promise(r=>requestAnimationFrame(r)); }
 function countMaxBarsInRow(b, cover, db_stirrup, db, minClear){
   const usable = b - 2*cover - 2*db_stirrup;
   if(usable < db) return 0;
-  // usable >= n*db + (n-1)*minClear  →  n <= (usable + minClear) / (db + minClear)
+  // usable >= n*db + (n-1)*minClear  G��  n <= (usable + minClear) / (db + minClear)
   const n = Math.floor((usable + minClear) / (db + minClear));
   return Math.max(1, n);
 }
@@ -2833,7 +2987,7 @@ async function optimizeFlexure(state, face, targetDC, params){
   return { ok:false, config:null, dc: bestDC };
 }
 
-/* Coarse-to-fine shear sweep: smallest bar × fewest legs × largest spacing first. */
+/* Coarse-to-fine shear sweep: smallest bar +� fewest legs +� largest spacing first. */
 async function optimizeShear(state, tgtV, tgtT, params){
   const trial = JSON.parse(JSON.stringify(state));
   const legsStart = Math.max(2, parseInt(trial.inputs.shear_legs)||2);
@@ -2866,7 +3020,7 @@ async function optimizeShear(state, tgtV, tgtT, params){
   return { ok:false, config:null, dc:{ v:bestV, t:bestT } };
 }
 
-/* Describe a flexure configuration from a state — used for the preview modal. */
+/* Describe a flexure configuration from a state G�� used for the preview modal. */
 function describeFlexureConfig(state, face){
   const inp = state.inputs || {};
   const mr = state.mrData && state.mrData[face];
@@ -2950,7 +3104,7 @@ async function optimizeSection(idx){
     try{ saveCurrentSectionState(); }catch(e){}
     const state = sections[name];
     if(!state || !(state.demandRows||[]).length){
-      setStatus('No demand rows — nothing to optimize.', 'fail');
+      setStatus('No demand rows G�� nothing to optimize.', 'fail');
       return;
     }
     setStatus('Analyzing demands...');
@@ -2959,7 +3113,7 @@ async function optimizeSection(idx){
     const hasV    = state.demandRows.some(d=>Math.abs(+d.Vu)>0);
     const hasT    = state.demandRows.some(d=>Math.abs(+d.Tu)>0);
     if(!(hasMpos||hasMneg||hasV||hasT)){
-      setStatus('All demands are zero — nothing to optimize.', 'fail');
+      setStatus('All demands are zero G�� nothing to optimize.', 'fail');
       return;
     }
 
@@ -3039,7 +3193,7 @@ function openOptPreview(data){
   };
   const title = document.getElementById('optPreviewTitle');
   const sub   = document.getElementById('optPreviewSub');
-  if(title) title.textContent = 'Optimization result — ' + data.sectionName;
+  if(title) title.textContent = 'Optimization result G�� ' + data.sectionName;
   if(sub)   sub.innerHTML = 'Proposed changes shown below. Click <b>Apply</b> to write them into this section or <b>Cancel</b> to discard.';
 
   const beforeHtml =
@@ -3108,6 +3262,7 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+
 /* Set the second demand-table header row's top offset = first row's rendered height,
    so both rows stick correctly within the scrollable container. */
 function fixDemandStickyHeader(){
@@ -3147,9 +3302,6 @@ document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>
     requestAnimationFrame(()=>{
       if(window._ptResult) drawPtCharts(window._ptResult);
     });
-  }
-  if(b.dataset.tab==='summary'){
-    refreshProjectSummary();
   }
 }));
 function toggleShowAll(){
@@ -3256,7 +3408,18 @@ function gatherInputs(){
   const mrTopArr=resolveMRRows('top');
   if(mrBotArr) mr_rows_bot=mrBotArr.map(r=>({d:r.d,As:r.As}));
   if(mrTopArr) mr_rows_top=mrTopArr.map(r=>({d:r.d,As:r.As}));
+  const astm_spec=document.getElementById('astm_spec').value;
+  // Factor overrides
+  const factor_overrides={};
+  document.querySelectorAll('.factor-ovr-cb').forEach(cb=>{
+    if(cb.checked){
+      const key=cb.dataset.factor;
+      const inp=document.getElementById(key+'_ovr_val');
+      if(inp) factor_overrides[key]=parseFloat(inp.value)||0;
+    }
+  });
   return {fc,fy,Ec,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
+    astm_spec,factor_overrides,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,nStrands,strand_area,dp,fpe,ductDia:ductDia,
     shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
 }
@@ -3296,6 +3459,7 @@ function runAllCalculations(){
         try{ renderFlexure(res.flexure, res.inputs, res.demands); }catch(e){ console.error('renderFlexure error:',e); }
         try{ renderShear(res.shear, res.inputs, res.demands); }catch(e){ console.error('renderShear error:',e); }
         try{ renderTorsion(res.torsion, res.inputs, res.demands); }catch(e){ console.error('renderTorsion error:',e); }
+        try{ updateFactorsDisplay(res); }catch(e){ console.error('updateFactorsDisplay error:',e); }
         // P-M chart
         pmChartData=res.flexure.pm_data; pmChartPu=res.demands.Pu; pmChartMu=res.demands.Mu;
         try{ drawPMChart(res.flexure.pm_data,res.demands.Pu,res.demands.Mu); }catch(e){ console.error('drawPMChart error:',e); }
@@ -3315,15 +3479,15 @@ function runAllCalculations(){
           const stCrack=document.getElementById('st_crack_'+n);
           const stFlex=document.getElementById('st_flex_'+n);
           const stShear=document.getElementById('st_shear_'+n);
-          stCrack.textContent=cap.crackStatus; stCrack.className=cap.crackStatus==='OK'?'dc-ok':'dc-fail';
-          stFlex.textContent=cap.flexStatus; stFlex.className=cap.flexStatus==='OK'?'dc-ok':'dc-fail';
+          stCrack.textContent=cap.crackStatus; stCrack.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stCrack.classList.add(cap.crackStatus==='OK'?'dc-ok':'dc-fail');
+          stFlex.textContent=cap.flexStatus; stFlex.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stFlex.classList.add(cap.flexStatus==='OK'?'dc-ok':'dc-fail');
           stShear.textContent=cap.shearStatus==='NR'?'N/R':cap.shearStatus;
-          stShear.className=cap.shearStatus==='OK'||cap.shearStatus==='NR'?'dc-ok':'dc-fail';
+          stShear.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stShear.classList.add(cap.shearStatus==='OK'||cap.shearStatus==='NR'?'dc-ok':'dc-fail');
           // Add shear reinforcement warning
           if(cap.shReqd && !cap.hasMinAv){
             stShear.textContent+=' ⚠';
             stShear.title='Transverse reinforcement required per AASHTO 5.7.2.3 but min Av not provided';
-            stShear.className='dc-fail';
+            stShear.classList.remove('dc-ok');stShear.classList.add('dc-fail');
           } else if(cap.shReqd && cap.shearStatus==='OK'){
             stShear.title='Transverse reinforcement required per AASHTO 5.7.2.3 — provided OK';
           } else if(!cap.shReqd){
@@ -3331,8 +3495,20 @@ function runAllCalculations(){
           }
           const stTors=document.getElementById('st_tors_'+n);
           stTors.textContent=cap.torsionConsider?'Yes':'No';
-          stTors.className=cap.torsionConsider?'dc-warn':'dc-ok';
+          stTors.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stTors.classList.add(cap.torsionConsider?'dc-warn':'dc-ok');
+          // Longitudinal reinforcement D/C using selected shear method
+          const dcLongEl=document.getElementById('dc_long_'+n);
+          if(dcLongEl){
+            let dc=null;
+            if(shearCapacityMethod==='simp') dc=cap.long_dc_1;
+            else if(shearCapacityMethod==='b5') dc=cap.long_dc_3;
+            else dc=cap.long_dc_2;
+            dcLongEl.classList.remove('dc-ok','dc-fail','dc-na');
+            if(dc!=null){dcLongEl.textContent=dc.toFixed(2);dcLongEl.classList.add(dc<=1?'dc-ok':'dc-fail');}
+            else{dcLongEl.textContent='\u2014';dcLongEl.classList.add('dc-na');}
+          }
         });
+        applyDemandColVisibility();
       }catch(e){ console.error('Parse error:',e); }
     });
   } else { console.warn('pywebview.api not available — running in browser without Python backend'); }
@@ -3341,6 +3517,23 @@ function runAllCalculations(){
 /* ====================================================================
    RENDER FUNCTIONS — populate HTML from Python result dicts
    ==================================================================== */
+
+function updateFactorsDisplay(res){
+  const fl=res.flexure, sh=res.shear, inp=res.inputs;
+  // Update displayed factor values from calculation results
+  document.getElementById('fv_disp').textContent=F(inp.phi_v||0.9,2);
+  document.getElementById('phi_v').value=inp.phi_v||0.9;
+  document.getElementById('ff_disp').textContent=fl?F(fl.phi_f,3):'—';
+  document.getElementById('fc_disp').textContent='0.75';
+  document.getElementById('ge_disp').textContent=F(inp.gamma_e||0.75,2);
+  document.getElementById('lam_disp').textContent=F(inp.lam||1.0,2);
+  document.getElementById('ld_disp').textContent=sh?F(sh.lambda_duct,3):'—';
+  document.getElementById('g1_disp').textContent=fl?F(fl.gamma1,2):'1.60';
+  document.getElementById('g2_disp').textContent=fl?F(fl.gamma2,2):'1.10';
+  document.getElementById('g3_disp').textContent=fl?F(fl.gamma3,2):'0.67';
+  document.getElementById('a1_disp').textContent=inp.alpha1?F(inp.alpha1,3):'—';
+  document.getElementById('b1_disp').textContent=inp.beta1?F(inp.beta1,3):'—';
+}
 
 function renderFlexure(fl,inp,dem){
   const Pu=dem.Pu, Mu=dem.Mu, Ms=dem.Ms, Ps=dem.Ps;
@@ -3402,11 +3595,13 @@ function renderFlexure(fl,inp,dem){
   document.getElementById('flexResults').innerHTML=o;
 
   o=SH('Minimum Flexure Reinforcement (5.6.3.3)');
-  o+=R('&gamma;&#8321;','1.6');
-  o+=R('&gamma;&#8323; (A615 Gr 60)','0.67');
+  o+=R('&gamma;&#8321; <small>(cracking variability)</small>',F(fl.gamma1,2));
+  o+=R('&gamma;&#8322; <small>(prestress, bonded)</small>',F(fl.gamma2,2));
+  o+=R('&gamma;&#8323; <small>(reinf. ratio, '+document.getElementById('astm_spec').value+')</small>',F(fl.gamma3,2));
   o+=R('f<sub>r</sub> = 0.24&radic;f\'c',F(fl.fr,4),'ksi');
+  o+=R('f<sub>cpe</sub> <small>(prestress at tension fiber)</small>',F(fl.fcpe,4),'ksi');
   o+=R('S<sub>c</sub>',F(fl.Sc,1),'in&sup3;');
-  o+=R('M<sub>cr</sub> = &gamma;&#8321;&gamma;&#8323;f<sub>r</sub>S<sub>c</sub>',F(fl.Mcr,1),'kip-in');
+  o+=R('M<sub>cr</sub> = &gamma;&#8323;(&gamma;&#8321;f<sub>r</sub> + &gamma;&#8322;f<sub>cpe</sub>)S<sub>c</sub>',F(fl.Mcr,1),'kip-in');
   o+=R('1.33M<sub>u</sub>',F(1.33*Math.abs(Mu),1),'kip-in');
   o+=R('Governing',F(fl.Mcond,1),'kip-in');
   o+=R('M<sub>r</sub> &ge; min(1.33M<sub>u</sub>, M<sub>cr</sub>)',BG(fl.min_flex_ok));
@@ -3606,6 +3801,11 @@ function renderShear(sh,inp,dem){
   }
   document.getElementById('shearB5').innerHTML=o;
 
+  // Visibility toggling based on checkboxes
+  document.getElementById('shearSimple').parentElement.style.display=document.getElementById('chk_method1').checked?'':'none';
+  document.getElementById('shearGeneral').parentElement.style.display=document.getElementById('chk_method2').checked?'':'none';
+  document.getElementById('shearB5').parentElement.style.display=document.getElementById('chk_method3').checked?'':'none';
+
   o='';
   o+=SH('Shear Reinf. Required? (5.7.2.3)');
   o+=R('V<sub>u</sub> &gt; 0.5&phi;(V<sub>c</sub>+V<sub>p</sub>)?','');
@@ -3625,21 +3825,63 @@ function renderShear(sh,inp,dem){
   o+=R('Provided spacing',F(s_shear,2),'in');
   o+=R('Spacing OK?',BG(s_shear<=sh.s_max_sh));
   document.getElementById('shearReinfChecks').innerHTML=o;
-  o='<h4>'+(sh.torsion_consider?'AASHTO 5.7.3.6.3 &mdash; Longitudinal Reinforcement (Shear+Torsion)':'AASHTO 5.7.3.5 &mdash; Longitudinal Reinforcement for Shear')+'</h4>';
-  o+=R('A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub> (capacity)',F(sh.long_cap,1),'kip');
-  o+=R('|M<sub>u</sub>|/(d<sub>v</sub>&phi;<sub>f</sub>)',F(sh.ld_M,1),'kip');
-  o+=R('0.5N<sub>u</sub>/&phi;<sub>c</sub> <small>(+tension)</small>',F(sh.ld_N,1),'kip');
-  if(sh.torsion_consider){
-    o+=R('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s</sub>',F(Math.max(sh.ld_V,0),1),'kip');
-    o+=R('Torsion term: 0.45p<sub>h</sub>T<sub>u</sub>/(2A<sub>o</sub>&phi;)',F(sh.ld_T_tors,1),'kip');
-    o+=R('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;) <small>(5.7.3.6.3-1)</small>',F(sh.ld_VT*sh.cott,1),'kip');
-  } else {
-    o+=R('(|V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s</sub>)cot&theta;',F((sh.ld_V>0?sh.ld_V:0)*sh.cott,1),'kip');
+
+  // Longitudinal Reinforcement for Shear - show/hide based on checkbox
+  const showLongReinf=document.getElementById('chk_long_reinf').checked;
+  const longEl=document.getElementById('longReinfShear');
+  if(!showLongReinf){ longEl.innerHTML=''; longEl.style.display='none'; }
+  else {
+    longEl.style.display='';
+    const torsLabel=sh.torsion_consider?'AASHTO 5.7.3.6.3 &mdash; Longitudinal Reinforcement (Shear+Torsion)':'AASHTO 5.7.3.5 &mdash; Longitudinal Reinforcement for Shear';
+    o='<h4>'+torsLabel+'</h4>';
+    o+=R('A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub> (capacity)',F(sh.long_cap,1),'kip');
+    o+=R('|M<sub>u</sub>|/(d<sub>v</sub>&phi;<sub>f</sub>)',F(sh.ld_M,1),'kip');
+    o+=R('0.5N<sub>u</sub>/&phi;<sub>c</sub> <small>(+tension)</small>',F(sh.ld_N,1),'kip');
+    if(sh.torsion_consider){
+      o+=R('Torsion term: 0.45p<sub>h</sub>T<sub>u</sub>/(2A<sub>o</sub>&phi;)',F(sh.ld_T_tors,1),'kip');
+    }
+
+    // Method 1 (Simplified, θ=45°)
+    o+=SH('Method 1 &mdash; Simplified (&theta; = 45&deg;)');
+    if(sh.torsion_consider){
+      o+=R('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s1</sub>',F(Math.max(sh.ld_VT_1-(sh.ld_T_tors||0),0),1),'kip');
+      o+=R('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;) <small>(5.7.3.6.3-1)</small>',F(sh.ld_VT_1*sh.cott_1,1),'kip');
+    } else {
+      o+=R('(|V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s1</sub>)cot&theta;',F(sh.ld_VT_1*sh.cott_1,1),'kip');
+    }
+    o+=R('Total demand',F(sh.long_dem_1,1),'kip');
+    o+=R('Capacity &ge; Demand',BG(sh.long_ok_1));
+    if(!sh.long_ok_1) o+=R('Additional A<sub>s</sub> needed',F((sh.long_dem_1-sh.long_cap)/V('fy'),3),'in&sup2;');
+
+    // Method 2 (General Procedure, θ=θ₂)
+    o+=SH('Method 2 &mdash; General Procedure (&theta; = '+F(sh.th2,2)+'&deg;)');
+    if(sh.torsion_consider){
+      o+=R('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s2</sub>',F(Math.max(sh.ld_V,0),1),'kip');
+      o+=R('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;) <small>(5.7.3.6.3-1)</small>',F(sh.ld_VT*sh.cott,1),'kip');
+    } else {
+      o+=R('(|V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s2</sub>)cot&theta;',F((sh.ld_V>0?sh.ld_V:0)*sh.cott,1),'kip');
+    }
+    o+=R('Total demand',F(sh.long_dem,1),'kip');
+    o+=R('Capacity &ge; Demand',BG(sh.long_ok));
+    if(!sh.long_ok) o+=R('Additional A<sub>s</sub> needed',F((sh.long_dem-sh.long_cap)/V('fy'),3),'in&sup2;');
+
+    // Method 3 (Appendix B5, θ=θ₃)
+    o+=SH('Method 3 &mdash; Appendix B5 (&theta; = '+(sh.b5_valid?F(sh.th3,2):'N/A')+'&deg;)');
+    if(sh.b5_valid && sh.long_dem_3!==null){
+      if(sh.torsion_consider){
+        o+=R('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s3</sub>',F(Math.max(sh.ld_VT_3-(sh.ld_T_tors||0),0),1),'kip');
+        o+=R('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;) <small>(5.7.3.6.3-1)</small>',F(sh.ld_VT_3*sh.cott_3,1),'kip');
+      } else {
+        o+=R('(|V<sub>u</sub>/&phi;<sub>v</sub>-V<sub>p</sub>|-0.5V<sub>s3</sub>)cot&theta;',F(sh.ld_VT_3*sh.cott_3,1),'kip');
+      }
+      o+=R('Total demand',F(sh.long_dem_3,1),'kip');
+      o+=R('Capacity &ge; Demand',BG(sh.long_ok_3));
+      if(!sh.long_ok_3) o+=R('Additional A<sub>s</sub> needed',F((sh.long_dem_3-sh.long_cap)/V('fy'),3),'in&sup2;');
+    } else {
+      o+=R('Status',BW('N/A &mdash; B5 method did not converge'));
+    }
+    longEl.innerHTML=o;
   }
-  o+=R('<b>Total demand</b>',F(sh.long_dem,1),'kip');
-  o+=R('Capacity &ge; Demand',BG(sh.long_ok));
-  if(!sh.long_ok) o+=R('Additional A<sub>s</sub> needed',F((sh.long_dem-sh.long_cap)/V('fy'),3),'in&sup2;');
-  document.getElementById('longReinfShear').innerHTML=o;
 
   // Comparison table
   let t='<thead><tr><th></th><th>Simplified</th><th>General Procedure</th><th>Appendix B5</th></tr></thead><tbody>';
@@ -4499,13 +4741,15 @@ function pushPtToRow(r, prof){
   if(isNaN(xv))return;
   const dpV=interpolateProfile(prof,xv,'dp');
   const fpeV=interpolateProfile(prof,xv,'fpe');
-  const vpV=interpolateProfile(prof,xv,'Vp');
+  const thetaDegV=interpolateProfile(prof,xv,'theta_deg');
+  const ApsForVp=V('pt_Aps')||0;
+  const vpV=Math.abs(fpeV*ApsForVp*Math.sin(thetaDegV*Math.PI/180));
   const dpEl=row.querySelector('.dr-dp');
   const fpeEl=row.querySelector('.dr-fpe');
   const vpEl=row.querySelector('.dr-Vp');
   if(dpEl){dpEl.value=F(dpV,2);dpEl.style.background='#eaf2f8';}
   if(fpeEl){fpeEl.value=F(fpeV,2);fpeEl.style.background='#eaf2f8';}
-  if(vpEl){vpEl.value=F(Math.abs(vpV),2);vpEl.style.background='#eaf2f8';}
+  if(vpEl){vpEl.value=F(vpV,2);vpEl.style.background='#eaf2f8';}
   // When mode='layout', also update the global Inputs tab dp/fpe fields
   const dpMode=document.getElementById('dp_mode');
   const fpeMode=document.getElementById('fpe_mode');
@@ -5027,12 +5271,24 @@ function generateReport(){
   if(ck('rpt_minflex')){
     h2+=`<h2>4 &mdash; Minimum Flexure Reinforcement ${RREF('AASHTO 5.6.3.3')}</h2>`;
     h2+=`<div class="rpt-note">The factored flexural resistance shall be at least the lesser of the cracking moment (M<sub>cr</sub>) or 1.33 times the factored moment.</div>`;
-    h2+=REQ("M<sub>cr</sub> = &gamma;<sub>1</sub>&gamma;<sub>3</sub>f<sub>r</sub>S<sub>c</sub> &nbsp; "+RREF('5.6.3.3-1'));
+    if(hasPT && fl.fcpe>0){
+      h2+=REQ("M<sub>cr</sub> = &gamma;<sub>3</sub>(&gamma;<sub>1</sub>f<sub>r</sub> + &gamma;<sub>2</sub>f<sub>cpe</sub>)S<sub>c</sub> &nbsp; "+RREF('5.6.3.3-1'));
+    } else {
+      h2+=REQ("M<sub>cr</sub> = &gamma;<sub>1</sub>&gamma;<sub>3</sub>f<sub>r</sub>S<sub>c</sub> &nbsp; "+RREF('5.6.3.3-1'));
+    }
     h2+=RR('&gamma;<sub>1</sub>',F(fl.gamma1,2));
+    if(hasPT && fl.fcpe>0) h2+=RR('&gamma;<sub>2</sub> <small>(prestress factor, bonded tendons)</small>',F(fl.gamma2,2));
     h2+=RR('&gamma;<sub>3</sub> <small>(Table 5.6.3.3-1: '+( fy<=60?'Grade 60':'Grade &ge; 75')+')</small>',F(fl.gamma3,2));
     h2+=RR("f<sub>r</sub> = 0.24&radic;f'<sub>c</sub>",F(fl.fr,4),'ksi');
     h2+=REQ("f<sub>r</sub> = 0.24&radic;"+F(fc,1)+" = "+F(fl.fr,4)+" ksi &nbsp; "+RREF('5.4.2.6'));
+    if(hasPT && fl.fcpe>0){
+      h2+=RR('f<sub>cpe</sub> (compressive stress from prestress at extreme tension fiber)',F(fl.fcpe,4),'ksi');
+      h2+=REQ("f<sub>cpe</sub> = P<sub>e</sub>/A<sub>g</sub> + P<sub>e</sub>&middot;e&middot;y<sub>t</sub>/I<sub>g</sub> = "+F(fl.fcpe,4)+" ksi");
+    }
     h2+=RR('S<sub>c</sub> (section modulus)',F(fl.Sc,1),'in&sup3;');
+    if(hasPT && fl.fcpe>0){
+      h2+=REQ("M<sub>cr</sub> = "+F(fl.gamma3,2)+"("+F(fl.gamma1,2)+"&times;"+F(fl.fr,4)+" + "+F(fl.gamma2,2)+"&times;"+F(fl.fcpe,4)+")&times;"+F(fl.Sc,1)+" = "+F(fl.Mcr,1)+" kip-in");
+    }
     h2+=RR('M<sub>cr</sub>',F(fl.Mcr,1),'kip-in');
     h2+=RR('1.33M<sub>u</sub>',F(1.33*Math.abs(Mu),1),'kip-in');
     h2+=RR('Governing = min(M<sub>cr</sub>, 1.33M<sub>u</sub>)',F(fl.Mcond,1),'kip-in');
@@ -5272,15 +5528,58 @@ function generateReport(){
     h2+=RR('|M<sub>u</sub>|/(d<sub>v</sub>&phi;<sub>f</sub>)',F(sh.ld_M,1),'kip');
     h2+=RR('0.5N<sub>u</sub>/&phi;<sub>c</sub>',F(sh.ld_N,1),'kip');
     if(sh.torsion_consider){
-      h2+=RR('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s</sub>',F(Math.max(sh.ld_V,0),1),'kip');
       h2+=RR('Torsion term: 0.45p<sub>h</sub>T<sub>u</sub>/(2A<sub>o</sub>&phi;)',F(sh.ld_T_tors,1),'kip');
-      h2+=RR('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;) <small>SRSS per 5.7.3.6.3-1</small>',F(sh.ld_VT*sh.cott,1),'kip');
-    } else {
-      h2+=RR('(|V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s</sub>)cot&theta;',F((sh.ld_V>0?sh.ld_V:0)*sh.cott,1),'kip');
     }
-    h2+=RR('<b>Total demand</b>','<b>'+F(sh.long_dem,1)+'</b>','kip');
-    h2+=RR('Capacity &ge; Demand',RCHK(sh.long_ok,'D/C = '+F(sh.long_dem/sh.long_cap,3),'D/C = '+F(sh.long_dem/sh.long_cap,3)));
-    if(!sh.long_ok) h2+=RR('Additional A<sub>s</sub> needed',F((sh.long_dem-sh.long_cap)/fy,3),'in&sup2;');
+    // --- Method 1 (Simplified, θ=45°) ---
+    const rptM1=document.getElementById('chk_method1').checked;
+    const rptM2=document.getElementById('chk_method2').checked;
+    const rptM3=document.getElementById('chk_method3').checked;
+    if(rptM1){
+      h2+=`<h3>11.1 Method 1 &mdash; Simplified (&theta; = 45&deg;)</h3>`;
+      if(sh.torsion_consider){
+        h2+=RR('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s1</sub>',F(Math.max(sh.ld_VT_1-(sh.ld_T_tors||0),0),1),'kip');
+        h2+=RR('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;)',F(sh.ld_VT_1*sh.cott_1,1),'kip');
+      } else {
+        h2+=RR('(|V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s1</sub>)cot&theta;',F(sh.ld_VT_1*sh.cott_1,1),'kip');
+      }
+      h2+=RR('Total demand',F(sh.long_dem_1,1),'kip');
+      h2+=RR('D/C ratio',F(sh.long_dem_1/sh.long_cap,3));
+      h2+=RR('Capacity &ge; Demand',RCHK(sh.long_ok_1,'PASS','FAIL'));
+      if(!sh.long_ok_1) h2+=RR('Additional A<sub>s</sub> needed',F((sh.long_dem_1-sh.long_cap)/fy,3),'in&sup2;');
+    }
+    // --- Method 2 (General Procedure, θ=θ₂) ---
+    if(rptM2){
+      h2+=`<h3>11.${rptM1?'2':'1'} Method 2 &mdash; General Procedure (&theta; = ${F(sh.th2,2)}&deg;)</h3>`;
+      if(sh.torsion_consider){
+        h2+=RR('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s2</sub>',F(Math.max(sh.ld_V,0),1),'kip');
+        h2+=RR('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;)',F(sh.ld_VT*sh.cott,1),'kip');
+      } else {
+        h2+=RR('(|V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s2</sub>)cot&theta;',F((sh.ld_V>0?sh.ld_V:0)*sh.cott,1),'kip');
+      }
+      h2+=RR('Total demand',F(sh.long_dem,1),'kip');
+      h2+=RR('D/C ratio',F(sh.long_dem/sh.long_cap,3));
+      h2+=RR('Capacity &ge; Demand',RCHK(sh.long_ok,'PASS','FAIL'));
+      if(!sh.long_ok) h2+=RR('Additional A<sub>s</sub> needed',F((sh.long_dem-sh.long_cap)/fy,3),'in&sup2;');
+    }
+    // --- Method 3 (Appendix B5, θ=θ₃) ---
+    if(rptM3){
+      const m3sub=((rptM1?1:0)+(rptM2?1:0))+1;
+      h2+=`<h3>11.${m3sub} Method 3 &mdash; Appendix B5 (&theta; = ${sh.b5_valid?F(sh.th3,2):'N/A'}&deg;)</h3>`;
+      if(sh.b5_valid && sh.long_dem_3!==null && sh.long_dem_3!==undefined){
+        if(sh.torsion_consider){
+          h2+=RR('Shear term: |V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s3</sub>',F(Math.max(sh.ld_VT_3-(sh.ld_T_tors||0),0),1),'kip');
+          h2+=RR('cot&theta;&middot;&radic;(shear&sup2;+torsion&sup2;)',F(sh.ld_VT_3*sh.cott_3,1),'kip');
+        } else {
+          h2+=RR('(|V<sub>u</sub>/&phi;<sub>v</sub>&minus;V<sub>p</sub>|&minus;0.5V<sub>s3</sub>)cot&theta;',F(sh.ld_VT_3*sh.cott_3,1),'kip');
+        }
+        h2+=RR('Total demand',F(sh.long_dem_3,1),'kip');
+        h2+=RR('D/C ratio',F(sh.long_dem_3/sh.long_cap,3));
+        h2+=RR('Capacity &ge; Demand',RCHK(sh.long_ok_3,'PASS','FAIL'));
+        if(!sh.long_ok_3) h2+=RR('Additional A<sub>s</sub> needed',F((sh.long_dem_3-sh.long_cap)/fy,3),'in&sup2;');
+      } else {
+        h2+=`<div class="rpt-note">N/A &mdash; B5 method did not converge or is invalid for this section.</div>`;
+      }
+    }
     h2+=`<hr>`;
   }
 
@@ -5862,15 +6161,26 @@ function clearMR(side){
 }
 
 window.addEventListener('load',()=>{
-  updateSectionFields();updatePTFields();setupDpFpeModes();syncApsToTab();addDemandRow(0,6953,108,0,0,2500,-100);
+  updateSectionFields();updatePTFields();setupDpFpeModes();syncApsToTab();
+  rebuildDemandThead();
+  addDemandRow(0,6953,108,0,0,2500,-100);
   addPtParabola(0,8,50.4,24,113.4,4);addPtParabola(113.4,4,126,3,142.8,4.5);addPtParabola(142.8,4.5,210,24,277.2,4.5);addPtParabola(277.2,4.5,294,3,305.8,4);addPtParabola(305.8,4,364.8,24,412,8);
   updateTangentLocks();computeTangentJunctions();
   // Auto-set fpj = 0.75*fpu
   const fpuEl=document.getElementById('fpu'),fpjEl=document.getElementById('pt_fpj');
   if(fpuEl&&fpjEl){fpjEl.value=(0.75*parseFloat(fpuEl.value||270)).toFixed(1);fpuEl.addEventListener('input',()=>{fpjEl.value=(0.75*parseFloat(fpuEl.value||270)).toFixed(1);});}
+  // Factor override toggles — show/hide override input when checkbox is toggled
+  document.querySelectorAll('.factor-ovr-cb').forEach(cb=>{
+    cb.addEventListener('change',()=>{
+      const inp=document.getElementById(cb.dataset.factor+'_ovr_val');
+      if(inp) inp.style.display=cb.checked?'inline-block':'none';
+    });
+  });
+  // Wire shear method checkboxes to rebuild demand table header
+  ['chk_method1','chk_method2','chk_method3','chk_long_reinf'].forEach(id=>{
+    document.getElementById(id).addEventListener('change',()=>{rebuildDemandThead();applyDemandColVisibility();});
+  });
   setupAutoCalculate();runAllCalculations();
-  // Fix two-row sticky header: second header row needs top = first row's height
-  requestAnimationFrame(fixDemandStickyHeader);
   // Initial PT calc after backend is ready
   setTimeout(()=>runPtCalc(),800);
 
