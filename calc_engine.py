@@ -368,7 +368,11 @@ def build_pm_curve(I, comp_face="top"):
 
     pc_y = h / 2
     Ag = b * h if is_rect else b * hf_top + bw * (h - hf_top - hf_bot) + b * hf_bot
-    Pn_max = -0.8 * alpha1 * fc * Ag
+    # AASHTO LRFD 10th Ed Eq. 5.6.4.4-3: Pn_max = 0.80[kc·f'c·(Ag-Ast-Aps) + fy·Ast - Aps·(fpe - Ep·εcu)]
+    Ast = As_tens_total + As_comp_total
+    kc = alpha1  # kc per 5.6.4.4: same formula as α₁ (0.85 for f'c≤10, reduced above)
+    pt_reduction = Aps * (fpe - Ept * 0.003) if Aps > 0 else 0
+    Pn_max = -0.8 * (kc * fc * (Ag - Ast - Aps) + fy * Ast - pt_reduction)
     N = 40
     d_tens_max = max((r["d_cf"] for r in tens_rows), default=0)
     # Fallback sweep depth: use centroid depth when no tension rows exist
@@ -377,19 +381,144 @@ def build_pm_curve(I, comp_face="top"):
         d_tens_max = max(d_fallback, 0.1)
     dt_bc = max(d_tens_max, dp_cf) if Aps > 0 else d_tens_max
 
+    # Moment direction: when comp_face="bottom", d_cf is from bottom but
+    # moment about h/2 must reference positions from top. Since all moment
+    # terms use (d_cf - h/2) which has wrong sign when d_cf is from bottom,
+    # we multiply the total Mn by m_sign to correct.
+    m_sign = 1 if comp_face == "top" else -1
+
     def _row_zero(rows):
         return [{"d_cf": r["d_cf"], "As": r["As"], "es": 0, "fs": 0, "F": 0} for r in rows]
 
+    # Centroid of gross concrete area (from top of section)
+    if is_rect:
+        yc_conc = h / 2
+    else:
+        A_tf = b * hf_top
+        A_web = bw * (h - hf_top - hf_bot)
+        A_bf = b * hf_bot
+        yc_conc = (A_tf * (hf_top / 2) + A_web * (hf_top + (h - hf_top - hf_bot) / 2) + A_bf * (h - hf_bot / 2)) / Ag
+
     pts = []
-    # Pure compression
-    pts.append({
-        "c": 9999, "a": 9999, "eps_t": 0, "stat": "CC", "phi": 0.75,
-        "Pn": Pn_max, "Mn": 0, "Pr": Pn_max * 0.75, "Mr": 0,
-        "es_tens": 0, "fs_tens": 0, "F_tens": 0,
-        "es_comp": 0, "fs_comp": 0, "F_comp": 0,
-        "rows_tens": _row_zero(tens_rows), "rows_comp": _row_zero(comp_rows),
-        "eps_pe": eps_pe, "delta_eps": 0, "eps_pt": eps_pe, "fps_pt": 0, "F_pt": 0,
-    })
+
+    # Upper sweep: transition from pure compression to main sweep (c > dt_bc)
+    # Only sweep from dt_bc up to c_sat where all steel reaches -fy (beyond that, Mn is constant)
+    # c_sat: strain at deepest tension row = fy/Es → 0.003*(d_max-c)/c = -fy/Es → c = d_max/(1 - fy/(0.003*Es))
+    # For fy=60, Es=29000: fy/(0.003*Es) = 0.69, so c_sat ≈ 3.2*d_max
+    fy_ratio = fy / (0.003 * Es)
+    c_sat = dt_bc / (1 - fy_ratio) if fy_ratio < 1 else 3 * h
+    c_upper_max = min(c_sat * 1.05, 5 * h)  # slight overshoot then stop
+    # Build upper sweep with denser spacing near dt_bc where Mn changes rapidly
+    c_full_block = h / beta1  # c at which a exactly equals h
+    upper_c_values = set()
+    # 5 points from c_full_block to c_upper_max (flat Mn region — sparse)
+    N_above = 5
+    for i in range(N_above, 0, -1):
+        upper_c_values.add(round(c_full_block + (c_upper_max - c_full_block) * i / N_above, 6))
+    upper_c_values.add(round(c_full_block, 6))
+    # 8 points from dt_bc to c_full_block (rapid Mn change — dense)
+    N_below = 8
+    if c_full_block > dt_bc:
+        for i in range(N_below, 0, -1):
+            upper_c_values.add(round(dt_bc + (c_full_block - dt_bc) * i / N_below, 6))
+    upper_c_values = sorted(upper_c_values, reverse=True)
+
+    for ci in upper_c_values:
+        ai = min(ci * beta1, h)  # cap stress block at section depth
+        if is_rect or ai <= hf:
+            if ai >= h and is_rect:
+                Cc = -alpha1 * fc * b * h
+                ycc = h / 2
+            else:
+                Cc = -alpha1 * fc * b * ai
+                ycc = ai / 2
+        else:
+            if ai >= h:
+                Cc = -alpha1 * fc * Ag
+                ycc = None
+            else:
+                Cf = alpha1 * fc * (b - bw) * hf
+                Cw = alpha1 * fc * bw * ai
+                Cc = -(Cf + Cw)
+                ycc = None
+
+        F_tens_sum = 0
+        Mn_tens_sum = 0
+        rows_tens_data = []
+        for row in tens_rows:
+            d_r = row["d_cf"]
+            es_r = 0.003 * (d_r - ci) / ci
+            fs_r = min(abs(es_r) * Es, fy) * (1 if es_r >= 0 else -1)
+            F_r = row["As"] * fs_r
+            F_tens_sum += F_r
+            Mn_tens_sum += F_r * (d_r - pc_y)
+            rows_tens_data.append({"d_cf": d_r, "As": row["As"], "es": es_r, "fs": fs_r, "F": F_r})
+
+        ext_es_tens = 0
+        ext_fs_tens = 0
+        if tens_rows:
+            deepest = max(tens_rows, key=lambda r: r["d_cf"])
+            ext_es_tens = 0.003 * (deepest["d_cf"] - ci) / ci
+            ext_fs_tens = min(abs(ext_es_tens) * Es, fy) * (1 if ext_es_tens >= 0 else -1)
+
+        F_comp_sum = 0
+        Mn_comp_sum = 0
+        rows_comp_data = []
+        for row in comp_rows:
+            d_r = row["d_cf"]
+            es_r = 0.003 * (d_r - ci) / ci if ci > 0 else 0
+            fs_r = min(abs(es_r) * Es, fy) * (1 if es_r >= 0 else -1)
+            F_r = row["As"] * fs_r
+            F_comp_sum += F_r
+            Mn_comp_sum += F_r * (d_r - pc_y)
+            rows_comp_data.append({"d_cf": d_r, "As": row["As"], "es": es_r, "fs": fs_r, "F": F_r})
+
+        ext_es_comp = 0
+        ext_fs_comp = 0
+        if comp_rows:
+            shallowest = min(comp_rows, key=lambda r: r["d_cf"])
+            ext_es_comp = 0.003 * (shallowest["d_cf"] - ci) / ci if ci > 0 else 0
+            ext_fs_comp = min(abs(ext_es_comp) * Es, fy) * (1 if ext_es_comp >= 0 else -1)
+
+        Tpt = 0
+        eps_p_i = 0
+        fps_u_i = 0
+        delta_eps_i = 0
+        if Aps > 0 and dp_cf > 0:
+            delta_eps_i = 0.003 * (dp_cf - ci) / ci
+            eps_p_i = eps_pe + delta_eps_i
+            fps_u_i = min(abs(eps_p_i) * Ept, fpy) * (1 if eps_p_i >= 0 else -1)
+            Tpt = Aps * fps_u_i
+
+        Pn = max(Cc + F_tens_sum + F_comp_sum + Tpt, Pn_max)
+        arm_pt = dp_cf - pc_y if Aps > 0 else 0
+        if ai >= h:
+            # Full section compressed: concrete centroid at h/2 from comp face
+            Mn_cc = -Cc * (pc_y - h / 2)  # = 0 for rectangular
+            if not is_rect:
+                # Use actual centroid of gross section from comp face
+                yc_cf = yc_conc if comp_face == "top" else (h - yc_conc)
+                Mn_cc = -Cc * (pc_y - yc_cf)
+        elif is_rect or ai <= hf:
+            Mn_cc = -Cc * (pc_y - ycc)
+        else:
+            Mn_cc = Cf * (pc_y - hf / 2) + Cw * (pc_y - ai / 2)
+
+        Mn_i = (Mn_cc + Mn_tens_sum + Mn_comp_sum + (Tpt * arm_pt if Aps > 0 else 0)) * m_sign
+
+        # c > dt_bc: tension face is in net compression → always compression-controlled
+        et_i = 0.003 * (dt_bc - ci) / ci  # negative when c > dt_bc
+        phi_i = 0.75  # compression-controlled
+        st = "CC"
+
+        pts.append({
+            "c": ci, "a": ai, "eps_t": abs(et_i), "stat": st, "phi": phi_i,
+            "Pn": Pn, "Mn": Mn_i, "Pr": Pn * phi_i, "Mr": Mn_i * phi_i,
+            "es_tens": ext_es_tens, "fs_tens": ext_fs_tens, "F_tens": F_tens_sum,
+            "es_comp": ext_es_comp, "fs_comp": ext_fs_comp, "F_comp": F_comp_sum,
+            "rows_tens": rows_tens_data, "rows_comp": rows_comp_data,
+            "eps_pe": eps_pe, "delta_eps": delta_eps_i, "eps_pt": eps_p_i, "fps_pt": fps_u_i, "F_pt": Tpt,
+        })
 
     for i in range(N, 0, -1):
         ci = dt_bc * i / N
@@ -466,7 +595,7 @@ def build_pm_curve(I, comp_face="top"):
         else:
             Mn_cc = Cf * (pc_y - hf / 2) + Cw * (pc_y - ai / 2)
 
-        Mn_i = Mn_cc + Mn_tens_sum + Mn_comp_sum + (Tpt * arm_pt if Aps > 0 else 0)
+        Mn_i = (Mn_cc + Mn_tens_sum + Mn_comp_sum + (Tpt * arm_pt if Aps > 0 else 0)) * m_sign
 
         et_i = 0.003 * (dt_bc - ci) / ci
         phi_i = get_phi_flex(code_edition, section_class, et_i, ecl, etl)
@@ -481,21 +610,531 @@ def build_pm_curve(I, comp_face="top"):
             "eps_pe": eps_pe, "delta_eps": delta_eps_i, "eps_pt": eps_p_i, "fps_pt": fps_u_i, "F_pt": Tpt,
         })
 
-    # Pure tension
+    # Extended sweep for smooth tension transition (c from dt_bc/40 down to dt_bc/400)
+    for i in range(9, 0, -1):
+        ci = dt_bc * i / 400
+        ai = ci * beta1
+        if is_rect or ai <= hf:
+            Cc = -alpha1 * fc * b * ai
+            ycc = ai / 2
+        else:
+            Cf = alpha1 * fc * (b - bw) * hf
+            Cw = alpha1 * fc * bw * ai
+            Cc = -(Cf + Cw)
+            ycc = None
+
+        F_tens_sum = 0
+        Mn_tens_sum = 0
+        rows_tens_data = []
+        for row in tens_rows:
+            d_r = row["d_cf"]
+            es_r = 0.003 * (d_r - ci) / ci
+            fs_r = min(abs(es_r) * Es, fy) * (1 if es_r >= 0 else -1)
+            F_r = row["As"] * fs_r
+            F_tens_sum += F_r
+            Mn_tens_sum += F_r * (d_r - pc_y)
+            rows_tens_data.append({"d_cf": d_r, "As": row["As"], "es": es_r, "fs": fs_r, "F": F_r})
+
+        ext_es_tens = 0.003 * (d_tens_max - ci) / ci if tens_rows else 0
+        ext_fs_tens = min(abs(ext_es_tens) * Es, fy) * (1 if ext_es_tens >= 0 else -1) if tens_rows else 0
+
+        F_comp_sum = 0
+        Mn_comp_sum = 0
+        rows_comp_data = []
+        for row in comp_rows:
+            d_r = row["d_cf"]
+            es_r = 0.003 * (d_r - ci) / ci if ci > 0 else 0
+            fs_r = min(abs(es_r) * Es, fy) * (1 if es_r >= 0 else -1)
+            F_r = row["As"] * fs_r
+            F_comp_sum += F_r
+            Mn_comp_sum += F_r * (d_r - pc_y)
+            rows_comp_data.append({"d_cf": d_r, "As": row["As"], "es": es_r, "fs": fs_r, "F": F_r})
+
+        ext_es_comp = 0
+        ext_fs_comp = 0
+        if comp_rows:
+            shallowest = min(comp_rows, key=lambda r: r["d_cf"])
+            ext_es_comp = 0.003 * (shallowest["d_cf"] - ci) / ci if ci > 0 else 0
+            ext_fs_comp = min(abs(ext_es_comp) * Es, fy) * (1 if ext_es_comp >= 0 else -1)
+
+        Tpt = 0
+        eps_p_i = 0
+        fps_u_i = 0
+        delta_eps_i = 0
+        if Aps > 0 and dp_cf > 0:
+            delta_eps_i = 0.003 * (dp_cf - ci) / ci
+            eps_p_i = eps_pe + delta_eps_i
+            fps_u_i = min(abs(eps_p_i) * Ept, fpy) * (1 if eps_p_i >= 0 else -1)
+            Tpt = Aps * fps_u_i
+
+        Pn = max(Cc + F_tens_sum + F_comp_sum + Tpt, Pn_max)
+        arm_pt = dp_cf - pc_y if Aps > 0 else 0
+        if is_rect or ai <= hf:
+            Mn_cc = -Cc * (pc_y - ycc)
+        else:
+            Mn_cc = Cf * (pc_y - hf / 2) + Cw * (pc_y - ai / 2)
+        Mn_i = (Mn_cc + Mn_tens_sum + Mn_comp_sum + (Tpt * arm_pt if Aps > 0 else 0)) * m_sign
+
+        et_i = 0.003 * (dt_bc - ci) / ci
+        phi_i = get_phi_flex(code_edition, section_class, et_i, ecl, etl)
+        st = "TC" if abs(et_i) >= etl else ("CC" if abs(et_i) <= ecl else "TR")
+
+        pts.append({
+            "c": ci, "a": ai, "eps_t": abs(et_i), "stat": st, "phi": phi_i,
+            "Pn": Pn, "Mn": Mn_i, "Pr": Pn * phi_i, "Mr": Mn_i * phi_i,
+            "es_tens": ext_es_tens, "fs_tens": ext_fs_tens, "F_tens": F_tens_sum,
+            "es_comp": ext_es_comp, "fs_comp": ext_fs_comp, "F_comp": F_comp_sum,
+            "rows_tens": rows_tens_data, "rows_comp": rows_comp_data,
+            "eps_pe": eps_pe, "delta_eps": delta_eps_i, "eps_pt": eps_p_i, "fps_pt": fps_u_i, "F_pt": Tpt,
+        })
+
+    # Pure tension - moment from bar positions about h/2 (no concrete contribution)
     As_all = As_tens_total + As_comp_total
     Pn_tens = As_all * fy + (Aps * fpy if Aps > 0 else 0)
     phi_tens = get_phi_flex(code_edition, section_class, 0.01, ecl, etl)
+
+    # All bars yield in tension at their actual depths from top
+    Mn_tens_pure = 0
+    for row in tens_rows:
+        d_from_top = row["d_cf"] if comp_face == "top" else (h - row["d_cf"])
+        Mn_tens_pure += (row["As"] * fy) * (d_from_top - pc_y)
+    for row in comp_rows:
+        d_from_top = row["d_cf"] if comp_face == "top" else (h - row["d_cf"])
+        Mn_tens_pure += (row["As"] * fy) * (d_from_top - pc_y)
+    if Aps > 0 and dp > 0:
+        Mn_tens_pure += (Aps * fpy) * (dp - pc_y)
+
     rows_tens_pt = [{"d_cf": r["d_cf"], "As": r["As"], "es": 99, "fs": fy, "F": r["As"] * fy} for r in tens_rows]
     rows_comp_pt = [{"d_cf": r["d_cf"], "As": r["As"], "es": 99, "fs": fy, "F": r["As"] * fy} for r in comp_rows]
     pts.append({
         "c": 0, "a": 0, "eps_t": 99, "stat": "TC", "phi": phi_tens,
-        "Pn": Pn_tens, "Mn": 0, "Pr": Pn_tens * phi_tens, "Mr": 0,
+        "Pn": Pn_tens, "Mn": Mn_tens_pure, "Pr": Pn_tens * phi_tens, "Mr": Mn_tens_pure * phi_tens,
         "es_tens": 99, "fs_tens": fy, "F_tens": As_tens_total * fy,
         "es_comp": 99, "fs_comp": fy, "F_comp": As_comp_total * fy,
         "rows_tens": rows_tens_pt, "rows_comp": rows_comp_pt,
         "eps_pe": eps_pe, "delta_eps": 99, "eps_pt": 99, "fps_pt": fpy if Aps > 0 else 0, "F_pt": Aps * fpy if Aps > 0 else 0,
     })
     return pts
+
+
+def compute_pm_key_points(I, pm_curve, comp_face="top", Pu=0):
+    """Compute key named points on the PM curve with detailed calculation steps."""
+    fc, fy, Es = I["fc"], I["fy"], I["Es"]
+    alpha1, beta1 = I["alpha1"], I["beta1"]
+    ecl, etl = I["ecl"], I["etl"]
+    b, h, bw = I["b"], I["h"], I["bw"]
+    is_rect = I["isRect"]
+    hf_top, hf_bot = I["hf_top"], I.get("hf_bot", 0)
+    Aps, dp, fpy, Ept = I["Aps"], I["dp"], I["fpy"], I["Ept"]
+    fpe = I.get("fpe", 0)
+    code_edition, section_class = I["codeEdition"], I["sectionClass"]
+
+    hf = h if is_rect else (hf_bot if comp_face == "bottom" else hf_top)
+    dp_cf = (h - dp) if (comp_face == "bottom" and dp > 0) else dp
+
+    if comp_face == "bottom":
+        tens_rows = _get_steel_rows(I, "top", comp_face, h)
+        comp_rows = _get_steel_rows(I, "bot", comp_face, h)
+    else:
+        tens_rows = _get_steel_rows(I, "bot", comp_face, h)
+        comp_rows = _get_steel_rows(I, "top", comp_face, h)
+
+    As_tens = sum(r["As"] for r in tens_rows)
+    As_comp = sum(r["As"] for r in comp_rows)
+    Ast = As_tens + As_comp
+    Ag = b * h if is_rect else b * hf_top + bw * (h - hf_top - hf_bot) + b * hf_bot
+    pc_y = h / 2
+    d_tens_max = max((r["d_cf"] for r in tens_rows), default=h / 2)
+    dt_bc = max(d_tens_max, dp_cf) if Aps > 0 else d_tens_max
+    m_sign = 1 if comp_face == "top" else -1
+
+    def _calc_point_at_c(ci):
+        """Compute Pn, Mn, and step-by-step calc at a given c.
+        For ci = inf (pure compression), uniform ε = 0.003 is assumed."""
+        # Detect pure compression (c → ∞): uniform strain 0.003 everywhere
+        pure_comp = (ci == float('inf') or ci > 1e6)
+        if pure_comp:
+            ci = float('inf')
+            ai = h  # full section in compression
+        else:
+            ai = min(ci * beta1, h)
+        steps = []
+        if pure_comp:
+            steps.append(f"c → ∞ (pure uniform compression)")
+            steps.append(f"a = h = {h} in (entire section in compression)")
+            steps.append(f"")
+            steps.append(f"NOTE: For pure compression, c → ∞ means uniform strain")
+            steps.append(f"  ε = 0.003 (compression) at ALL fibers, bars, and strands.")
+            steps.append(f"")
+        else:
+            steps.append(f"c = {ci:.4f} in")
+            steps.append(f"a = min(c·β₁, h) = min({ci:.4f}×{beta1:.4f}, {h}) = {ai:.4f} in")
+            if ci > h:
+                steps.append(f"")
+                steps.append(f"NOTE: c = {ci:.2f} in > h = {h} in. This is physically valid.")
+                steps.append(f"  The neutral axis lies outside the section depth, meaning the")
+                steps.append(f"  entire section is in compression. The strain diagram still has")
+                steps.append(f"  εcu = 0.003 at the compression face, but since c > h, the")
+                steps.append(f"  'tension' face actually has a compressive strain too:")
+                eps_far = 0.003 * (ci - h) / ci if ci > 0 else 0
+                steps.append(f"  ε at far face = 0.003×(c-h)/c = 0.003×({ci:.2f}-{h})/{ci:.2f} = {eps_far:.6f} (compression)")
+                steps.append(f"  All steel bars are in compression because they are all above the NA.")
+                steps.append(f"")
+
+        # Concrete compression (net of steel area)
+        if is_rect or ai <= hf:
+            if ai >= h:
+                Cc = -alpha1 * fc * (b * h - Ast - (Aps if Aps > 0 else 0))
+                ycc = h / 2
+                steps.append(f"a ≥ h → full section in compression (net of steel):")
+                steps.append(f"  Ac_net = b·h - Ast - Aps = {b}×{h} - {Ast:.3f} - {Aps:.3f} = {b*h - Ast - (Aps if Aps > 0 else 0):.3f} in²")
+                steps.append(f"  Cc = -α₁·f'c·Ac_net = -{alpha1:.3f}×{fc}×{b*h - Ast - (Aps if Aps > 0 else 0):.3f} = {Cc:.1f} kip")
+            else:
+                Cc = -alpha1 * fc * b * ai
+                ycc = ai / 2
+                steps.append(f"Cc = -α₁·f'c·b·a = -{alpha1:.3f}×{fc}×{b}×{ai:.4f} = {Cc:.1f} kip")
+        else:
+            Cf = alpha1 * fc * (b - bw) * hf
+            Cw = alpha1 * fc * bw * ai
+            Cc = -(Cf + Cw)
+            ycc = None
+            steps.append(f"I-section: Cf = {Cf:.1f}, Cw = {Cw:.1f}, Cc = {Cc:.1f} kip")
+
+        # Steel
+        F_tens = 0
+        M_tens = 0
+        steps.append("")
+        steps.append("--- Tension-side steel (bars on tension face) ---")
+        for row in tens_rows:
+            d_r = row["d_cf"]
+            if pure_comp:
+                es_r = -0.003
+            else:
+                es_r = 0.003 * (d_r - ci) / ci if ci > 0 else 99
+            fs_r = min(abs(es_r) * Es, fy) * (1 if es_r >= 0 else -1)
+            F_r = row["As"] * fs_r
+            F_tens += F_r
+            arm_r = d_r - pc_y
+            M_tens += F_r * arm_r
+            if pure_comp:
+                steps.append(f"  d={d_r:.3f}: εs = -0.003 (uniform compression)")
+            else:
+                steps.append(f"  d={d_r:.3f}: εs=0.003×({d_r:.3f}-{ci:.3f})/{ci:.3f} = {es_r:.6f}")
+            steps.append(f"          fs=min(|εs|·Es, fy)·sign = min({abs(es_r):.6f}×{Es}, {fy})×{'(+1)' if es_r>=0 else '(-1)'} = {fs_r:.1f} ksi")
+            steps.append(f"          F = As·fs = {row['As']:.3f}×{fs_r:.1f} = {F_r:.1f} kip")
+            steps.append(f"          arm = d - h/2 = {d_r:.3f} - {pc_y:.3f} = {arm_r:.3f} in")
+            steps.append(f"          M = F×arm = {F_r:.1f}×{arm_r:.3f} = {F_r*arm_r:.1f} kip-in")
+
+        F_comp = 0
+        M_comp = 0
+        steps.append("")
+        steps.append("--- Compression-side steel (bars on compression face) ---")
+        for row in comp_rows:
+            d_r = row["d_cf"]
+            if pure_comp:
+                es_r = -0.003
+            else:
+                es_r = 0.003 * (d_r - ci) / ci if ci > 0 else 0
+            fs_r = min(abs(es_r) * Es, fy) * (1 if es_r >= 0 else -1)
+            F_r = row["As"] * fs_r
+            F_comp += F_r
+            arm_r = d_r - pc_y
+            M_comp += F_r * arm_r
+            if pure_comp:
+                steps.append(f"  d={d_r:.3f}: εs = -0.003 (uniform compression)")
+            else:
+                steps.append(f"  d={d_r:.3f}: εs=0.003×({d_r:.3f}-{ci:.3f})/{ci:.3f} = {es_r:.6f}")
+            steps.append(f"          fs=min(|εs|·Es, fy)·sign = min({abs(es_r):.6f}×{Es}, {fy})×{'(+1)' if es_r>=0 else '(-1)'} = {fs_r:.1f} ksi")
+            steps.append(f"          F = As·fs = {row['As']:.3f}×{fs_r:.1f} = {F_r:.1f} kip")
+            steps.append(f"          arm = d - h/2 = {d_r:.3f} - {pc_y:.3f} = {arm_r:.3f} in")
+            steps.append(f"          M = F×arm = {F_r:.1f}×{arm_r:.3f} = {F_r*arm_r:.1f} kip-in")
+
+        # PT
+        Tpt = 0
+        M_pt = 0
+        if Aps > 0 and dp_cf > 0:
+            eps_pe = fpe / Ept if Ept > 0 else 0
+            if pure_comp:
+                delta_eps = -0.003
+            else:
+                delta_eps = 0.003 * (dp_cf - ci) / ci if ci > 0 else 99
+            eps_p = eps_pe + delta_eps
+            fps = min(abs(eps_p) * Ept, fpy) * (1 if eps_p >= 0 else -1)
+            Tpt = Aps * fps
+            arm_pt = dp_cf - pc_y
+            M_pt = Tpt * arm_pt
+            steps.append(f"")
+            steps.append(f"--- Prestressing steel ---")
+            steps.append(f"  εpe = fpe/Ept = {fpe:.1f}/{Ept} = {eps_pe:.6f}")
+            if pure_comp:
+                steps.append(f"  Δε = -0.003 (uniform compression)")
+            else:
+                steps.append(f"  Δε = 0.003×(dp-c)/c = 0.003×({dp_cf:.3f}-{ci:.3f})/{ci:.3f} = {delta_eps:.6f}")
+            steps.append(f"  εps = εpe + Δε = {eps_pe:.6f} + {delta_eps:.6f} = {eps_p:.6f}")
+            steps.append(f"  fps = min(|εps|·Ept, fpy)·sign = {fps:.1f} ksi")
+            steps.append(f"  Fpt = Aps·fps = {Aps:.3f}×{fps:.1f} = {Tpt:.1f} kip")
+            steps.append(f"  arm = dp - h/2 = {dp_cf:.3f} - {pc_y:.3f} = {arm_pt:.3f} in")
+            steps.append(f"  Mpt = {Tpt:.1f}×{arm_pt:.3f} = {M_pt:.1f} kip-in")
+
+        # Pn_max per AASHTO 10th Ed Eq. 5.6.4.4-3
+        kc = alpha1  # kc per 5.6.4.4: same formula as α₁
+        pt_reduction = Aps * (fpe - Ept * 0.003) if Aps > 0 else 0
+        Pn_max = -0.8 * (kc * fc * (Ag - Ast - Aps) + fy * Ast - pt_reduction)
+        Pn_raw = Cc + F_tens + F_comp + Tpt
+        Pn = max(Pn_raw, Pn_max)
+
+        # Moment about h/2 — detailed
+        steps.append(f"")
+        steps.append(f"--- Moment about geometric centroid (h/2 = {pc_y:.3f} in) ---")
+        if ai >= h:
+            Mn_cc = 0
+            steps.append(f"  Mn_cc = 0 (full rect compression block centroid at h/2 → zero arm)")
+        elif is_rect or ai <= hf:
+            Mn_cc = -Cc * (pc_y - ycc)
+            arm_cc = pc_y - ycc
+            steps.append(f"  Concrete block centroid at a/2 = {ycc:.4f} in from comp. face")
+            steps.append(f"  arm_cc = h/2 - a/2 = {pc_y:.3f} - {ycc:.4f} = {arm_cc:.4f} in")
+            steps.append(f"  Mn_cc = -Cc × arm_cc = -({Cc:.1f})×{arm_cc:.4f} = {Mn_cc:.1f} kip-in")
+        else:
+            Cf = alpha1 * fc * (b - bw) * hf
+            Cw = alpha1 * fc * bw * ai
+            Mn_cc = Cf * (pc_y - hf / 2) + Cw * (pc_y - ai / 2)
+            steps.append(f"  I-section: Mn_cc = Cf×(h/2-hf/2) + Cw×(h/2-a/2)")
+            steps.append(f"           = {Cf:.1f}×{pc_y-hf/2:.3f} + {Cw:.1f}×{pc_y-ai/2:.3f} = {Mn_cc:.1f} kip-in")
+
+        steps.append(f"  Mn_steel(tens) = ΣF·arm = {M_tens:.1f} kip-in")
+        steps.append(f"  Mn_steel(comp) = ΣF·arm = {M_comp:.1f} kip-in")
+        if Aps > 0 and dp_cf > 0:
+            steps.append(f"  Mn_pt = {M_pt:.1f} kip-in")
+        steps.append(f"  Mn = (Mn_cc + Mn_s_tens + Mn_s_comp + Mn_pt) × m_sign")
+        steps.append(f"     = ({Mn_cc:.1f} + {M_tens:.1f} + {M_comp:.1f} + {M_pt:.1f}) × {m_sign}")
+
+        Mn = (Mn_cc + M_tens + M_comp + M_pt) * m_sign
+        steps.append(f"     = {Mn:.1f} kip-in")
+
+        # Equilibrium & Pn_max
+        steps.append(f"")
+        steps.append(f"--- Axial force equilibrium ---")
+        steps.append(f"  Pn_raw = Cc + Fs_tens + Fs_comp + Fpt")
+        steps.append(f"         = {Cc:.1f} + {F_tens:.1f} + {F_comp:.1f} + {Tpt:.1f} = {Pn_raw:.1f} kip")
+        steps.append(f"")
+        steps.append(f"  Pn_max per AASHTO LRFD 10th Ed Eq. 5.6.4.4-3:")
+        steps.append(f"    Pn_max = -0.80·[kc·f'c·(Ag - Ast - Aps) + fy·Ast - Aps·(fpe - Ep·εcu)]")
+        steps.append(f"    kc = {kc:.3f} (= α₁ per 5.6.4.4)")
+        steps.append(f"    Ag = {Ag:.2f} in²")
+        steps.append(f"    Ast = {Ast:.3f} in² (total mild steel)")
+        if Aps > 0:
+            steps.append(f"    Aps = {Aps:.3f} in², fpe = {fpe:.1f} ksi, Ep = {Ept:.0f} ksi")
+        steps.append(f"    Concrete (net): kc·f'c·(Ag-Ast-Aps) = {kc:.3f}×{fc}×({Ag:.2f}-{Ast:.3f}-{Aps:.3f}) = {kc*fc*(Ag-Ast-Aps):.1f} kip")
+        steps.append(f"    Steel: fy·Ast = {fy}×{Ast:.3f} = {fy*Ast:.1f} kip")
+        if Aps > 0:
+            steps.append(f"    PT reduction: Aps·(fpe - Ep·εcu) = {Aps:.3f}×({fpe:.1f} - {Ept:.0f}×0.003) = {pt_reduction:.1f} kip")
+        bracket = kc * fc * (Ag - Ast - Aps) + fy * Ast - pt_reduction
+        steps.append(f"    [bracket] = {bracket:.1f} kip")
+        steps.append(f"    Pn_max = -0.80 × {bracket:.1f} = {Pn_max:.1f} kip")
+        steps.append(f"")
+        if Pn > Pn_raw:
+            steps.append(f"  Pn_raw ({Pn_raw:.1f}) < Pn_max ({Pn_max:.1f}) → Pn governed by Pn_max")
+        else:
+            steps.append(f"  Pn_raw ({Pn_raw:.1f}) ≥ Pn_max ({Pn_max:.1f}) → Pn = Pn_raw (not capped)")
+        steps.append(f"  Pn = {Pn:.1f} kip")
+
+        # Phi and factored
+        steps.append(f"")
+        if pure_comp:
+            et = -0.003  # all fibers at 0.003 compression
+            phi = 0.75
+            steps.append(f"--- Resistance factor ---")
+            steps.append(f"  εt = -0.003 (uniform compression, c → ∞)")
+            steps.append(f"  Compression-controlled → φ = 0.75")
+        else:
+            et = 0.003 * (dt_bc - ci) / ci if ci > 0 else 99
+            phi = get_phi_flex(code_edition, section_class, et, ecl, etl) if ci <= dt_bc else 0.75
+            steps.append(f"--- Resistance factor ---")
+            steps.append(f"  εt = 0.003×(dt-c)/c = 0.003×({dt_bc:.3f}-{ci:.3f})/{ci:.3f} = {et:.6f}")
+            if ci > dt_bc:
+                steps.append(f"  c > dt → compression-controlled → φ = 0.75")
+            else:
+                steps.append(f"  φ = {phi:.4f} (per AASHTO 5.5.4.2)")
+        steps.append(f"")
+        steps.append(f"  Pr = φ·Pn = {phi:.4f} × {Pn:.1f} = {Pn*phi:.1f} kip")
+        steps.append(f"  Mr = φ·Mn = {phi:.4f} × {Mn:.1f} = {Mn*phi:.1f} kip-in")
+
+        return {"c": (None if pure_comp else ci), "a": ai, "Pn": Pn, "Mn": Mn, "Pr": Pn * phi, "Mr": Mn * phi,
+                "eps_t": abs(et), "phi": phi, "steps": steps}
+
+    key_points = []
+
+    # 1. Pure Compression (c → ∞, uniform ε = 0.003 at all fibers)
+    pt = _calc_point_at_c(float('inf'))
+    pt["name"] = "Pure Compression"
+    pt["description"] = ("Uniform compression: c → ∞, ε = 0.003 at all fibers. "
+                         "All mild steel yields at fy. PT strand: εps = εpe − 0.003. "
+                         "Pn capped by Pn_max per AASHTO LRFD 10th Ed Eq. 5.6.4.4-3.")
+    key_points.append(pt)
+
+    # 2. Zero Tension (εt = 0, c = dt)
+    c_zt = dt_bc
+    pt = _calc_point_at_c(c_zt)
+    pt["name"] = "Zero Tension"
+    pt["description"] = "Extreme tension fiber at zero strain (εt = 0, c = dt)"
+    key_points.append(pt)
+
+    # 3. Balanced / Compression-Controlled Limit (εt = εcl)
+    c_bal = 0.003 * dt_bc / (0.003 + ecl)
+    pt = _calc_point_at_c(c_bal)
+    pt["name"] = "Balanced (εt = εcl)"
+    pt["description"] = f"Compression-controlled limit: εt = εcl = {ecl:.4f}"
+    key_points.append(pt)
+
+    # 4. Tension-Controlled Limit (εt = εtl)
+    c_tc = 0.003 * dt_bc / (0.003 + etl)
+    pt = _calc_point_at_c(c_tc)
+    pt["name"] = "Tension Controlled (εt = εtl)"
+    pt["description"] = f"Tension-controlled limit: εt = εtl = {etl:.4f}, φ reaches maximum"
+    key_points.append(pt)
+
+    # 5. Pure Flexure (Pn = 0) — interpolate from curve
+    c_pf = None
+    for i in range(len(pm_curve) - 1):
+        p1, p2 = pm_curve[i], pm_curve[i + 1]
+        if (p1["Pn"] <= 0 and p2["Pn"] >= 0) or (p1["Pn"] >= 0 and p2["Pn"] <= 0):
+            if abs(p2["Pn"] - p1["Pn"]) > 1e-10:
+                t = (0 - p1["Pn"]) / (p2["Pn"] - p1["Pn"])
+                c_pf = p1["c"] + t * (p2["c"] - p1["c"])
+                break
+    if c_pf is not None and c_pf > 0:
+        pt = _calc_point_at_c(c_pf)
+        pt["name"] = "Pure Flexure (Pn = 0)"
+        pt["description"] = "Zero axial force — pure bending capacity"
+        key_points.append(pt)
+
+    # 6. Demand Level (Pr = Pu) — interpolate c from curve at applied axial force
+    c_dem = None
+    best_mr_dem = 0
+    for i in range(len(pm_curve) - 1):
+        p1, p2 = pm_curve[i], pm_curve[i + 1]
+        pr1, pr2 = p1.get("Pr", 0), p2.get("Pr", 0)
+        lo, hi = min(pr1, pr2), max(pr1, pr2)
+        if Pu >= lo and Pu <= hi:
+            dPr = pr2 - pr1
+            if abs(dPr) < 1e-10:
+                t = 0.5
+            else:
+                t = (Pu - pr1) / dPr
+            t = max(0, min(1, t))
+            mr_interp = abs(p1["Mr"] + t * (p2["Mr"] - p1["Mr"]))
+            c_interp = p1["c"] + t * (p2["c"] - p1["c"])
+            if mr_interp >= best_mr_dem and c_interp > 0:
+                best_mr_dem = mr_interp
+                c_dem = c_interp
+    if c_dem is not None and c_dem > 0:
+        pt = _calc_point_at_c(c_dem)
+        pt["name"] = f"At Demand (Pu = {Pu:.1f} kip)"
+        pt["description"] = f"Capacity at the applied axial force Pu = {Pu:.1f} kip — Mr at this level is the moment capacity"
+        key_points.append(pt)
+
+    # 7. Pure Tension (c = 0)
+    phi_t = get_phi_flex(code_edition, section_class, 0.01, ecl, etl)
+    steps_pt = []
+    steps_pt.append(f"c = 0 in (no compression zone)")
+    steps_pt.append(f"a = 0 in")
+    steps_pt.append(f"")
+    steps_pt.append(f"NOTE: With c = 0 (neutral axis at the compression face), there is no")
+    steps_pt.append(f"  concrete compression block. All steel strains → ∞ (well beyond yield).")
+    steps_pt.append(f"  Every bar yields at fy = {fy} ksi in tension.")
+    if Aps > 0:
+        steps_pt.append(f"  Prestressing steel yields at fpy = {fpy} ksi.")
+    steps_pt.append(f"")
+    steps_pt.append(f"--- Concrete ---")
+    steps_pt.append(f"  Cc = 0 (no compression block)")
+    steps_pt.append(f"")
+    steps_pt.append(f"--- Tension-side steel (bars on tension face) ---")
+    F_tens_total = 0
+    M_tens_total = 0
+    for row in tens_rows:
+        d_top_pos = row["d_cf"] if comp_face == "top" else (h - row["d_cf"])
+        arm = d_top_pos - pc_y
+        F_r = row["As"] * fy
+        M_r = F_r * arm
+        F_tens_total += F_r
+        M_tens_total += M_r
+        steps_pt.append(f"  As = {row['As']:.3f} in² at d_top = {d_top_pos:.3f} in")
+        steps_pt.append(f"          εs → ∞ (c = 0), fs = fy = {fy} ksi (tension)")
+        steps_pt.append(f"          F = As·fy = {row['As']:.3f}×{fy} = {F_r:.1f} kip")
+        steps_pt.append(f"          arm = d_top - h/2 = {d_top_pos:.3f} - {pc_y:.3f} = {arm:.3f} in")
+        steps_pt.append(f"          M = F×arm = {F_r:.1f}×{arm:.3f} = {M_r:.1f} kip-in")
+    steps_pt.append(f"")
+    steps_pt.append(f"--- Compression-side steel (bars on compression face) ---")
+    F_comp_total = 0
+    M_comp_total = 0
+    for row in comp_rows:
+        d_top_pos = row["d_cf"] if comp_face == "top" else (h - row["d_cf"])
+        arm = d_top_pos - pc_y
+        F_r = row["As"] * fy
+        M_r = F_r * arm
+        F_comp_total += F_r
+        M_comp_total += M_r
+        steps_pt.append(f"  As = {row['As']:.3f} in² at d_top = {d_top_pos:.3f} in")
+        steps_pt.append(f"          εs → ∞ (c = 0), fs = fy = {fy} ksi (tension)")
+        steps_pt.append(f"          F = As·fy = {row['As']:.3f}×{fy} = {F_r:.1f} kip")
+        steps_pt.append(f"          arm = d_top - h/2 = {d_top_pos:.3f} - {pc_y:.3f} = {arm:.3f} in")
+        steps_pt.append(f"          M = F×arm = {F_r:.1f}×{arm:.3f} = {M_r:.1f} kip-in")
+    if not comp_rows:
+        steps_pt.append(f"  (no compression-side bars)")
+
+    # PT
+    F_pt_total = 0
+    M_pt_total = 0
+    if Aps > 0:
+        arm_ps = dp - pc_y
+        F_ps = Aps * fpy
+        M_ps = F_ps * arm_ps
+        F_pt_total = F_ps
+        M_pt_total = M_ps
+        steps_pt.append(f"")
+        steps_pt.append(f"--- Prestressing steel ---")
+        steps_pt.append(f"  Aps = {Aps:.3f} in², fpy = {fpy:.1f} ksi")
+        steps_pt.append(f"  F = Aps·fpy = {Aps:.3f}×{fpy:.1f} = {F_ps:.1f} kip")
+        steps_pt.append(f"  arm = dp - h/2 = {dp:.3f} - {pc_y:.3f} = {arm_ps:.3f} in")
+        steps_pt.append(f"  M = F×arm = {F_ps:.1f}×{arm_ps:.3f} = {M_ps:.1f} kip-in")
+
+    Pn_t = F_tens_total + F_comp_total + F_pt_total
+    Mn_pt = (M_tens_total + M_comp_total + M_pt_total) * m_sign
+
+    steps_pt.append(f"")
+    steps_pt.append(f"--- Moment about geometric centroid (h/2 = {pc_y:.3f} in) ---")
+    steps_pt.append(f"  Mn_cc = 0 (no concrete compression)")
+    steps_pt.append(f"  Mn_steel(tens) = ΣF·arm = {M_tens_total:.1f} kip-in")
+    steps_pt.append(f"  Mn_steel(comp) = ΣF·arm = {M_comp_total:.1f} kip-in")
+    if Aps > 0:
+        steps_pt.append(f"  Mn_pt = {M_pt_total:.1f} kip-in")
+    steps_pt.append(f"  Mn = (0 + {M_tens_total:.1f} + {M_comp_total:.1f} + {M_pt_total:.1f}) × {m_sign}")
+    steps_pt.append(f"     = {Mn_pt:.1f} kip-in")
+
+    steps_pt.append(f"")
+    steps_pt.append(f"--- Axial force ---")
+    steps_pt.append(f"  Pn = ΣFs = {F_tens_total:.1f} + {F_comp_total:.1f} + {F_pt_total:.1f} = {Pn_t:.1f} kip (tension positive)")
+
+    steps_pt.append(f"")
+    steps_pt.append(f"--- Resistance factor ---")
+    steps_pt.append(f"  εt → ∞ (c = 0) → deeply tension-controlled")
+    steps_pt.append(f"  φ = {phi_t:.4f} (maximum per AASHTO 5.5.4.2)")
+    steps_pt.append(f"")
+    steps_pt.append(f"  Pr = φ·Pn = {phi_t:.4f} × {Pn_t:.1f} = {Pn_t*phi_t:.1f} kip")
+    steps_pt.append(f"  Mr = φ·Mn = {phi_t:.4f} × {Mn_pt:.1f} = {Mn_pt*phi_t:.1f} kip-in")
+
+    pt_tens = {
+        "c": 0, "a": 0, "Pn": Pn_t, "Mn": Mn_pt,
+        "Pr": Pn_t * phi_t, "Mr": Mn_pt * phi_t,
+        "eps_t": 99, "phi": phi_t,
+        "name": "Pure Tension",
+        "description": "All steel yields in tension, no concrete contribution (c = 0)",
+        "steps": steps_pt
+    }
+    key_points.append(pt_tens)
+
+    return key_points
 
 
 def build_pm_curve_display(I, comp_face="top"):
@@ -531,7 +1170,10 @@ def build_pm_curve_display(I, comp_face="top"):
 
     pc_y = h / 2
     Ag = b * h if is_rect else b * hf_top + bw * (h - hf_top - hf_bot) + b * hf_bot
-    Pn_max = -0.8 * alpha1 * fc * Ag
+    Ast_total = As_tens + As_comp_s
+    kc = alpha1
+    pt_reduction = Aps * (fpe - Ept * 0.003) if Aps > 0 else 0
+    Pn_max = -0.8 * (kc * fc * (Ag - Ast_total - Aps) + fy * Ast_total - pt_reduction)
     N = 20
     dt = max(d_tens, dp_cf) if Aps > 0 else d_tens
 
@@ -613,7 +1255,8 @@ def build_pm_curve_display(I, comp_face="top"):
 
 
 def get_mr_at_pu(pm_curve, Pu):
-    """Interpolate Mr from factored P-M curve at given Pu."""
+    """Interpolate Mr from factored P-M curve at given Pu.
+    Returns the maximum |Mr| at the given Pu level (always positive)."""
     max_mr = 0
     for i in range(len(pm_curve) - 1):
         p1, p2 = pm_curve[i], pm_curve[i + 1]
@@ -621,16 +1264,17 @@ def get_mr_at_pu(pm_curve, Pu):
         hi = max(p1["Pr"], p2["Pr"])
         if Pu >= lo and Pu <= hi:
             if abs(p2["Pr"] - p1["Pr"]) < 1e-10:
-                max_mr = max(max_mr, p1["Mr"], p2["Mr"])
+                max_mr = max(max_mr, abs(p1["Mr"]), abs(p2["Mr"]))
             else:
                 t = (Pu - p1["Pr"]) / (p2["Pr"] - p1["Pr"])
-                max_mr = max(max_mr, p1["Mr"] + t * (p2["Mr"] - p1["Mr"]))
+                mr_interp = p1["Mr"] + t * (p2["Mr"] - p1["Mr"])
+                max_mr = max(max_mr, abs(mr_interp))
     return max_mr
 
 
 def get_pm_equilibrium_at_pu(pm_data, Pu):
     """Find the P-M display point closest to Pr = Pu and interpolate c, strains, stresses."""
-    # Find the segment where Pr crosses Pu with maximum Mr (tension side)
+    # Find the segment where Pr crosses Pu with maximum |Mr| (capacity side)
     best = None
     best_mr = 0
     for i in range(len(pm_data) - 1):
@@ -645,8 +1289,8 @@ def get_pm_equilibrium_at_pu(pm_data, Pu):
                 t = (Pu - p1["Pr"]) / dPr
             t = max(0, min(1, t))
             mr_interp = p1["Mr"] + t * (p2["Mr"] - p1["Mr"])
-            if mr_interp >= best_mr:
-                best_mr = mr_interp
+            if abs(mr_interp) >= best_mr:
+                best_mr = abs(mr_interp)
                 result = {}
                 for key in ["c", "a", "eps_t", "phi", "Pn", "Mn", "Pr", "Mr",
                             "es_tens", "fs_tens", "F_tens", "es_comp", "fs_comp", "F_comp",
@@ -654,11 +1298,7 @@ def get_pm_equilibrium_at_pu(pm_data, Pu):
                     v1 = p1.get(key)
                     v2 = p2.get(key)
                     if v1 is not None and v2 is not None and isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
-                        # Only skip interpolation for sentinel values on c/a/strain keys (pure compression c=9999)
-                        if key in ("c", "a", "eps_t", "es_tens", "es_comp", "eps_pt", "delta_eps") and (abs(v1) > 9000 or abs(v2) > 9000):
-                            result[key] = v1
-                        else:
-                            result[key] = v1 + t * (v2 - v1)
+                        result[key] = v1 + t * (v2 - v1)
                     else:
                         result[key] = v1
                 # Interpolate per-row arrays (rows_tens, rows_comp)
@@ -673,10 +1313,7 @@ def get_pm_equilibrium_at_pu(pm_data, Pu):
                                 v1r = arr1[j].get(k, 0)
                                 v2r = arr2[j].get(k, 0)
                                 if isinstance(v1r, (int, float)) and isinstance(v2r, (int, float)):
-                                    if k == "es" and (abs(v1r) > 9000 or abs(v2r) > 9000):
-                                        rd[k] = v1r
-                                    else:
-                                        rd[k] = v1r + t * (v2r - v1r)
+                                    rd[k] = v1r + t * (v2r - v1r)
                                 else:
                                     rd[k] = v1r
                             interp_arr.append(rd)
@@ -995,7 +1632,10 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
 
     # ── P-M Interaction Diagram ──
     pm_curve = build_pm_curve(I, comp_face)
-    pm_data = pm_curve  # single curve for display and interpolation
+    pm_data = pm_curve  # table shows all points directly — same as graph
+    pm_curve_sag = build_pm_curve(I, "top")
+    pm_curve_hog = build_pm_curve(I, "bottom")
+    pm_key_points = compute_pm_key_points(I, pm_curve, comp_face, Pu)
     Mr_atPu = get_mr_at_pu(pm_curve, Pu)
     pm_eq = get_pm_equilibrium_at_pu(pm_curve, Pu)
 
@@ -1204,6 +1844,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
         "bar_d_tens": bar_d_tens, "bar_d_comp": bar_d_comp, "hf": hf,
         # P-M data
         "pm_data": pm_data, "pm_curve": pm_curve, "pm_eq": pm_eq,
+        "pm_curve_sag": pm_curve_sag, "pm_curve_hog": pm_curve_hog,
+        "pm_key_points": pm_key_points,
         # Min flexure
         "gamma1": gamma1, "gamma2": gamma2, "gamma3": gamma3, "fcpe": fcpe,
         "fr": fr, "Sc": Sc, "Mcr": Mcr, "Mcond": Mcond, "min_flex_ok": min_flex_ok,
@@ -2298,6 +2940,7 @@ def calculate_all(raw_inputs, demand_rows, active_row_idx):
             "isRect": I["isRect"], "bw": I["bw"],
             "hasPT": I["hasPT"],
             "ecl": I["ecl"], "etl": I["etl"], "alpha1": I["alpha1"], "beta1": I["beta1"],
+            "kc": I["alpha1"],  # kc per Eq. 5.6.4.4-3 (same formula as α₁)
             "phi_v": I["phi_v"], "gamma_e": I["gamma_e"], "lam": I["lam"],
             "Ag": I["Ag"], "Ig": I["Ig"], "yb_centroid": I["yb_centroid"],
         },

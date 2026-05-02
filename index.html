@@ -112,6 +112,13 @@ canvas { width: 100% !important; height: 100% !important; }
 .data-table td { padding: 5px 8px; border-bottom: 1px solid #eee; font-family: 'Consolas', monospace; }
 .data-table tr:hover { background: #f8f9fa; }
 
+.pm-key-table { margin-bottom: 0; }
+.pm-key-row:hover { filter: brightness(0.95); }
+.pm-key-row td { font-size: 0.82rem; padding: 8px 10px; }
+.pm-key-detail-content { padding: 10px 14px; background: #fafafa; border-left: 3px solid var(--primary); }
+.pm-key-desc { margin-bottom: 8px; font-size: 0.82rem; color: #444; }
+.pm-key-steps { font-family: 'Consolas', monospace; font-size: 0.75rem; white-space: pre-wrap; margin: 0; padding: 8px; background: #f5f5f5; border-radius: 4px; max-height: 400px; overflow-y: auto; line-height: 1.5; }
+
 .proj-summary-table th { text-align: center; vertical-align: middle; }
 .proj-summary-table td { vertical-align: middle; padding: 8px; }
 .proj-summary-table td.ps-name { font-family: inherit; font-weight: 600; color: var(--primary); font-size: 0.9rem; }
@@ -403,6 +410,8 @@ canvas { width: 100% !important; height: 100% !important; }
             <tr><td>&alpha;&#8321; &mdash; Stress block intensity (5.6.2.2)</td><td id="a1_disp">&mdash;</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="alpha1_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="alpha1_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
+            <tr><td>k<sub>c</sub> &mdash; Max compression factor (5.6.4.4-3)<br><small style="color:#888">Hardcoded to f'c: 0.85 for f'c&le;10 ksi</small></td><td id="kc_disp">&mdash;</td>
+                <td colspan="2"><small style="color:#888">auto</small></td></tr>
             <tr><td>&beta;&#8321; &mdash; Stress block depth (5.6.2.2)</td><td id="b1_disp">&mdash;</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="beta1_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="beta1_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
@@ -656,6 +665,7 @@ canvas { width: 100% !important; height: 100% !important; }
   </div>
   <div style="margin-top:18px"><div class="card"><div class="card-header blue">P-M Interaction Diagram</div><div class="card-body"><div class="chart-container"><canvas id="pmChart"></canvas></div></div></div></div>
   <div style="margin-top:18px"><div class="card"><div class="card-header blue">Strain &amp; Stress at P<sub>u</sub></div><div class="card-body"><canvas id="pmStrainStressCanvas" width="700" height="340" style="width:100%;border-radius:4px;background:#fff;"></canvas></div></div></div>
+  <div style="margin-top:18px"><div class="card"><div class="card-header blue">Key P-M Points</div><div class="card-body" style="overflow-x:auto"><div id="pmKeyPointsContainer"></div></div></div></div>
   <div style="margin-top:18px"><div class="card"><div class="card-header blue">P-M Diagram Data</div><div class="card-body" style="overflow-x:auto"><table class="data-table" id="pmTable"></table></div></div></div>
 </div>
 
@@ -2171,7 +2181,7 @@ function drawServiceDiagram(fl, inp){
 }
 
 /* ====== PM CHART CACHE ====== */
-let pmChartData=null, pmChartPu=0, pmChartMu=0;
+let pmChartData=null, pmChartDataHog=null, pmChartPu=0, pmChartMu=0, pmKeyPointsCache=[];
 let demandRowCount=0;
 let activeRow=0;
 let shearCapacityMethod='gp'; // Global selection for D/C ratio shear capacity
@@ -3294,7 +3304,7 @@ document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>
   document.getElementById('tab-'+b.dataset.tab).classList.add('active');
   if(b.dataset.tab==='flexure' && pmChartData){
     requestAnimationFrame(()=>{
-      drawPMChart(pmChartData,pmChartPu,pmChartMu);
+      drawPMChart(pmChartData,pmChartDataHog,pmChartPu,pmChartMu);
       if(window._lastFlex&&window._lastRes) drawPMStrainStress(window._lastFlex,window._lastRes.inputs,pmChartPu,pmChartMu);
     });
   }
@@ -3313,7 +3323,7 @@ function toggleShowAll(){
   document.getElementById('tabBar').style.display=showAll?'none':'flex';
   if(!showAll){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('show-all'));document.querySelector('.tab-btn').click();}
   if(showAll && pmChartData){ requestAnimationFrame(()=>{
-    drawPMChart(pmChartData,pmChartPu,pmChartMu);
+    drawPMChart(pmChartData,pmChartDataHog,pmChartPu,pmChartMu);
     if(window._lastFlex&&window._lastRes) drawPMStrainStress(window._lastFlex,window._lastRes.inputs,pmChartPu,pmChartMu);
   }); }
 }
@@ -3461,10 +3471,11 @@ function runAllCalculations(){
         try{ renderTorsion(res.torsion, res.inputs, res.demands); }catch(e){ console.error('renderTorsion error:',e); }
         try{ updateFactorsDisplay(res); }catch(e){ console.error('updateFactorsDisplay error:',e); }
         // P-M chart
-        pmChartData=res.flexure.pm_data; pmChartPu=res.demands.Pu; pmChartMu=res.demands.Mu;
-        try{ drawPMChart(res.flexure.pm_data,res.demands.Pu,res.demands.Mu); }catch(e){ console.error('drawPMChart error:',e); }
+        pmChartData=res.flexure.pm_curve_sag; pmChartDataHog=res.flexure.pm_curve_hog; pmChartPu=res.demands.Pu; pmChartMu=res.demands.Mu; pmKeyPointsCache=res.flexure.pm_key_points||[];
+        try{ drawPMChart(res.flexure.pm_curve_sag, res.flexure.pm_curve_hog, res.demands.Pu, res.demands.Mu); }catch(e){ console.error('drawPMChart error:',e); }
         try{ drawPMStrainStress(res.flexure, res.inputs, res.demands.Pu, res.demands.Mu); }catch(e){ console.error('drawPMStrainStress error:',e); }
         try{ fillPMTable(res.flexure.pm_data); }catch(e){ console.error('fillPMTable error:',e); }
+        try{ fillPMKeyPoints(res.flexure.pm_key_points||[]); }catch(e){ console.error('fillPMKeyPoints error:',e); }
         // Demand rows
         res.row_results.forEach((cap,i)=>{
           const n=i+1;
@@ -3532,6 +3543,7 @@ function updateFactorsDisplay(res){
   document.getElementById('g2_disp').textContent=fl?F(fl.gamma2,2):'1.10';
   document.getElementById('g3_disp').textContent=fl?F(fl.gamma3,2):'0.67';
   document.getElementById('a1_disp').textContent=inp.alpha1?F(inp.alpha1,3):'—';
+  document.getElementById('kc_disp').textContent=inp.kc?F(inp.kc,3):'—';
   document.getElementById('b1_disp').textContent=inp.beta1?F(inp.beta1,3):'—';
 }
 
@@ -3992,9 +4004,9 @@ function renderTorsion(tor,inp,dem){
 
 
 /* ====================================================================
-   P-M CHART (pure Canvas)
+   P-M CHART (pure Canvas) — Combined Sagging + Hogging
    ==================================================================== */
-function drawPMChart(data,Pu,Mu){
+function drawPMChart(dataSag, dataHog, Pu, Mu){
   const canvas=document.getElementById('pmChart');
   const ctx=canvas.getContext('2d');
   const par=canvas.parentElement;
@@ -4009,9 +4021,14 @@ function drawPMChart(data,Pu,Mu){
   const margin={t:40,r:30,b:50,l:80};
   const pW=W-margin.l-margin.r, pH=H-margin.t-margin.b;
 
-  const allM=data.map(d=>d.Mn).concat(data.map(d=>d.Mr)).concat([Math.abs(Mu)*1.15,0]);
-  const allP=data.map(d=>d.Pn).concat(data.map(d=>d.Pr)).concat([Pu]);
-  const Mmax=Math.max(...allM), Mmin=0;
+  // Collect all moment and axial values for axis scaling
+  // Mn values are already signed: sag positive, hog negative (from calc engine)
+  const sagMn=dataSag.map(d=>d.Mn), sagMr=dataSag.map(d=>d.Mr);
+  const hogMn=dataHog.map(d=>d.Mn), hogMr=dataHog.map(d=>d.Mr);
+  const allM=sagMn.concat(sagMr).concat(hogMn).concat(hogMr).concat([Mu*1.15, -Math.abs(Mu)*1.15, 0]);
+  const allP=dataSag.map(d=>d.Pn).concat(dataSag.map(d=>d.Pr)).concat(dataHog.map(d=>d.Pn)).concat(dataHog.map(d=>d.Pr)).concat([Pu]);
+
+  const Mmax=Math.max(...allM)*1.05||100, Mmin=Math.min(...allM)*1.05||-100;
   const Pmax=Math.max(...allP)*1.1||100, Pmin=Math.min(...allP)*1.1;
 
   const tX=m=>margin.l+(m-Mmin)/(Mmax-Mmin)*pW;
@@ -4027,35 +4044,56 @@ function drawPMChart(data,Pu,Mu){
     const x=margin.l+pW*i/8; ctx.beginPath();ctx.moveTo(x,margin.t);ctx.lineTo(x,margin.t+pH);ctx.stroke();
   }
 
-  // Zero line
+  // Zero-P line (horizontal)
   if(Pmin<0&&Pmax>0){
     ctx.strokeStyle='#bbb';ctx.lineWidth=1;ctx.setLineDash([5,4]);
     ctx.beginPath();ctx.moveTo(margin.l,tY(0));ctx.lineTo(margin.l+pW,tY(0));ctx.stroke();
     ctx.setLineDash([]);
   }
+  // Zero-M line (vertical)
+  if(Mmin<0&&Mmax>0){
+    ctx.strokeStyle='#bbb';ctx.lineWidth=1;ctx.setLineDash([5,4]);
+    ctx.beginPath();ctx.moveTo(tX(0),margin.t);ctx.lineTo(tX(0),margin.t+pH);ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
-  // Nominal
-  ctx.strokeStyle='#3498db'; ctx.lineWidth=2;
-  ctx.beginPath();
-  data.forEach((d,i)=>{i===0?ctx.moveTo(tX(d.Mn),tY(d.Pn)):ctx.lineTo(tX(d.Mn),tY(d.Pn));});
-  ctx.stroke();
+  // Draw closed PM envelope: sag forward + hog reversed forms closed loop
+  function drawEnvelope(dataSag, dataHog, mKey, pKey, color, lineWidth){
+    ctx.strokeStyle=color; ctx.lineWidth=lineWidth;
+    ctx.beginPath();
+    // Forward through sagging (pure comp → pure tens, right side)
+    dataSag.forEach((d,i)=>{
+      const x=tX(d[mKey]),y=tY(d[pKey]);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    // Reverse through hogging (pure tens → pure comp, left side)
+    for(let i=dataHog.length-1;i>=0;i--){
+      const d=dataHog[i];
+      ctx.lineTo(tX(d[mKey]),tY(d[pKey]));
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
 
-  // Factored
-  ctx.strokeStyle='#e74c3c'; ctx.lineWidth=2.5;
-  ctx.beginPath();
-  data.forEach((d,i)=>{i===0?ctx.moveTo(tX(d.Mr),tY(d.Pr)):ctx.lineTo(tX(d.Mr),tY(d.Pr));});
-  ctx.stroke();
+  // Nominal envelope (blue)
+  drawEnvelope(dataSag, dataHog, 'Mn', 'Pn', '#3498db', 1.5);
+  // Factored envelope (red)
+  drawEnvelope(dataSag, dataHog, 'Mr', 'Pr', '#e74c3c', 2.5);
 
-  // Demand point
-  const dx=tX(Math.abs(Mu)),dy=tY(Pu);
+  // Demand point — signed: Mu>=0 means sagging (+M), Mu<0 means hogging (-M)
+  const demandM = Mu;  // already signed from input
+  const dx=tX(demandM), dy=tY(Pu);
   ctx.fillStyle='#2c3e50';
   ctx.beginPath();ctx.arc(dx,dy,6,0,2*Math.PI);ctx.fill();
   ctx.font='bold 11px Segoe UI';
-  ctx.fillText(`(${F(Math.abs(Mu),0)}, ${F(Pu,0)})`,dx+10,dy-8);
+  const labelX = demandM>=0 ? dx+10 : dx-10;
+  const align = demandM>=0 ? 'left' : 'right';
+  ctx.textAlign=align;
+  ctx.fillText(`(${F(demandM,0)}, ${F(Pu,0)})`,labelX,dy-8);
 
   // Axes labels
   ctx.fillStyle='#555';ctx.font='12px Segoe UI';ctx.textAlign='center';
-  ctx.fillText('Moment (kip-in)',margin.l+pW/2,H-6);
+  ctx.fillText('Moment (kip\u00B7in)  [\u2212Hogging | +Sagging]',margin.l+pW/2,H-6);
   ctx.save();ctx.translate(14,margin.t+pH/2);ctx.rotate(-Math.PI/2);ctx.fillText('Axial (kip)  [+T / \u2212C]',0,0);ctx.restore();
 
   // Ticks
@@ -4067,12 +4105,38 @@ function drawPMChart(data,Pu,Mu){
   // Legend
   ctx.textAlign='left';ctx.font='11px Segoe UI';
   const lx=margin.l+16,ly=margin.t+14;
-  ctx.strokeStyle='#3498db';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+28,ly);ctx.stroke();
-  ctx.fillStyle='#333';ctx.fillText('Nominal (Pn-Mn)',lx+34,ly+4);
+  ctx.strokeStyle='#3498db';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+28,ly);ctx.stroke();
+  ctx.fillStyle='#333';ctx.fillText('Nominal (Pn\u2013Mn)',lx+34,ly+4);
   ctx.strokeStyle='#e74c3c';ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(lx,ly+16);ctx.lineTo(lx+28,ly+16);ctx.stroke();
-  ctx.fillText('Factored (Pr-Mr)',lx+34,ly+20);
+  ctx.fillText('Factored (Pr\u2013Mr)',lx+34,ly+20);
   ctx.fillStyle='#2c3e50';ctx.beginPath();ctx.arc(lx+14,ly+32,4,0,2*Math.PI);ctx.fill();
   ctx.fillText('Demand Point',lx+34,ly+36);
+  // Key point markers legend
+  ctx.fillStyle='#f39c12';ctx.beginPath();ctx.arc(lx+14,ly+48,4,0,2*Math.PI);ctx.fill();
+  ctx.fillText('Key Points',lx+34,ly+52);
+
+  // Draw key point markers on factored curve
+  if(pmKeyPointsCache && pmKeyPointsCache.length){
+    const kpColors=['#27ae60','#2980b9','#f39c12','#c0392b','#8e44ad','#e67e22','#16a085'];
+    const kpSymbols=['◆','●','▲','■','★','◄','▼'];
+    pmKeyPointsCache.forEach((kp,i)=>{
+      if(kp.Mr===undefined||kp.Pr===undefined) return;
+      const kx=tX(kp.Mr), ky=tY(kp.Pr);
+      // Marker dot
+      ctx.fillStyle=kpColors[i%kpColors.length];
+      ctx.beginPath();ctx.arc(kx,ky,5,0,2*Math.PI);ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(kx,ky,5,0,2*Math.PI);ctx.stroke();
+      // Label
+      ctx.font='bold 9px Segoe UI';ctx.textAlign='left';ctx.fillStyle=kpColors[i%kpColors.length];
+      // Smart label placement to avoid overlap
+      let lbX=kx+8, lbY=ky-6;
+      if(kx > margin.l+pW*0.75) { lbX=kx-8; ctx.textAlign='right'; }
+      if(ky < margin.t+20) { lbY=ky+14; }
+      const shortName=kp.name.replace(' (εt = εcl)','').replace(' (εt = εtl)','').replace(' (Pn = 0)','');
+      ctx.fillText(shortName,lbX,lbY);
+    });
+    ctx.textAlign='left';
+  }
 
   ctx.font='bold 13px Segoe UI';ctx.fillStyle='#1a5276';ctx.textAlign='center';
   ctx.fillText('P-M Interaction Diagram',W/2,22);
@@ -4390,6 +4454,45 @@ function drawPMStrainStress(fl, inp, Pu, Mu){
   ctx.fillText(line2,cssW/2,cssH-8);
 }
 
+function fillPMKeyPoints(points){
+  if(!points||!points.length){document.getElementById('pmKeyPointsContainer').innerHTML='<p style="color:#888">No key points available.</p>';return;}
+  let html='<table class="data-table pm-key-table"><thead><tr><th>Point</th><th>c (in)</th><th>a (in)</th><th>&epsilon;<sub>t</sub></th><th>&phi;</th><th>P<sub>n</sub> (kip)</th><th>M<sub>n</sub> (k-in)</th><th>P<sub>r</sub> (kip)</th><th>M<sub>r</sub> (k-in)</th><th></th></tr></thead><tbody>';
+  const colors=['#e8f5e9','#e3f2fd','#fff3e0','#fce4ec','#f3e5f5','#fff8e1','#e0f7fa'];
+  points.forEach((pt,i)=>{
+    const bg=colors[i%colors.length];
+    const et_disp=(pt.eps_t>50)?'&infin;':F(pt.eps_t,6);
+    html+=`<tr class="pm-key-row" style="background:${bg};cursor:pointer" onclick="toggleKeyPointDetail(${i})">`;
+    html+=`<td style="font-weight:600">${pt.name}</td>`;
+    const c_disp=(pt.c==null||!isFinite(pt.c))?'&infin;':F(pt.c,3);
+    html+=`<td>${c_disp}</td><td>${F(pt.a,3)}</td><td>${et_disp}</td><td>${F(pt.phi,4)}</td>`;
+    html+=`<td>${F(pt.Pn,1)}</td><td>${F(pt.Mn,1)}</td><td>${F(pt.Pr,1)}</td><td>${F(pt.Mr,1)}</td>`;
+    html+=`<td style="font-size:0.8rem;color:#666">&#9660;</td></tr>`;
+    html+=`<tr id="pmKeyDetail_${i}" class="pm-key-detail" style="display:none"><td colspan="10"><div class="pm-key-detail-content">`;
+    html+=`<div class="pm-key-desc"><strong>${pt.name}</strong>: ${pt.description||''}</div>`;
+    html+=`<pre class="pm-key-steps">`;
+    if(pt.steps&&pt.steps.length){
+      pt.steps.forEach(s=>{html+=escHtml(s)+'\n';});
+    } else {
+      html+='(No detailed steps available)';
+    }
+    html+=`</pre></div></td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('pmKeyPointsContainer').innerHTML=html;
+  window._pmKeyPoints=points;
+}
+
+function toggleKeyPointDetail(idx){
+  const row=document.getElementById('pmKeyDetail_'+idx);
+  if(!row)return;
+  const isOpen=row.style.display!=='none';
+  row.style.display=isOpen?'none':'table-row';
+  const arrow=row.previousElementSibling.querySelector('td:last-child');
+  if(arrow) arrow.innerHTML=isOpen?'&#9660;':'&#9650;';
+}
+
+function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
 function fillPMTable(data){
   const hasPT=data.some(d=>d.F_pt!==undefined&&d.F_pt!==0&&Math.abs(d.F_pt)<1e10);
   let h='<thead><tr><th>c (in)</th><th>a (in)</th><th>&epsilon;<sub>t</sub></th><th>&epsilon;<sub>s,tens</sub></th><th>f<sub>s,tens</sub> (ksi)</th><th>&epsilon;<sub>s,comp</sub></th><th>f<sub>s,comp</sub> (ksi)</th>';
@@ -4401,7 +4504,7 @@ function fillPMTable(data){
     const fs_t=d.fs_tens!==undefined?F(d.fs_tens,1):'&mdash;';
     const es_c=d.es_comp!==undefined?(Math.abs(d.es_comp)>50?'&infin;':F(d.es_comp,5)):'&mdash;';
     const fs_c=d.fs_comp!==undefined?F(d.fs_comp,1):'&mdash;';
-    h+=`<tr><td>${d.c>9000?'&mdash;':F(d.c,3)}</td><td>${d.a>9000?'&mdash;':F(d.a,3)}</td><td>${d.eps_t>50?'&infin;':F(d.eps_t,6)}</td><td>${es_t}</td><td>${fs_t}</td><td>${es_c}</td><td>${fs_c}</td>`;
+    h+=`<tr><td>${F(d.c,3)}</td><td>${F(d.a,3)}</td><td>${d.eps_t>50?'&infin;':F(d.eps_t,6)}</td><td>${es_t}</td><td>${fs_t}</td><td>${es_c}</td><td>${fs_c}</td>`;
     if(hasPT){
       const epe=d.eps_pe!==undefined?F(d.eps_pe,6):'&mdash;';
       const de=d.delta_eps!==undefined?(Math.abs(d.delta_eps)>50?'&infin;':F(d.delta_eps,6)):'&mdash;';
