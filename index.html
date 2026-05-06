@@ -274,6 +274,9 @@ canvas { width: 100% !important; height: 100% !important; }
 .mr-btns .mr-remove { background:#e74c3c; color:#fff; padding:3px 8px; font-size:0.75rem; }
 .mr-badge { display:inline-block; background:#2980b9; color:#fff; font-size:0.7rem; padding:1px 6px; border-radius:8px; margin-left:6px; vertical-align:middle; }
 .mr-clear { background:none; border:1px solid #c0392b; color:#c0392b; padding:2px 8px; font-size:0.72rem; border-radius:3px; cursor:pointer; margin-left:6px; }
+.help-btn { float:right; background:transparent; border:1px solid rgba(255,255,255,0.6); color:#fff; border-radius:50%; width:18px; height:18px; font-size:11px; cursor:pointer; line-height:16px; padding:0; }
+.help-panel { background:var(--bg-alt, #f5f5f5); border-left:3px solid var(--orange, #e67e22); padding:8px 10px; margin-bottom:8px; font-size:0.8rem; }
+.help-panel p { margin:4px 0; }
 </style>
 </head>
 <body>
@@ -332,21 +335,25 @@ canvas { width: 100% !important; height: 100% !important; }
       <div class="card-header blue">Material Properties</div>
       <div class="card-body">
         <div class="form-row"><label>f'<sub>c</sub></label><input type="number" id="fc" value="5" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>Reinforcement ASTM</label>
+        <div class="form-row"><label>Longitudinal Reinforcement ASTM</label>
           <select id="astm_spec" class="wide">
-            <option value="A615" selected>ASTM A615 (Grade 60)</option>
-            <option value="A706">ASTM A706 (Grade 60)</option>
+            <option value="A615_60" selected>ASTM A615 (Grade 60)</option>
+            <option value="A615_75">ASTM A615 (Grade 75)</option>
+            <option value="A615_80">ASTM A615 (Grade 80)</option>
+            <option value="A706_60">ASTM A706 (Grade 60)</option>
+            <option value="A706_80">ASTM A706 (Grade 80)</option>
+            <option value="A1035_100">ASTM A1035 (Grade 100)</option>
           </select>
         </div>
-        <div class="form-row"><label>f<sub>y</sub></label><input type="number" id="fy" value="60" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label></label><span style="width:100px"></span><span class="unit"></span><span class="ovr-col-header">Override</span></div>
-        <div class="form-row"><label>E<sub>c</sub></label><input type="number" id="Ec" value="0" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="Ec_ovr" class="ovr-cb"></label><span class="note" id="ecNote">= 2500 f'c^0.33</span></div>
+        <div class="form-row"><label>f<sub>y</sub> (longitudinal)</label><input type="number" id="fy" value="60" step="any"><span class="unit">ksi</span><span class="note" id="fy_note">ASTM A615 Grade 60</span></div>
+        <div class="form-row"><label>f<sub>y,trans</sub> (stirrups)</label><input type="number" id="fy_trans" value="60" step="any"><span class="unit">ksi</span><span class="note">ASTM Grade 60</span></div>
+        <div class="form-row"><label>E<sub>c</sub></label><input type="number" id="Ec" value="0" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="Ec_ovr" class="ovr-cb"></label><span class="note" id="ecNote">= 2500 f'<sub>c</sub><sup>0.33</sup></span></div>
         <div class="form-row"><label>E<sub>s</sub></label><input type="number" id="Es" value="29000" step="any"><span class="unit">ksi</span></div>
         <div class="form-row"><label>f<sub>pu</sub></label><input type="number" id="fpu" value="270" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>f<sub>py</sub></label><input type="number" id="fpy" value="243" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="fpy_ovr" class="ovr-cb"></label><span class="note" id="fpyNote">= 0.9 f<sub>pu</sub></span></div>
+        <div class="form-row"><label>f<sub>py</sub></label><input type="number" id="fpy" value="243" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="fpy_ovr" class="ovr-cb"></label><span class="note" id="fpyNote">= 0.9·f<sub>pu</sub></span></div>
         <div class="form-row"><label>E<sub>pt</sub></label><input type="number" id="Ept" value="28500" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>&epsilon;<sub>cl</sub> (compr. control)</label><input type="number" id="ecl" value="0.002" step="any" readonly class="auto-calc"><span class="unit"></span><label class="ovr-label"><input type="checkbox" id="ecl_ovr" class="ovr-cb"></label><span class="note" id="eclNote">per 5.6.2.1</span></div>
-        <div class="form-row"><label>&epsilon;<sub>tl</sub> (tension control)</label><input type="number" id="etl" value="0.005" step="any" readonly class="auto-calc"><span class="unit"></span><label class="ovr-label"><input type="checkbox" id="etl_ovr" class="ovr-cb"></label><span class="note" id="etlNote">per 5.6.2.1</span></div>
+        <div class="form-row"><label>&epsilon;<sub>cl</sub> (compr. control)</label><input type="number" id="ecl" value="0.002" step="any" readonly class="auto-calc"><span class="unit"></span><label class="ovr-label"><input type="checkbox" id="ecl_ovr" class="ovr-cb"></label><span class="note" id="eclNote">= 0.002 (AASHTO 5.6.2.1)</span></div>
+        <div class="form-row"><label>&epsilon;<sub>tl</sub> (tension control)</label><input type="number" id="etl" value="0.005" step="any" readonly class="auto-calc"><span class="unit"></span><label class="ovr-label"><input type="checkbox" id="etl_ovr" class="ovr-cb"></label><span class="note" id="etlNote">interpolated per f<sub>y</sub> (AASHTO 5.6.2.1)</span></div>
         <div class="form-row"><label>Max aggregate, a<sub>g</sub></label><input type="number" id="ag" value="0.75" step="any"><span class="unit">in</span></div>
         <div class="form-row"><label>&lambda; (lightweight factor)</label><input type="number" id="lambda" value="1" step="any" min="0" max="1"></div>
       </div>
@@ -380,39 +387,39 @@ canvas { width: 100% !important; height: 100% !important; }
         <table class="factors-table" id="factorsTable" style="width:100%;font-size:0.82em;border-collapse:collapse;">
           <thead><tr><th style="text-align:left">Factor</th><th>Value</th><th>Override</th><th style="display:none"></th></tr></thead>
           <tbody>
-            <tr><td>&phi;<sub>v</sub> &mdash; Shear resistance (5.5.4.2)</td><td id="fv_disp">0.90</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&phi;<sub>v</sub> &mdash; Shear resistance (5.5.4.2)</td><td id="fv_disp">0.90</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="phi_v_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="phi_v_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&phi;<sub>f</sub> &mdash; Flexural resistance (5.5.4.2)</td><td id="ff_disp">&mdash;</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&phi;<sub>f</sub> &mdash; Flexural resistance (5.5.4.2)</td><td id="ff_disp">&mdash;</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="phi_f_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="phi_f_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&phi;<sub>c</sub> &mdash; Compression-controlled (5.5.4.2)</td><td id="fc_disp">0.75</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&phi;<sub>c</sub> &mdash; Compression-controlled (5.5.4.2)</td><td id="fc_disp">0.75</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="phi_c_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="phi_c_f_ovr_val" value="0.75" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&gamma;<sub>e</sub> &mdash; Exposure factor (5.6.7)</td><td id="ge_disp">0.75</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&gamma;<sub>e</sub> &mdash; Exposure factor (5.6.7)</td><td id="ge_disp">0.75</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma_e_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="gamma_e_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&lambda; &mdash; Lightweight concrete (5.4.2.8)</td><td id="lam_disp">1.00</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&lambda; &mdash; Lightweight concrete (5.4.2.8)</td><td id="lam_disp">1.00</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="lambda_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="lambda_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&lambda;<sub>duct</sub> &mdash; Duct width reduction (5.7.2.8)</td><td id="ld_disp">&mdash;</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&lambda;<sub>duct</sub> &mdash; Duct width reduction (5.7.2.8)</td><td id="ld_disp">&mdash;</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="lambda_duct_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="lambda_duct_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&gamma;&#8321; &mdash; Cracking variability (5.6.3.3)<br><small style="color:#888">All sections other than precast segmental</small></td><td id="g1_disp">1.60</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&gamma;&#8321; &mdash; Cracking variability (5.6.3.3)<br><small style="color:#888">All sections other than precast segmental</small></td><td id="g1_disp">1.60</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma1_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="gamma1_f_ovr_val" value="1.6" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&gamma;&#8322; &mdash; Prestress factor (5.6.3.3)<br><small style="color:#888">Bonded tendons</small></td><td id="g2_disp">1.10</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&gamma;&#8322; &mdash; Prestress factor (5.6.3.3)<br><small style="color:#888">Bonded tendons</small></td><td id="g2_disp">1.10</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma2_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="gamma2_f_ovr_val" value="1.1" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&gamma;&#8323; &mdash; Reinf. ratio correction (5.6.3.3)<br><small style="color:#888">Per ASTM spec selection</small></td><td id="g3_disp">0.67</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&gamma;&#8323; &mdash; Reinf. ratio correction (5.6.3.3)<br><small style="color:#888">Per ASTM spec selection</small></td><td id="g3_disp">0.67</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="gamma3_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="gamma3_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>&alpha;&#8321; &mdash; Stress block intensity (5.6.2.2)</td><td id="a1_disp">&mdash;</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&alpha;&#8321; &mdash; Stress block intensity (5.6.2.2)</td><td id="a1_disp">&mdash;</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="alpha1_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="alpha1_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
-            <tr><td>k<sub>c</sub> &mdash; Max compression factor (5.6.4.4-3)<br><small style="color:#888">Hardcoded to f'c: 0.85 for f'c&le;10 ksi</small></td><td id="kc_disp">&mdash;</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>k<sub>c</sub> &mdash; Max compression factor (5.6.4.4-3)<br><small style="color:#888">Hardcoded to f'c: 0.85 for f'c&le;10 ksi</small></td><td id="kc_disp">&mdash;</td>
                 <td colspan="2"><small style="color:#888">auto</small></td></tr>
-            <tr><td>&beta;&#8321; &mdash; Stress block depth (5.6.2.2)</td><td id="b1_disp">&mdash;</td>
+            <tr style="border-bottom:1px solid #ddd;"><td>&beta;&#8321; &mdash; Stress block depth (5.6.2.2)</td><td id="b1_disp">&mdash;</td>
                 <td><label class="ovr-label"><input type="checkbox" class="factor-ovr-cb" data-factor="beta1_f"></label></td>
                 <td><input type="number" class="factor-ovr-input" id="beta1_f_ovr_val" step="any" style="display:none;width:50px"></td></tr>
           </tbody>
@@ -503,15 +510,34 @@ canvas { width: 100% !important; height: 100% !important; }
     </div>
 
     <div class="card">
-      <div class="card-header orange">Shear &amp; Torsion Reinforcement</div>
+      <div class="card-header orange">Shear &amp; Torsion Reinforcement
+        <button class="help-btn" onclick="toggleHelp('shear-torsion-help')" title="How stirrups and torsion bars work">?</button>
+      </div>
       <div class="card-body">
+        <div id="shear-torsion-help" class="help-panel" style="display:none">
+          <p><strong>Shear legs:</strong> All legs resist shear. Only the 2 outer (external) legs form the closed loop and contribute to torsional resistance per AASHTO C5.7.3.6.2.</p>
+          <p><strong>Additional torsional stirrup:</strong> Assumes two external legs of reinforcement working only for torsion. These optional closed-loop stirrups are added to the outer perimeter to increase torsional capacity. Area is added on top of existing stirrup external legs.</p>
+        </div>
         <div class="form-row"><label>Stirrup bar size</label>
           <select id="shear_bar"><option value="0">None</option><option value="3">#3</option><option value="4" selected>#4</option><option value="5">#5</option><option value="6">#6</option></select>
           <span class="note">max #6 per AASHTO</span>
         </div>
         <div class="form-row"><label>Legs per stirrup (shear)</label><input type="number" id="shear_legs" value="2" min="1"></div>
         <div class="form-row"><label>Stirrup spacing, s</label><input type="number" id="shear_s" value="4" step="any"><span class="unit">in</span></div>
-        <div class="rpt-note" style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">Stirrups are assumed to resist both shear and torsion per C5.7.3.6.2.</div>
+        <div class="form-row"><label>Add. torsional stirrup size</label>
+          <select id="at_add_bar" onchange="document.getElementById('at_add_spacing_row').style.display=this.value==='0'?'none':'flex'">
+            <option value="0" selected>None</option>
+            <option value="3">#3</option>
+            <option value="4">#4</option>
+            <option value="5">#5</option>
+            <option value="6">#6</option>
+          </select>
+        </div>
+        <div class="form-row" id="at_add_spacing_row" style="display:none">
+          <label>Add. torsional stirrup spacing</label>
+          <input type="number" id="at_add_s" value="12" step="any"><span class="unit">in</span>
+        </div>
+        <div class="rpt-note" style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">Stirrups resist both shear (all legs) and torsion (2 external legs only). Additional torsion bars provide extra capacity.</div>
       </div>
     </div>
 
@@ -849,6 +875,12 @@ const BARS={2:{d:0.250,a:0.05},3:{d:0.375,a:0.11},4:{d:0.500,a:0.20},5:{d:0.625,
 6:{d:0.750,a:0.44},7:{d:0.875,a:0.60},8:{d:1.000,a:0.79},9:{d:1.128,a:1.00},
 10:{d:1.270,a:1.27},11:{d:1.410,a:1.56},14:{d:1.693,a:2.25},18:{d:2.257,a:4.00}};
 
+/* Toggle help panel visibility */
+function toggleHelp(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
 /* ====================================================================
    SECTION STATE MANAGEMENT
    ==================================================================== */
@@ -900,14 +932,14 @@ function writeOptParamsToDOM(){
 function getDefaultSectionState(){
   return {
     inputs: {
-      fc:5, fy:60, Es:29000, fpu:270, Ept:28500, ag:0.75, lam:1,
-      phi_v:0.9, gamma_e:0.75, codeEdition:'CA', sectionClass:'CIP_PT',
+      fc:5, fy:60, fy_trans:60, Es:29000, fpu:270, Ept:28500, ag:0.75, lam:1,
+      phi_v:0.9, gamma_e:0.75, codeEdition:'CA', sectionClass:'CIP_PT', astm_spec:'A615_60',
       secType:'RECTANGULAR', b:16.38, h:27.5, bw_input:12, hf_top:8, hf_bot:12, cover:2,
       barN_top:7, nBars_top:5, barN_bot:7, nBars_bot:5,
       d_top_ovr:false, d_bot_ovr:false, Ec_ovr:false, fpy_ovr:false, ecl_ovr:false, etl_ovr:false,
       Ec_val:'', fpy_val:'', ecl_val:'', etl_val:'', d_top_val:'', d_bot_val:'',
       nStrands:10, strand_area:0.217, dp_mode:'layout', dp_input:15.5, fpe_mode:'layout', fpe_input:0, duct_dia:6,
-      shN:4, shear_legs:2, shear_s:4
+      shN:4, shear_legs:2, shear_s:4, at_add_bar_N:0, at_add_s:12
     },
     demandRows: [
       {Pu:0,Mu:6953,Vu:108,Tu:0,Vp:0,Ps:-100,Ms:2500,x:null,dp:null,fpe:null,ptMode:'layout'}
@@ -936,11 +968,12 @@ function saveCurrentSectionState(){
 
   // Inputs — read from DOM elements
   state.inputs = {
-    fc: V('fc'), fy: V('fy'), Es: V('Es'), fpu: V('fpu'), Ept: V('Ept'),
+    fc: V('fc'), fy: V('fy'), fy_trans: V('fy_trans'), Es: V('Es'), fpu: V('fpu'), Ept: V('Ept'),
     ag: V('ag'), lam: V('lambda'), phi_v: V('phi_v'),
     gamma_e: parseFloat(document.getElementById('gamma_e').value),
     codeEdition: document.getElementById('codeEdition').value,
     sectionClass: document.getElementById('sectionClass').value,
+    astm_spec: document.getElementById('astm_spec').value,
     secType: document.getElementById('sectionType').value,
     b: V('b_flange'), h: V('h_total'), bw_input: V('b_web'), hf_top: V('hf_top'), hf_bot: V('hf_bot'), cover: V('cover'),
     barN_top: parseInt(document.getElementById('top_bar').value),
@@ -970,7 +1003,9 @@ function saveCurrentSectionState(){
     // Shear
     shN: parseInt(document.getElementById('shear_bar').value),
     shear_legs: V('shear_legs'),
-    shear_s: V('shear_s')
+    shear_s: V('shear_s'),
+    at_add_bar_N: parseInt(document.getElementById('at_add_bar').value),
+    at_add_s: V('at_add_s')
   };
 
   // Demand rows
@@ -1018,11 +1053,12 @@ function loadSectionState(name){
 
   // Simple numeric inputs
   const setV=(id,val)=>{const el=document.getElementById(id);if(el&&val!=null)el.value=val;};
-  setV('fc',inp.fc); setV('fy',inp.fy); setV('Es',inp.Es); setV('fpu',inp.fpu); setV('Ept',inp.Ept);
+  setV('fc',inp.fc); setV('fy',inp.fy); setV('fy_trans', inp.fy_trans != null ? inp.fy_trans : inp.fy); setV('Es',inp.Es); setV('fpu',inp.fpu); setV('Ept',inp.Ept);
   setV('ag',inp.ag); setV('lambda',inp.lam); setV('phi_v',inp.phi_v);
   setV('gamma_e',inp.gamma_e);
 
   // Dropdowns
+  document.getElementById('astm_spec').value = inp.astm_spec || 'A615_60';
   document.getElementById('codeEdition').value = inp.codeEdition||'CA';
   document.getElementById('sectionClass').value = inp.sectionClass||'CIP_PT';
   document.getElementById('sectionType').value = inp.secType||'RECTANGULAR';
@@ -1069,6 +1105,9 @@ function loadSectionState(name){
   // Shear
   document.getElementById('shear_bar').value = inp.shN!=null?inp.shN:4;
   setV('shear_legs',inp.shear_legs); setV('shear_s',inp.shear_s);
+  document.getElementById('at_add_bar').value = inp.at_add_bar_N != null ? inp.at_add_bar_N : 0;
+  setV('at_add_s', inp.at_add_s != null ? inp.at_add_s : 12);
+  document.getElementById('at_add_spacing_row').style.display = (inp.at_add_bar_N > 0) ? 'flex' : 'none';
 
   // Multi-row rebar data
   mrData.top = state.mrData && state.mrData.top ? JSON.parse(JSON.stringify(state.mrData.top)) : null;
@@ -1360,6 +1399,22 @@ function setupAutoCalculate(){
     if(e.target.matches('input[type="number"], input[type="text"], select, input[type="checkbox"]')){
       debouncedCalculate();
     }
+    // Handle Longitudinal Reinforcement ASTM spec change
+    if(e.target.id === 'astm_spec'){
+      const astmMap = {
+        'A615_60': {fy: 60, note: 'ASTM A615 Grade 60'},
+        'A615_75': {fy: 75, note: 'ASTM A615 Grade 75'},
+        'A615_80': {fy: 80, note: 'ASTM A615 Grade 80'},
+        'A706_60': {fy: 60, note: 'ASTM A706 Grade 60'},
+        'A706_80': {fy: 80, note: 'ASTM A706 Grade 80'},
+        'A1035_100': {fy: 100, note: 'ASTM A1035 Grade 100'}
+      };
+      const spec = astmMap[e.target.value];
+      if(spec){
+        document.getElementById('fy').value = spec.fy;
+        document.getElementById('fy_note').textContent = spec.note;
+      }
+    }
     // Auto-run PT calc when any PT tab input changes (but not demand-row fields)
     if(e.target.closest('#tab-pt') && !e.target.closest('#tab-demands')){
       debouncedPtCalc();
@@ -1440,6 +1495,7 @@ function drawCrossSection(){
   const shN_cs=parseInt(document.getElementById('shear_bar').value);
   const shBar_cs=(shN_cs===0)?null:(BARS[shN_cs]||BARS[4]);
   const db_stir=(shBar_cs)?shBar_cs.d:0;
+  const nLegs_cs=Math.max(2,parseInt(document.getElementById('shear_legs').value)||2);
   const barN_bot_cs=parseInt(document.getElementById('bot_bar').value)||7;
   const bar_bot_cs=BARS[barN_bot_cs]||BARS[7];
   const nBars_bot_cs=parseInt(document.getElementById('n_bars_bot').value)||1;
@@ -1500,12 +1556,14 @@ function drawCrossSection(){
       const sL=ox+stirCL, sT=oy+stirCL, sW=secW-2*stirCL, sHt=secH-2*stirCL;
       const cr=Math.min(db_stir*sc*2.5, sW/5, sHt/5);
       _roundRect(ctx,sL,sT,sW,sHt,cr); ctx.stroke();
+      if(nLegs_cs>2){for(let i=1;i<nLegs_cs-1;i++){const xPos=sL+sW*i/(nLegs_cs-1);ctx.beginPath();ctx.moveTo(xPos,sT);ctx.lineTo(xPos,sT+sHt);ctx.stroke();}}
     } else {
       const wL=sx((b-bw)/2)+stirCL, wR=sx((b+bw)/2)-stirCL;
       const sT=oy+stirCL, sB=sy(h)-stirCL;
       const sW=wR-wL, sHt=sB-sT;
       const cr=Math.min(db_stir*sc*2.5, sW/5, sHt/5);
       _roundRect(ctx,wL,sT,sW,sHt,cr); ctx.stroke();
+      if(nLegs_cs>2){for(let i=1;i<nLegs_cs-1;i++){const xPos=wL+sW*i/(nLegs_cs-1);ctx.beginPath();ctx.moveTo(xPos,sT);ctx.lineTo(xPos,sT+sHt);ctx.stroke();}}
     }
   }
   /* ---- bottom bars ---- */
@@ -1546,6 +1604,32 @@ function drawCrossSection(){
       }
     });
   }
+  function drawBarSpacingAnnot(bxArr, byy, db_bar, isBot){
+    if(bxArr.length < 2) return;
+    const cc_s = bxArr[1] - bxArr[0];
+    const cl_s = Math.max(0, cc_s - db_bar);
+    const x1cc = sx(bxArr[0]), x2cc = sx(bxArr[1]);
+    const x1cl = sx(bxArr[0] + db_bar/2), x2cl = sx(bxArr[1] - db_bar/2);
+    const barRpx = visBarR(db_bar);
+    const yCC = isBot ? byy - barRpx - 14 : byy + barRpx + 14;
+    const yCL = isBot ? byy - barRpx - 27 : byy + barRpx + 27;
+    const col = isBot ? '#2c3e50' : '#8e44ad';
+    ctx.save();
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 0.8;
+    ctx.font = '10px "Segoe UI", sans-serif';
+    ctx.beginPath();
+    ctx.moveTo(x1cc,yCC-4);ctx.lineTo(x1cc,yCC+4);ctx.moveTo(x1cc,yCC);ctx.lineTo(x2cc,yCC);ctx.moveTo(x2cc,yCC-4);ctx.lineTo(x2cc,yCC+4);
+    ctx.stroke();
+    if(x2cc-x1cc>14){_arrowH(ctx,x1cc,yCC,3,1);_arrowH(ctx,x2cc,yCC,3,-1);}
+    ctx.textAlign='center'; ctx.textBaseline=isBot?'bottom':'top';
+    ctx.fillText('s = '+cc_s.toFixed(2)+'"',(x1cc+x2cc)/2, isBot?yCC-3:yCC+3);
+    ctx.beginPath();
+    ctx.moveTo(x1cl,yCL-4);ctx.lineTo(x1cl,yCL+4);ctx.moveTo(x1cl,yCL);ctx.lineTo(x2cl,yCL);ctx.moveTo(x2cl,yCL-4);ctx.lineTo(x2cl,yCL+4);
+    ctx.stroke();
+    if(x2cl-x1cl>10){_arrowH(ctx,x1cl,yCL,3,1);_arrowH(ctx,x2cl,yCL,3,-1);}
+    ctx.fillText('cl = '+cl_s.toFixed(2)+'"',(x1cl+x2cl)/2, isBot?yCL-3:yCL+3);
+    ctx.restore();
+  }
   if(mrBot){
     mrBot.forEach(row=>{
       const barR=visBarR(row.bar.d);
@@ -1558,6 +1642,7 @@ function drawCrossSection(){
       checkRowSpacing(bxArr, row.bar.d, 'Bot row d='+row.d.toFixed(1)+'"');
       const hasViol=spacingWarnings.some(w=>w.label.startsWith('Bot row d='+row.d.toFixed(1)));
       drawBarRow(bxArr, byy, barR, '#2c3e50', '#1a252f', hasViol);
+      drawBarSpacingAnnot(bxArr, byy, row.bar.d, true);
     });
     /* centroid dashed line + diamond */
     ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(44,62,80,0.5)'; ctx.lineWidth=1;
@@ -1577,6 +1662,7 @@ function drawCrossSection(){
     checkRowSpacing(bxArr_bot, bar_bot_cs.d, 'Bottom bars');
     const hasViol_bot=spacingWarnings.length>0;
     drawBarRow(bxArr_bot, barY_bot, barR_bot, '#2c3e50', '#1a252f', hasViol_bot);
+    drawBarSpacingAnnot(bxArr_bot, barY_bot, bar_bot_cs.d, true);
   }
   /* ---- top bars ---- */
   const mrTop=resolveMRRows('top');
@@ -1594,6 +1680,7 @@ function drawCrossSection(){
       checkRowSpacing(bxArr, row.bar.d, 'Top row d='+row.d.toFixed(1)+'"');
       const hasViol=spacingWarnings.some(w=>w.label.startsWith('Top row d='+row.d.toFixed(1)));
       drawBarRow(bxArr, byy, barR, '#8e44ad', '#6c2d82', hasViol);
+      drawBarSpacingAnnot(bxArr, byy, row.bar.d, false);
     });
     /* centroid dashed line + diamond */
     ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(142,68,173,0.5)'; ctx.lineWidth=1;
@@ -1613,6 +1700,7 @@ function drawCrossSection(){
     checkRowSpacing(bxArr_top, bar_top_cs.d, 'Top bars');
     const hasViol_top=spacingWarnings.some(w=>w.label==='Top bars');
     drawBarRow(bxArr_top, barY_top, barR_top, '#8e44ad', '#6c2d82', hasViol_top);
+    drawBarSpacingAnnot(bxArr_top, barY_top, bar_top_cs.d, false);
   }
   /* ---- PT strands ---- */
   const barR_bot_ref=mrBot?Math.max(mrBot[0].bar.d/2*sc,3):Math.max(bar_bot_cs.d/2*sc,4);
@@ -3330,7 +3418,7 @@ function toggleShowAll(){
 
 /* ====== MAIN — calls Python calc engine via pywebview bridge ====== */
 function gatherInputs(){
-  const fc=V('fc'),fy=V('fy'),Es=V('Es'),fpu=V('fpu'),Ept=V('Ept'),ag=V('ag'),lam=V('lambda'),phi_v=V('phi_v'),gamma_e=parseFloat(document.getElementById('gamma_e').value);
+  const fc=V('fc'),fy=V('fy'),fy_trans=V('fy_trans'),Es=V('Es'),fpu=V('fpu'),Ept=V('Ept'),ag=V('ag'),lam=V('lambda'),phi_v=V('phi_v'),gamma_e=parseFloat(document.getElementById('gamma_e').value);
   const codeEdition=document.getElementById('codeEdition').value;
   const sectionClass=document.getElementById('sectionClass').value;
   // Ec
@@ -3375,6 +3463,9 @@ function gatherInputs(){
   // When "None" is selected for stirrups, force shear_legs and s_shear to 0 so Av=0 in Python
   if(shN===0) { shear_legs=0; s_shear=0; }
   const db_stir=(shBar)?shBar.d:0; // stirrup bar diameter, 0 if None selected
+  // Additional torsion bar inputs
+  const at_add_bar_N = parseInt(document.getElementById('at_add_bar').value) || 0;
+  const s_at_add = at_add_bar_N > 0 ? V('at_add_s') : 0;
   // Top bars
   const barN_top=parseInt(document.getElementById('top_bar').value);
   const nBars_top=V('n_bars_top');
@@ -3428,10 +3519,10 @@ function gatherInputs(){
       if(inp) factor_overrides[key]=parseFloat(inp.value)||0;
     }
   });
-  return {fc,fy,Ec,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
+  return {fc,fy,fy_trans,Ec,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
     astm_spec,factor_overrides,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,nStrands,strand_area,dp,fpe,ductDia:ductDia,
-    shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
+    shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,at_add_bar_N,s_at_add,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
 }
 
 function runAllCalculations(){
