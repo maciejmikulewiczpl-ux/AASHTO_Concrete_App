@@ -92,6 +92,23 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background
 .form-row.disabled input, .form-row.disabled select { opacity: 0.4; pointer-events: none; background: #eee; }
 .form-row.disabled label, .form-row.disabled .note, .form-row.disabled .unit { opacity: 0.4; }
 
+/* Material Properties — explicit 5-column grid (override | label | input | unit | note)
+   so every row's note aligns on the same vertical line and the override checkboxes
+   form a single column on the left. */
+.material-grid { display: grid; grid-template-columns: 78px 210px 110px 40px 1fr;
+                 align-items: center; row-gap: 7px; column-gap: 8px; padding-top: 2px; }
+.material-grid .form-row { display: contents; }
+.material-grid label:not(.ovr-label) { min-width: 0; padding-right: 4px; }
+.material-grid .form-row > .ovr-label { margin-left: 0; min-width: 0; justify-content: center; }
+.material-grid .form-row > .unit { min-width: 0; }
+.material-grid .form-row > .note { margin-left: 0; }
+.material-grid .form-row > select.wide { width: 100%; min-width: 0; max-width: none; grid-column: 3 / 5; }
+.material-grid .col-hdr { font-size: 0.7rem; color: var(--text-light); font-weight: 700;
+                          text-transform: uppercase; letter-spacing: 0.04em;
+                          text-align: center; padding-bottom: 4px;
+                          border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+.material-grid .col-hdr-spacer { border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+
 .result-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.84rem; }
 .result-row:last-child { border-bottom: none; }
 .result-label { color: var(--text); font-weight: 500; }
@@ -186,6 +203,13 @@ canvas { width: 100% !important; height: 100% !important; }
 .demand-table tbody tr:nth-child(even) td:not(:first-child) { background:#fafbfc; }
 .demand-table tbody tr:nth-child(even) td.xl-selected { background:#cfe4f7 !important; }
 .demand-table .cap-cell { font-family:'Consolas',monospace; font-weight:600; color:var(--primary); }
+.demand-table .cap-cell-vnmax { background:#fff3cd !important; color:#7d5a00; }
+.demand-table .cap-cell-vnmax::after { content:''; }
+.vnmax-cap-warn { background:#fff3cd; border-left:4px solid #f0ad4e; padding:6px 10px; margin:6px 0; font-size:0.85rem; color:#5b4500; border-radius:3px; }
+.vnmax-cap-warn b { color:#a04500; }
+.badge-capped { display:inline-block; background:#f0ad4e; color:#fff; font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:3px; margin-left:4px; vertical-align:middle; }
+.shear-overreinf-banner { background:#fff3cd; border:1px solid #f0ad4e; padding:8px 12px; margin:0 0 10px 0; font-weight:600; color:#7d5a00; border-radius:4px; }
+.shear-overreinf-banner b { color:#a04500; }
 .demand-table .dc-pass { font-weight:700; color:#1e8449; }
 .demand-table .dc-fail { font-weight:700; color:#c0392b; }
 .demand-table .dc-na { color:var(--text-light); font-style:italic; }
@@ -332,29 +356,30 @@ canvas { width: 100% !important; height: 100% !important; }
 
     <div class="card">
       <div class="card-header blue">Material Properties</div>
-      <div class="card-body">
-        <div class="form-row"><label>f'<sub>c</sub></label><input type="number" id="fc" value="5" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>Longitudinal Reinforcement ASTM</label>
-          <select id="astm_spec" class="wide">
-            <option value="A615_60" selected>ASTM A615 (Grade 60)</option>
-            <option value="A615_75">ASTM A615 (Grade 75)</option>
-            <option value="A615_80">ASTM A615 (Grade 80)</option>
-            <option value="A706_60">ASTM A706 (Grade 60)</option>
-            <option value="A706_80">ASTM A706 (Grade 80)</option>
-            <option value="A1035_100">ASTM A1035 (Grade 100)</option>
-          </select>
-        </div>
-        <div class="form-row"><label>f<sub>y</sub> (longitudinal)</label><input type="number" id="fy" value="60" step="any"><span class="unit">ksi</span><span class="note" id="fy_note">ASTM A615 Grade 60</span></div>
-        <div class="form-row"><label>f<sub>y,trans</sub> (stirrups)</label><input type="number" id="fy_trans" value="60" step="any"><span class="unit">ksi</span><span class="note">ASTM Grade 60</span></div>
-        <div class="form-row"><label>E<sub>c</sub></label><input type="number" id="Ec" value="0" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="Ec_ovr" class="ovr-cb"></label><span class="note" id="ecNote">= 2500 f'<sub>c</sub><sup>0.33</sup></span></div>
-        <div class="form-row"><label>E<sub>s</sub></label><input type="number" id="Es" value="29000" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>f<sub>pu</sub></label><input type="number" id="fpu" value="270" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>f<sub>py</sub></label><input type="number" id="fpy" value="243" step="any" readonly class="auto-calc"><span class="unit">ksi</span><label class="ovr-label"><input type="checkbox" id="fpy_ovr" class="ovr-cb"></label><span class="note" id="fpyNote">= 0.9·f<sub>pu</sub></span></div>
-        <div class="form-row"><label>E<sub>pt</sub></label><input type="number" id="Ept" value="28500" step="any"><span class="unit">ksi</span></div>
-        <div class="form-row"><label>&epsilon;<sub>cl</sub> (compr. control)</label><input type="number" id="ecl" value="0.002" step="any" readonly class="auto-calc"><span class="unit"></span><label class="ovr-label"><input type="checkbox" id="ecl_ovr" class="ovr-cb"></label><span class="note" id="eclNote">= 0.002 (AASHTO 5.6.2.1)</span></div>
-        <div class="form-row"><label>&epsilon;<sub>tl</sub> (tension control)</label><input type="number" id="etl" value="0.005" step="any" readonly class="auto-calc"><span class="unit"></span><label class="ovr-label"><input type="checkbox" id="etl_ovr" class="ovr-cb"></label><span class="note" id="etlNote">interpolated per f<sub>y</sub> (AASHTO 5.6.2.1)</span></div>
-        <div class="form-row"><label>Max aggregate, a<sub>g</sub></label><input type="number" id="ag" value="0.75" step="any"><span class="unit">in</span></div>
-        <div class="form-row"><label>&lambda; (lightweight factor)</label><input type="number" id="lambda" value="1" step="any" min="0" max="1"></div>
+      <div class="card-body material-grid">
+        <!-- Column header row: OVERRIDE label sits above the leftmost column -->
+        <div class="col-hdr">Override</div>
+        <div class="col-hdr-spacer"></div>
+        <div class="col-hdr-spacer"></div>
+        <div class="col-hdr-spacer"></div>
+        <div class="col-hdr-spacer"></div>
+
+        <div class="form-row"><span></span><label>Concrete Type</label><select id="concType" class="wide"><option value="NORMAL" selected>Normal Weight</option></select><span></span></div>
+        <div class="form-row"><span></span><label>f'<sub>c</sub></label><input type="number" id="fc" value="5" step="any"><span class="unit">ksi</span><span></span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="wc_ovr" class="ovr-cb"></label><label>Unit weight, w<sub>c</sub></label><input type="number" id="wc" value="0.145" step="any" readonly class="auto-calc"><span class="unit">kcf</span><span class="note" id="wcNote">0.145 (f'<sub>c</sub> &le; 5 ksi)</span></div>
+        <div class="form-row"><span></span><label>K<sub>1</sub></label><input type="number" id="K1" value="1.0" step="any"><span class="unit"></span><span class="note">aggregate correction factor (1.0 unless owner-specified)</span></div>
+        <div class="form-row"><span></span><label>Longitudinal Reinforcement ASTM</label><select id="astm_spec" class="wide"><option value="A615_60" selected>ASTM A615 (Grade 60)</option><option value="A615_75">ASTM A615 (Grade 75)</option><option value="A615_80">ASTM A615 (Grade 80)</option><option value="A706_60">ASTM A706 (Grade 60)</option><option value="A706_80">ASTM A706 (Grade 80)</option><option value="A1035_100">ASTM A1035 (Grade 100)</option></select><span></span></div>
+        <div class="form-row"><span></span><label>f<sub>y</sub> (longitudinal)</label><input type="number" id="fy" value="60" step="any"><span class="unit">ksi</span><span class="note" id="fy_note">ASTM A615 Grade 60</span></div>
+        <div class="form-row"><span></span><label>f<sub>y,trans</sub> (stirrups)</label><input type="number" id="fy_trans" value="60" step="any"><span class="unit">ksi</span><span class="note">ASTM Grade 60</span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="Ec_ovr" class="ovr-cb"></label><label>E<sub>c</sub></label><input type="number" id="Ec" value="0" step="any" readonly class="auto-calc"><span class="unit">ksi</span><span class="note" id="ecNote">120000&middot;K<sub>1</sub>&middot;w<sub>c</sub><sup>2</sup>&middot;f'<sub>c</sub><sup>0.33</sup> (AASHTO 5.4.2.4-1)</span></div>
+        <div class="form-row"><span></span><label>E<sub>s</sub></label><input type="number" id="Es" value="29000" step="any"><span class="unit">ksi</span><span></span></div>
+        <div class="form-row"><span></span><label>f<sub>pu</sub></label><input type="number" id="fpu" value="270" step="any"><span class="unit">ksi</span><span></span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="fpy_ovr" class="ovr-cb"></label><label>f<sub>py</sub></label><input type="number" id="fpy" value="243" step="any" readonly class="auto-calc"><span class="unit">ksi</span><span class="note" id="fpyNote">0.9&middot;f<sub>pu</sub></span></div>
+        <div class="form-row"><span></span><label>E<sub>pt</sub></label><input type="number" id="Ept" value="28500" step="any"><span class="unit">ksi</span><span></span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="ecl_ovr" class="ovr-cb"></label><label>&epsilon;<sub>cl</sub> (compr. control)</label><input type="number" id="ecl" value="0.002" step="any" readonly class="auto-calc"><span class="unit"></span><span class="note" id="eclNote">0.002 (AASHTO 5.6.2.1)</span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="etl_ovr" class="ovr-cb"></label><label>&epsilon;<sub>tl</sub> (tension control)</label><input type="number" id="etl" value="0.005" step="any" readonly class="auto-calc"><span class="unit"></span><span class="note" id="etlNote">interpolated per f<sub>y</sub> (AASHTO 5.6.2.1)</span></div>
+        <div class="form-row"><span></span><label>Max aggregate, a<sub>g</sub></label><input type="number" id="ag" value="0.75" step="any"><span class="unit">in</span><span></span></div>
+        <div class="form-row"><span></span><label>&lambda; (lightweight factor)</label><input type="number" id="lambda" value="1" step="any" min="0" max="1"><span class="unit"></span><span></span></div>
       </div>
     </div>
 
@@ -518,9 +543,9 @@ canvas { width: 100% !important; height: 100% !important; }
           <p><strong>Additional torsional stirrup:</strong> Assumes two external legs of reinforcement working only for torsion. These optional closed-loop stirrups are added to the outer perimeter to increase torsional capacity. Area is added on top of existing stirrup external legs.</p>
         </div>
         <div class="form-row"><label>Stirrup bar size</label>
-          <select id="shear_bar"><option value="0">None</option><option value="3">#3</option><option value="4" selected>#4</option><option value="5">#5</option><option value="6">#6</option></select>
-          <span class="note">max #6 per AASHTO</span>
+          <select id="shear_bar"><option value="0">None</option><option value="3">#3</option><option value="4" selected>#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option><option value="9">#9</option><option value="10">#10</option><option value="11">#11</option></select>
         </div>
+        <div class="form-row"><span class="note" style="font-style:italic;">Note: per AASHTO 5.10.8.2.6b shear reinforcement bars should be limited to #8</span></div>
         <div class="form-row"><label>Legs per stirrup (shear)</label><input type="number" id="shear_legs" value="2" min="1"></div>
         <div class="form-row"><label>Stirrup spacing, s</label><input type="number" id="shear_s" value="4" step="any"><span class="unit">in</span></div>
         <div class="form-row"><label>Add. torsional stirrup size</label>
@@ -530,6 +555,11 @@ canvas { width: 100% !important; height: 100% !important; }
             <option value="4">#4</option>
             <option value="5">#5</option>
             <option value="6">#6</option>
+            <option value="7">#7</option>
+            <option value="8">#8</option>
+            <option value="9">#9</option>
+            <option value="10">#10</option>
+            <option value="11">#11</option>
           </select>
         </div>
         <div class="form-row" id="at_add_spacing_row" style="display:none">
@@ -812,10 +842,10 @@ canvas { width: 100% !important; height: 100% !important; }
     <h4 style="margin-top:10px;">Stirrup constraints</h4>
     <div class="opt-row">
       <div class="opt-field"><label>Min bar size</label>
-        <select id="optMinStirBar"><option value="3" selected>#3</option><option value="4">#4</option><option value="5">#5</option><option value="6">#6</option></select>
+        <select id="optMinStirBar"><option value="3" selected>#3</option><option value="4">#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option></select>
       </div>
       <div class="opt-field"><label>Max bar size</label>
-        <select id="optMaxStirBar"><option value="3">#3</option><option value="4">#4</option><option value="5">#5</option><option value="6" selected>#6</option></select>
+        <select id="optMaxStirBar"><option value="3">#3</option><option value="4">#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8" selected>#8</option></select>
       </div>
       <div class="opt-field"><label>Min spacing (in)</label><input type="number" id="optShearSMin" step="0.5" min="1" value="3"></div>
       <div class="opt-field"><label>Max spacing (in)</label><input type="number" id="optShearSMax" step="0.5" min="2" value="18"></div>
@@ -973,6 +1003,10 @@ function saveCurrentSectionState(){
     codeEdition: document.getElementById('codeEdition').value,
     sectionClass: document.getElementById('sectionClass').value,
     astm_spec: document.getElementById('astm_spec').value,
+    concType: document.getElementById('concType').value,
+    wc_ovr: document.getElementById('wc_ovr').checked,
+    wc_val: document.getElementById('wc').value,
+    K1_val: document.getElementById('K1').value,
     secType: document.getElementById('sectionType').value,
     b: V('b_flange'), h: V('h_total'), bw_input: V('b_web'), hf_top: V('hf_top'), hf_bot: V('hf_bot'), cover: V('cover'),
     barN_top: parseInt(document.getElementById('top_bar').value),
@@ -1058,6 +1092,7 @@ function loadSectionState(name){
 
   // Dropdowns
   document.getElementById('astm_spec').value = inp.astm_spec || 'A615_60';
+  document.getElementById('concType').value = inp.concType || 'NORMAL';
   document.getElementById('codeEdition').value = inp.codeEdition||'CA';
   document.getElementById('sectionClass').value = inp.sectionClass||'CIP_PT';
   document.getElementById('sectionType').value = inp.secType||'RECTANGULAR';
@@ -1074,11 +1109,14 @@ function loadSectionState(name){
 
   // Override checkboxes and values
   document.getElementById('Ec_ovr').checked = !!inp.Ec_ovr;
+  document.getElementById('wc_ovr').checked = !!inp.wc_ovr;
   document.getElementById('fpy_ovr').checked = !!inp.fpy_ovr;
   document.getElementById('ecl_ovr').checked = !!inp.ecl_ovr;
   document.getElementById('etl_ovr').checked = !!inp.etl_ovr;
   document.getElementById('d_top_ovr').checked = !!inp.d_top_ovr;
   document.getElementById('d_bot_ovr').checked = !!inp.d_bot_ovr;
+  if(inp.wc_val) setV('wc',inp.wc_val);
+  if(inp.K1_val) setV('K1',inp.K1_val);
   if(inp.Ec_val) setV('Ec',inp.Ec_val);
   if(inp.fpy_val) setV('fpy',inp.fpy_val);
   if(inp.ecl_val) setV('ecl',inp.ecl_val);
@@ -2298,10 +2336,17 @@ function rebuildDemandThead(){
   if(flags.m2) checkedMethods.push('gp');
   if(flags.m3) checkedMethods.push('b5');
   if(checkedMethods.length===1) shearCapacityMethod=checkedMethods[0];
-  let r1='',r2='';
+  let r1='',r2='',r3='';
   if(demandSubtab==='strength'){
-    // Row 1
-    r1+=`<th rowspan="2">#</th>`;
+    // With longReinf we need 3 header rows so V/Long. D/C sub-cols can sit under
+    // a proper "D/C [Sort]" group header. Without longReinf, 2 rows suffice.
+    // IMPORTANT: when nRows=3, every row-2 sub-header cell that must NOT appear in
+    // row 3 gets rowspan="2", ensuring all column positions are covered in row 3.
+    const nRows = flags.longReinf ? 3 : 2;
+    const rs2 = flags.longReinf ? ' rowspan="2"' : ''; // applied to all non-D/C row-2 cells
+
+    // ── Row 1: group-level headers ──────────────────────────────────────────
+    r1+=`<th rowspan="${nRows}">#</th>`;
     r1+=`<th colspan="4" class="grp-demand" style="background:#1a5276">Location &amp; PT Profile</th>`;
     r1+=`<th colspan="4" class="grp-demand">Strength Demands</th>`;
     r1+=`<th colspan="1" class="grp-status">Torsion</th>`;
@@ -2312,49 +2357,54 @@ function rebuildDemandThead(){
     if(flags.m3) shearCapCols++;
     if(shearCapCols>0) r1+=`<th colspan="${shearCapCols}" class="grp-capacity">Shear Capacity</th>`;
     r1+=`<th colspan="1" class="grp-capacity">Torsion</th>`;
-    // D/C area: M(rowspan=2) | Shear(colspan=1or2) | T(rowspan=2)
-    r1+=`<th rowspan="2" class="grp-dc">M</th>`;
+    // D/C group header spanning all D/C sub-columns, with Sort button
+    const dcCols = flags.longReinf ? 4 : 3;
+    r1+=`<th colspan="${dcCols}" class="grp-dc" style="padding:2px 6px;"><span style="font-size:0.7rem;opacity:0.8;margin-right:4px;">D/C</span><button id="dcSortBtn" onclick="sortDemandByDC()" title="Sort rows by max D/C ratio" style="padding:1px 5px;font-size:0.68rem;border:1px solid rgba(255,255,255,0.5);border-radius:3px;background:rgba(255,255,255,0.15);color:white;cursor:pointer;">&#x25BC; Sort</button></th>`;
+    r1+=`<th colspan="2" class="grp-status">Status</th>`;
+    r1+=`<th rowspan="${nRows}"></th>`;
+
+    // ── Row 2: column sub-headers ────────────────────────────────────────────
+    // rs2 adds rowspan="2" to every non-D/C cell when nRows=3, so those columns
+    // are fully covered in row 3 (which otherwise only contains V and Long.).
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>`;
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small>in</small></th>`;
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small>ksi</small></th>`;
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">P<sub>u</sub><br><small>kip</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">M<sub>u</sub><br><small>k-in</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">V<sub>u</sub><br><small>kip</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">T<sub>u</sub><br><small>k-in</small></th>`;
+    r2+=`<th${rs2} class="grp-status">Considered?</th>`;
+    r2+=`<th${rs2} class="grp-capacity">M<sub>r</sub><br><small>k-in</small></th>`;
+    if(flags.m1) r2+=`<th${rs2} class="grp-capacity">Simp.<br><small>kip</small></th>`;
+    if(flags.m2) r2+=`<th${rs2} class="grp-capacity">GP<br><small>kip</small></th>`;
+    if(flags.m3) r2+=`<th${rs2} class="grp-capacity">B5<br><small>kip</small></th>`;
+    r2+=`<th${rs2} class="grp-capacity">T<sub>r</sub><br><small>k-in</small></th>`;
+    // D/C sub-headers in row 2
     if(flags.longReinf){
-      // Shear mother cell with dropdown (colspan=2 for V + Long sub-cols)
+      // M and T span rows 2+3; Shear spans 2 cols, with V and Long. filling row 3
+      r2+=`<th rowspan="2" class="grp-dc">M</th>`;
       let shearLabel='Shear';
       if(checkedMethods.length>1){
         shearLabel=`<div style="display:flex;gap:6px;align-items:center;justify-content:center;"><span>Shear</span><select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()"><option value="gp"${shearCapacityMethod==='gp'?' selected':''}>GP</option><option value="simp"${shearCapacityMethod==='simp'?' selected':''}>Simp.</option><option value="b5"${shearCapacityMethod==='b5'?' selected':''}>B5</option></select></div>`;
       }
-      r1+=`<th colspan="2" class="grp-dc">${shearLabel}</th>`;
+      r2+=`<th colspan="2" class="grp-dc">${shearLabel}</th>`;
+      r2+=`<th rowspan="2" class="grp-dc">T</th>`;
+      // Row 3: only the two Shear D/C sub-columns (all other cols covered by rowspan)
+      r3+=`<th class="grp-dc">V</th>`;
+      r3+=`<th class="grp-dc" style="background:#6c3483">Long.</th>`;
     } else {
-      // No long reinf — just V (rowspan=2)
+      // No long reinf — M, V, T are flat single-row labels in row 2
+      r2+=`<th class="grp-dc">M</th>`;
       if(checkedMethods.length>1){
-        r1+=`<th rowspan="2" class="grp-dc"><div style="display:flex;gap:6px;align-items:center;justify-content:center;"><span>V</span><select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()"><option value="gp"${shearCapacityMethod==='gp'?' selected':''}>GP</option><option value="simp"${shearCapacityMethod==='simp'?' selected':''}>Simp.</option><option value="b5"${shearCapacityMethod==='b5'?' selected':''}>B5</option></select></div></th>`;
+        r2+=`<th class="grp-dc"><div style="display:flex;gap:6px;align-items:center;justify-content:center;"><span>V</span><select id="shearCapSelect" style="width:55px;font-size:0.68rem;padding:1px;" onchange="onShearCapacityChange()"><option value="gp"${shearCapacityMethod==='gp'?' selected':''}>GP</option><option value="simp"${shearCapacityMethod==='simp'?' selected':''}>Simp.</option><option value="b5"${shearCapacityMethod==='b5'?' selected':''}>B5</option></select></div></th>`;
       } else {
-        r1+=`<th rowspan="2" class="grp-dc">V</th>`;
+        r2+=`<th class="grp-dc">V</th>`;
       }
+      r2+=`<th class="grp-dc">T</th>`;
     }
-    r1+=`<th rowspan="2" class="grp-dc">T <button id="dcSortBtn" onclick="sortDemandByDC()" title="Sort rows by max D/C ratio" style="padding:1px 5px;font-size:0.68rem;border:1px solid rgba(255,255,255,0.5);border-radius:3px;background:rgba(255,255,255,0.15);color:white;cursor:pointer;">&#x25BC;</button></th>`;
-    r1+=`<th colspan="2" class="grp-status">Status</th>`;
-    r1+=`<th rowspan="2"></th>`;
-    // Row 2
-    r2+=`<th class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>`;
-    r2+=`<th class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small>in</small></th>`;
-    r2+=`<th class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small>ksi</small></th>`;
-    r2+=`<th class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>`;
-    r2+=`<th class="grp-demand">P<sub>u</sub><br><small>kip</small></th>`;
-    r2+=`<th class="grp-demand">M<sub>u</sub><br><small>k-in</small></th>`;
-    r2+=`<th class="grp-demand">V<sub>u</sub><br><small>kip</small></th>`;
-    r2+=`<th class="grp-demand">T<sub>u</sub><br><small>k-in</small></th>`;
-    r2+=`<th class="grp-status">Considered?</th>`;
-    r2+=`<th class="grp-capacity">M<sub>r</sub><br><small>k-in</small></th>`;
-    if(flags.m1) r2+=`<th class="grp-capacity">Simp.<br><small>kip</small></th>`;
-    if(flags.m2) r2+=`<th class="grp-capacity">GP<br><small>kip</small></th>`;
-    if(flags.m3) r2+=`<th class="grp-capacity">B5<br><small>kip</small></th>`;
-    r2+=`<th class="grp-capacity">T<sub>r</sub><br><small>k-in</small></th>`;
-    // Row 2 D/C sub-headers (M and T are rowspan=2, so only Shear sub-cols here)
-    if(flags.longReinf){
-      r2+=`<th class="grp-dc">V</th>`;
-      r2+=`<th class="grp-dc" style="background:#6c3483">Long.</th>`;
-    }
-    // (if no longReinf, V is rowspan=2 already — no row 2 cell needed)
-    r2+=`<th class="grp-status">Flex.</th>`;
-    r2+=`<th class="grp-status">Shear</th>`;
+    r2+=`<th${rs2} class="grp-status">Flex.</th>`;
+    r2+=`<th${rs2} class="grp-status">Shear</th>`;
   } else {
     // Service subtab
     r1+=`<th rowspan="2">#</th>`;
@@ -2370,7 +2420,8 @@ function rebuildDemandThead(){
     r2+=`<th class="grp-service">M<sub>s</sub><br><small>k-in</small></th>`;
     r2+=`<th class="grp-status">Crack</th>`;
   }
-  thead.innerHTML=`<tr>${r1}</tr><tr>${r2}</tr>`;
+  thead.innerHTML=`<tr>${r1}</tr><tr>${r2}</tr>${r3?`<tr>${r3}</tr>`:''}`;
+
 }
 function applyDemandColVisibility(){
   const flags=getDemandShearFlags();
@@ -2543,7 +2594,9 @@ function buildInputsFromState(state){
   const gamma_e=num(inp.gamma_e,0.75);
   const codeEdition=inp.codeEdition||'CA';
   const sectionClass=inp.sectionClass||'CIP_PT';
-  const Ec = inp.Ec_ovr ? num(inp.Ec_val) : 2500*Math.pow(fc,0.33);
+  const K1 = num(inp.K1_val, 1.0);
+  const wc = inp.wc_ovr ? num(inp.wc_val, 0.145) : computeWc(fc);
+  const Ec = inp.Ec_ovr ? num(inp.Ec_val) : computeEcAASHTO(fc, K1, wc);
   const fpy = inp.fpy_ovr ? num(inp.fpy_val) : 0.9*fpu;
   let ecl;
   if(inp.ecl_ovr) ecl = num(inp.ecl_val,0.002);
@@ -2593,7 +2646,8 @@ function buildInputsFromState(state){
   const mr_rows_bot=resolveArr(mrArrs.bot);
   const As_top_ovr=mr_rows_top?mr_rows_top.reduce((s,r)=>s+r.As,0):null;
   const As_bot_ovr=mr_rows_bot?mr_rows_bot.reduce((s,r)=>s+r.As,0):null;
-  return {fc,fy,Ec,Es,fpu,fpy,Ept,ecl,etl,ecl_override:!!inp.ecl_ovr,etl_override:!!inp.etl_ovr,
+  const concType=inp.concType||'NORMAL';
+  return {fc,fy,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override:!!inp.ecl_ovr,etl_override:!!inp.etl_ovr,
     ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,
     nStrands,strand_area,dp,fpe,ductDia,
@@ -3374,6 +3428,9 @@ function fixDemandStickyHeader(){
 
 /* ====== HELPERS ====== */
 const V=id=>{const el=document.getElementById(id);const v=parseFloat(el.value);return isNaN(v)?0:v;};
+// AASHTO 5.4.2.4-1 helpers (shared between gatherInputs, buildInputsFromState, PT tab):
+function computeWc(fc){ return fc<=5 ? 0.145 : 0.140 + 0.001*fc; }              // kcf
+function computeEcAASHTO(fc, K1, wc){ return 120000*K1*wc*wc*Math.pow(fc,0.33); } // ksi
 const F=(v,d=2)=>isFinite(v)?v.toFixed(d):'—';
 const R=(l,v,u='')=>`<div class="result-row"><span class="result-label">${l}</span><span class="result-value">${v}<span class="result-unit">${u}</span></span></div>`;
 const BG=(ok,y='PASS',n='FAIL')=>ok?`<span class="badge badge-pass">${y}</span>`:`<span class="badge badge-fail">${n}</span>`;
@@ -3420,10 +3477,24 @@ function gatherInputs(){
   const fc=V('fc'),fy=V('fy'),fy_trans=V('fy_trans'),Es=V('Es'),fpu=V('fpu'),Ept=V('Ept'),ag=V('ag'),lam=V('lambda'),phi_v=V('phi_v'),gamma_e=parseFloat(document.getElementById('gamma_e').value);
   const codeEdition=document.getElementById('codeEdition').value;
   const sectionClass=document.getElementById('sectionClass').value;
-  // Ec
+  // Unit weight wc (kcf) — auto from f'c rule unless override
+  const wcEl=document.getElementById('wc');
+  const wcNoteEl=document.getElementById('wcNote');
+  let wc;
+  if(document.getElementById('wc_ovr').checked){
+    wc=V('wc'); wcEl.readOnly=false; wcEl.classList.remove('auto-calc');
+  } else {
+    wc=computeWc(fc); wcEl.value=wc.toFixed(3); wcEl.readOnly=true; wcEl.classList.add('auto-calc');
+    if(wcNoteEl) wcNoteEl.innerHTML = (fc<=5)
+      ? "0.145 (f'<sub>c</sub> &le; 5 ksi)"
+      : "0.140 + 0.001&middot;f'<sub>c</sub>";
+  }
+  // K1 (default 1.0 if blank)
+  const K1 = V('K1') || 1.0;
+  // Ec — AASHTO 5.4.2.4-1
   const ecEl=document.getElementById('Ec');
   let Ec; if(document.getElementById('Ec_ovr').checked){ Ec=V('Ec'); ecEl.readOnly=false; ecEl.classList.remove('auto-calc'); }
-  else { Ec=2500*Math.pow(fc,0.33); ecEl.value=Ec.toFixed(1); ecEl.readOnly=true; ecEl.classList.add('auto-calc'); }
+  else { Ec=computeEcAASHTO(fc,K1,wc); ecEl.value=Ec.toFixed(1); ecEl.readOnly=true; ecEl.classList.add('auto-calc'); }
   // fpy
   const fpyEl=document.getElementById('fpy');
   let fpy; if(document.getElementById('fpy_ovr').checked){ fpy=V('fpy'); fpyEl.readOnly=false; fpyEl.classList.remove('auto-calc'); }
@@ -3518,7 +3589,8 @@ function gatherInputs(){
       if(inp) factor_overrides[key]=parseFloat(inp.value)||0;
     }
   });
-  return {fc,fy,fy_trans,Ec,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
+  const concType=document.getElementById('concType').value;
+  return {fc,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
     astm_spec,factor_overrides,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,nStrands,strand_area,dp,fpe,ductDia:ductDia,
     shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,at_add_bar_N,s_at_add,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
@@ -3570,9 +3642,18 @@ function runAllCalculations(){
         res.row_results.forEach((cap,i)=>{
           const n=i+1;
           document.getElementById('cap_Mr_'+n).textContent=F(cap.Mr,0);
-          document.getElementById('cap_Vr1_'+n).textContent=F(cap.Vr1,0);
-          document.getElementById('cap_Vr2_'+n).textContent=F(cap.Vr2,0);
-          document.getElementById('cap_Vr3_'+n).textContent=F(cap.Vr3,0);
+          // Vr cells with capped marker (†) and tooltip when Vnmax governs
+          const setCapVr=(id,val,capped,uncapped)=>{
+            const el=document.getElementById(id);
+            el.textContent=F(val,0)+(capped?' †':'');
+            el.title=capped
+              ? `V_n,max governs: V_c+V_s+V_p = ${F(uncapped,1)} kip > V_n,max = ${F(cap.Vnmax,1)} kip → V_r capped at φ·V_n,max (AASHTO 5.7.3.3-2)`
+              : '';
+            el.classList.toggle('cap-cell-vnmax',capped);
+          };
+          setCapVr('cap_Vr1_'+n,cap.Vr1,cap.Vn1_capped,cap.Vn1_uncapped);
+          setCapVr('cap_Vr2_'+n,cap.Vr2,cap.Vn2_capped,cap.Vn2_uncapped);
+          setCapVr('cap_Vr3_'+n,cap.Vr3,cap.Vn3_capped,cap.Vn3_uncapped);
           document.getElementById('cap_Tr_'+n).textContent=F(cap.Tr,0);
           setDC(n,'M',demandRows[i].Mu,cap.Mr);
           setDCShear(n,demandRows[i].Vu,cap.Vr1,cap.Vr2,cap.Vr3);
@@ -3584,14 +3665,24 @@ function runAllCalculations(){
           stFlex.textContent=cap.flexStatus; stFlex.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stFlex.classList.add(cap.flexStatus==='OK'?'dc-ok':'dc-fail');
           stShear.textContent=cap.shearStatus==='NR'?'N/R':cap.shearStatus;
           stShear.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stShear.classList.add(cap.shearStatus==='OK'||cap.shearStatus==='NR'?'dc-ok':'dc-fail');
+          // Over-reinforced indicator for the SELECTED shear method
+          let selCapped=false, selUncapped=0;
+          if(shearCapacityMethod==='simp'){ selCapped=cap.Vn1_capped; selUncapped=cap.Vn1_uncapped; }
+          else if(shearCapacityMethod==='b5'){ selCapped=cap.Vn3_capped; selUncapped=cap.Vn3_uncapped; }
+          else { selCapped=cap.Vn2_capped; selUncapped=cap.Vn2_uncapped; }
+          if(selCapped){
+            stShear.textContent+=' • Over-reinf.';
+            stShear.title=`Over-reinforced for shear (${shearCapacityMethod.toUpperCase()}): V_c+V_s+V_p = ${F(selUncapped,1)} kip > V_n,max = ${F(cap.Vnmax,1)} kip. V_r capped at φ·V_n,max per AASHTO 5.7.3.3-2.`;
+            stShear.classList.remove('dc-ok'); stShear.classList.add('dc-warn');
+          }
           // Add shear reinforcement warning
           if(cap.shReqd && !cap.hasMinAv){
             stShear.textContent+=' ⚠';
             stShear.title='Transverse reinforcement required per AASHTO 5.7.2.3 but min Av not provided';
-            stShear.classList.remove('dc-ok');stShear.classList.add('dc-fail');
-          } else if(cap.shReqd && cap.shearStatus==='OK'){
+            stShear.classList.remove('dc-ok','dc-warn');stShear.classList.add('dc-fail');
+          } else if(cap.shReqd && cap.shearStatus==='OK' && !selCapped){
             stShear.title='Transverse reinforcement required per AASHTO 5.7.2.3 — provided OK';
-          } else if(!cap.shReqd){
+          } else if(!cap.shReqd && !selCapped){
             stShear.title='Shear reinforcement not required (Vu ≤ 0.5φ(Vc+Vp))';
           }
           const stTors=document.getElementById('st_tors_'+n);
@@ -3815,14 +3906,28 @@ function renderShear(sh,inp,dem){
   o+=R('&beta;','2.0');
   o+=R('V<sub>c</sub> = 0.0316&beta;&lambda;&radic;f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub> <small>(5.7.3.3-3)</small>',F(sh.Vc1,2),'kip');
   o+=R('V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot&theta;/s&middot;&lambda;<sub>duct</sub> <small>(C5.7.3.3-1)</small>',F(sh.Vs1,2),'kip');
-  o+=R('V<sub>n</sub> = V<sub>c</sub>+V<sub>s</sub>+V<sub>p</sub> <small>(5.7.3.3-1)</small>',F(sh.Vn1,2),'kip');
+  o+=R('V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> (calculated)',F(sh.Vn1_uncapped,2),'kip');
   o+=R('V<sub>n,max</sub> = 0.25f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub>+V<sub>p</sub> <small>(5.7.3.3-2)</small>',F(sh.Vnmax,2),'kip');
+  if(sh.Vn1_capped){
+    o+=`<div class="vnmax-cap-warn">&#9888; V<sub>c</sub>+V<sub>s</sub>+V<sub>p</sub> = ${F(sh.Vn1_uncapped,2)} kip &gt; V<sub>n,max</sub> = ${F(sh.Vnmax,2)} kip &rarr; <b>V<sub>n,max</sub> GOVERNS</b> (section is over-reinforced for shear by Method 1)</div>`;
+    o+=R('V<sub>n</sub> = V<sub>n,max</sub>',F(sh.Vn1,2)+' <span class="badge-capped">CAPPED</span>','kip');
+  } else {
+    o+=R('V<sub>n</sub> = V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> <small>(5.7.3.3-1)</small>',F(sh.Vn1,2),'kip');
+  }
   o+=R('<b>V<sub>r</sub> = &phi;V<sub>n</sub></b>',F(sh.Vr1,2),'kip');
   o+=R('V<sub>u</sub>',F(Vu,2),'kip');
   o+=R('V<sub>r</sub> &ge; V<sub>u</sub>',BG(sh.Vr1>=Math.abs(Vu)));
   document.getElementById('shearSimple').innerHTML=o;
 
   o='';
+  // Over-reinforced banner if any method is governed by Vnmax
+  const cappedMethods=[];
+  if(sh.Vn1_capped) cappedMethods.push('Method 1 (Simplified)');
+  if(sh.Vn2_capped) cappedMethods.push('Method 2 (GP)');
+  if(sh.b5_valid && sh.Vn3_capped) cappedMethods.push('Method 3 (B5)');
+  if(cappedMethods.length>0){
+    o+=`<div class="shear-overreinf-banner">&#9888; <b>Section is over-reinforced for shear</b> &mdash; V<sub>n,max</sub> governs for: ${cappedMethods.join(', ')}. V<sub>r</sub> is capped at &phi;&middot;V<sub>n,max</sub> per AASHTO 5.7.3.3-2; adding more shear reinforcement will not increase capacity.</div>`;
+  }
   o+=R('M<sub>u</sub>',F(Mu,1),'kip-in');
   o+=R('N<sub>u</sub> (P<sub>u</sub>) <small>+tension</small>',F(Pu,1),'kip');
   o+=R('V<sub>u</sub>',F(Vu,1),'kip');
@@ -3863,7 +3968,14 @@ function renderShear(sh,inp,dem){
   o+=R('&theta; = 29+3500&epsilon;<sub>s</sub> <small>(5.7.3.4.2-3)</small>',F(sh.th2,2),'&deg;');
   o+=R('V<sub>c</sub> <small>(5.7.3.3-3)</small>',F(sh.Vc2,2),'kip');
   o+=R('V<sub>s</sub> <small>(C5.7.3.3-1)</small>',F(sh.Vs2,2),'kip');
-  o+=R('V<sub>n</sub> <small>(5.7.3.3-1)</small>',F(sh.Vn2,2),'kip');
+  o+=R('V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> (calculated)',F(sh.Vn2_uncapped,2),'kip');
+  o+=R('V<sub>n,max</sub> = 0.25f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub>+V<sub>p</sub> <small>(5.7.3.3-2)</small>',F(sh.Vnmax,2),'kip');
+  if(sh.Vn2_capped){
+    o+=`<div class="vnmax-cap-warn">&#9888; V<sub>c</sub>+V<sub>s</sub>+V<sub>p</sub> = ${F(sh.Vn2_uncapped,2)} kip &gt; V<sub>n,max</sub> = ${F(sh.Vnmax,2)} kip &rarr; <b>V<sub>n,max</sub> GOVERNS</b> (section is over-reinforced for shear by Method 2)</div>`;
+    o+=R('V<sub>n</sub> = V<sub>n,max</sub>',F(sh.Vn2,2)+' <span class="badge-capped">CAPPED</span>','kip');
+  } else {
+    o+=R('V<sub>n</sub> = V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> <small>(5.7.3.3-1)</small>',F(sh.Vn2,2),'kip');
+  }
   o+=R('<b>V<sub>r</sub> = &phi;V<sub>n</sub></b>',F(sh.Vr2,2),'kip');
   o+=R('V<sub>r</sub> &ge; V<sub>u</sub>',BG(sh.Vr2>=Math.abs(Vu)));
   document.getElementById('shearGeneral').innerHTML=o;
@@ -3897,7 +4009,14 @@ function renderShear(sh,inp,dem){
     o+=SH('Results');
     o+=R('V<sub>c</sub> = 0.0316&beta;&lambda;&radic;f\'<sub>c</sub>&middot;b<sub>v</sub>&middot;d<sub>v</sub>',F(sh.Vc3,2),'kip');
     o+=R('V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>/s&middot;cot&theta;',F(sh.Vs3,2),'kip');
-    o+=R('V<sub>n</sub>',F(sh.Vn3,2),'kip');
+    o+=R('V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> (calculated)',F(sh.Vn3_uncapped,2),'kip');
+    o+=R('V<sub>n,max</sub> = 0.25f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub>+V<sub>p</sub> <small>(5.7.3.3-2)</small>',F(sh.Vnmax,2),'kip');
+    if(sh.Vn3_capped){
+      o+=`<div class="vnmax-cap-warn">&#9888; V<sub>c</sub>+V<sub>s</sub>+V<sub>p</sub> = ${F(sh.Vn3_uncapped,2)} kip &gt; V<sub>n,max</sub> = ${F(sh.Vnmax,2)} kip &rarr; <b>V<sub>n,max</sub> GOVERNS</b> (section is over-reinforced for shear by Method 3)</div>`;
+      o+=R('V<sub>n</sub> = V<sub>n,max</sub>',F(sh.Vn3,2)+' <span class="badge-capped">CAPPED</span>','kip');
+    } else {
+      o+=R('V<sub>n</sub> = V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub>',F(sh.Vn3,2),'kip');
+    }
     o+=R('<b>V<sub>r</sub> = &phi;V<sub>n</sub></b>',F(sh.Vr3,2),'kip');
     o+=R('V<sub>r</sub> &ge; V<sub>u</sub>',BG(sh.Vr3>=Math.abs(Vu)));
   }
@@ -4795,7 +4914,11 @@ function runPtCalc(){
   }
   const Ep=V('Ept')||28500;
   const fci=V('pt_fci')||4;
-  const Eci=33*Math.pow(150,1.5)*Math.sqrt(fci);  // AASHTO 5.4.2.4 (normal weight)
+  // E_ci per AASHTO 5.4.2.4-1 using current w_c (kcf) and K1 from Material Properties
+  const _K1_pt = V('K1') || 1.0;
+  const _wcEl = document.getElementById('wc');
+  const _wc_pt = parseFloat(_wcEl && _wcEl.value) || computeWc(V('fc'));
+  const Eci = computeEcAASHTO(fci, _K1_pt, _wc_pt);
 
   const ptInputs={
     spans: spans,
@@ -5253,8 +5376,14 @@ function generateReport(){
     h2+=`<h2>1 &mdash; Section Properties &amp; Material Inputs</h2>`;
     h2+=`<h3>1.1 Material Properties</h3>`;
     h2+=RR("Concrete compressive strength, f'<sub>c</sub>",F(fc,2),'ksi');
+    const _wcRpt = (inp.wc != null) ? inp.wc : 0.145;
+    const _K1Rpt = (inp.K1 != null) ? inp.K1 : 1.0;
+    h2+=RR('Concrete unit weight, w<sub>c</sub>',F(_wcRpt,3),'kcf');
+    h2+=RR('Aggregate correction factor, K<sub>1</sub>',F(_K1Rpt,2));
     h2+=RR('Modulus of elasticity, E<sub>c</sub>',F(Ec,1),'ksi');
-    h2+=REQ("E<sub>c</sub> = 2500 f'<sub>c</sub><sup>0.33</sup> &nbsp; "+RREF('AASHTO 5.4.2.4-1'));
+    h2+=REQ("E<sub>c</sub> = 120000&middot;K<sub>1</sub>&middot;w<sub>c</sub><sup>2</sup>&middot;f'<sub>c</sub><sup>0.33</sup> = 120000&middot;"
+      +F(_K1Rpt,2)+"&middot;("+F(_wcRpt,3)+")<sup>2</sup>&middot;("+F(fc,2)+")<sup>0.33</sup> = "+F(Ec,1)+" ksi &nbsp; "
+      +RREF('AASHTO 5.4.2.4-1'));
     h2+=RR('Steel yield strength, f<sub>y</sub>',F(fy,1),'ksi');
     h2+=RR('Steel modulus, E<sub>s</sub>',F(Es,0),'ksi');
     h2+=RR('Concrete density factor, &lambda;',F(lam,2));

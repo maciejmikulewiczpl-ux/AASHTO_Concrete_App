@@ -3,6 +3,30 @@
 ## Overview
 All work on this codebase is protected against accidental deletion or loss. This document outlines the protection mechanisms and best practices.
 
+## Code Safety Policy (For All Development Tools)
+
+### Requirements for All Changes
+This policy applies to **all contributors** including Claude Code, GitHub Copilot, and human developers:
+
+1. **No Code Removal** — Existing code is never deleted or removed. Changes only add to or modify existing logic; nothing is taken away.
+
+2. **No Unintended Side Effects** — Before making any change, verify that it does not affect other calculations, formulas, or UI outputs. This is a structural/concrete engineering calculation app where unintended side effects could compromise design safety.
+
+3. **Notify Before Proceeding** — If a requested change **would** alter other calculations or outcomes (even indirectly), stop and notify the user with a clear description of what would be affected. Do not proceed without explicit approval.
+
+### When This Applies
+- Adding new features
+- Bug fixes and refinements
+- UI/UX improvements
+- Refactoring
+- Any modification to calculation logic
+
+### Examples
+✅ **Allowed**: Add a new input field for a missing AASHTO parameter without touching existing formula code  
+✅ **Allowed**: Modify an equation's variable name if you also update all references throughout  
+❌ **Not Allowed**: Delete unused helper functions without explicit approval  
+❌ **Not Allowed**: "Simplify" a calculation that affects other dependent formulas without notifying user first
+
 ## Protections in Place
 
 ### 1. **Git Hooks - Pre-Commit Protection** ✅
@@ -136,5 +160,5 @@ For any questions about protecting code or recovering changes:
 
 ---
 
-**Last Updated**: May 1, 2026  
+**Last Updated**: May 4, 2026  
 **Protection Level**: Full (Git hooks + GitHub backup + Commit standards)

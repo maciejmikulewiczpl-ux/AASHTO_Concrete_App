@@ -172,6 +172,11 @@ def get_phi_flex(code_edition, section_class, eps_t, ecl, etl):
 
 # ─── Derived Constants ──────────────────────────────────────────────
 
+def _ec_aashto(fc, K1=1.0, wc=0.145):
+    """AASHTO LRFD 5.4.2.4-1: Ec = 120000 * K1 * wc^2 * f'c^0.33  (ksi; wc in kcf)."""
+    return 120000.0 * K1 * (wc ** 2) * (fc ** 0.33)
+
+
 def derive_constants(I):
     """Compute derived constants from raw inputs and attach to I dict."""
     # Backward compatibility: if caller passes fy (old format), split into fy_long / fy_trans
@@ -184,6 +189,10 @@ def derive_constants(I):
     fy_long = I["fy_long"]
     fy_trans = I["fy_trans"]
     Es = I["Es"]
+    # Concrete unit weight wc (kcf) and AASHTO 5.4.2.4 K1 — defaults match
+    # normal-weight concrete at the AASHTO simplification (≈ 2523·f'c^0.33).
+    I["K1"] = I.get("K1", 1.0)
+    I["wc"] = I.get("wc", 0.145)
     Ec = I["Ec"]
     fpu = I["fpu"]
     fpy = I["fpy"]
@@ -2020,7 +2029,7 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Act_gp = b * hf_bot + bw * max(h / 2 - hf_bot, 0)
     else:
         Act_gp = b * hf_top + bw * max(h / 2 - hf_top, 0)
-    Ec_gp = Ec if Ec > 0 else 2500 * fc ** 0.33
+    Ec_gp = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
 
     # Min Av (needed before eps_s for denominator factor)
     # When no stirrups are provided (Av=0 or s_shear=0), has_min_av is always False
@@ -2053,7 +2062,9 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     Vc1 = 0.0316 * bt1 * lam * math.sqrt(fc) * bv * dv if fc > 0 else 0
     Vs1 = Av * fy_trans * dv * lambda_duct / math.tan(math.radians(th1)) / s_shear if s_shear > 0 else 0
     Vnmax = 0.25 * fc * bv * dv + Vp
-    Vn1 = min(Vc1 + Vs1 + Vp, Vnmax)
+    Vn1_uncapped = Vc1 + Vs1 + Vp
+    Vn1_capped = Vn1_uncapped > Vnmax
+    Vn1 = min(Vn1_uncapped, Vnmax)
     Vr1 = phi_v * Vn1
 
     # METHOD 2: General Procedure
@@ -2063,7 +2074,9 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     th2 = 29 + 3500 * eps_s
     Vc2 = 0.0316 * bt2 * lam * math.sqrt(fc) * bv * dv if fc > 0 else 0
     Vs2 = Av * fy_trans * dv * lambda_duct / math.tan(math.radians(th2)) / s_shear if s_shear > 0 and th2 > 0 else 0
-    Vn2 = min(Vc2 + Vs2 + Vp, Vnmax)
+    Vn2_uncapped = Vc2 + Vs2 + Vp
+    Vn2_capped = Vn2_uncapped > Vnmax
+    Vn2 = min(Vn2_uncapped, Vnmax)
     Vr2 = phi_v * Vn2
 
     # METHOD 3: Appendix B5 Iterative
@@ -2096,7 +2109,7 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         b5_ex_neg_recalc_iter = False
         denom_used = b5denom
         if ex < 0:
-            Ec_val = Ec if Ec > 0 else 2500 * fc ** 0.33
+            Ec_val = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
             b5denom_neg = 2 * (Ec_val * Act + denom)
             ex = ex_num / b5denom_neg if b5denom_neg > 0 else 0
             b5_ex_neg_recalc_iter = True
@@ -2121,10 +2134,14 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         th3, bt3 = th_new, bt_new
 
     Vc3, Vs3, Vn3, Vr3 = 0, 0, 0, 0
+    Vn3_uncapped = 0
+    Vn3_capped = False
     if b5_valid:
         Vc3 = 0.0316 * bt3 * lam * math.sqrt(fc) * bv * dv if fc > 0 else 0
         Vs3 = Av * fy_trans * dv * lambda_duct / math.tan(math.radians(th3)) / s_shear if s_shear > 0 and th3 > 0 else 0
-        Vn3 = min(Vc3 + Vs3 + Vp, Vnmax)
+        Vn3_uncapped = Vc3 + Vs3 + Vp
+        Vn3_capped = Vn3_uncapped > Vnmax
+        Vn3 = min(Vn3_uncapped, Vnmax)
         Vr3 = phi_v * Vn3
 
     # ─── Shear Breakdown Instrumentation ────
@@ -2301,15 +2318,18 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         "Av_min": Av_min, "has_min_av": has_min_av,
         # Method 1
         "th1": th1, "bt1": bt1, "Vc1": Vc1, "Vs1": Vs1, "Vn1": Vn1, "Vr1": Vr1,
+        "Vn1_uncapped": Vn1_uncapped, "Vn1_capped": Vn1_capped,
         # Method 2
         "bt2a": bt2a, "bt2b": bt2b, "bt2": bt2, "th2": th2,
         "Vc2": Vc2, "Vs2": Vs2, "Vn2": Vn2, "Vr2": Vr2,
+        "Vn2_uncapped": Vn2_uncapped, "Vn2_capped": Vn2_capped,
         # Method 3
         "th3": th3, "bt3": bt3, "ex_b5": ex_b5, "n_iter": n_iter, "b5_valid": b5_valid,
         "vu_b5": vu_b5, "vufc": vufc, "Act": Act, "b5_max_ex": b5_max_ex,
         "b5_ex_num": b5_ex_num, "b5_denom_used": b5_denom_used,
         "b5_ex_neg_recalc": b5_ex_neg_recalc, "b5_Vterm": b5_Vterm, "b5_cot_th": b5_cot_th,
         "Vc3": Vc3, "Vs3": Vs3, "Vn3": Vn3, "Vr3": Vr3,
+        "Vn3_uncapped": Vn3_uncapped, "Vn3_capped": Vn3_capped,
         # Shear reinf checks
         "sh_reqd": sh_reqd,
         "sh_reqd1": abs(Vu) > 0.5 * phi_v * (Vc1 + Vp) or torsion_consider,
@@ -2626,7 +2646,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
             Act_row = b * hf_bot + bw * max(h / 2 - hf_bot, 0)
         else:
             Act_row = b * hf_top + bw * max(h / 2 - hf_top, 0)
-        Ec_row = Ec if Ec > 0 else 2500 * fc ** 0.33
+        Ec_row = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
         denom_neg = (2 * (Es * As + Ept * Aps_tens) + Ec_row * Act_row) if has_min_av else (Es * As + Ept * Aps_tens + Ec_row * Act_row)
         eps_s = (Mu_c / dv + 0.5 * Pu + abs(V_strain - Vp) - Aps_tens * fpo) / denom_neg if denom_neg > 0 else 0
         eps_s = max(eps_s, -0.0004)
@@ -2639,14 +2659,18 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
     # Method 1
     Vc1 = 0.0316 * 2 * lam * math.sqrt(fc) * bv * dv if fc > 0 else 0
     Vs1 = Av * fy_trans * dv * lambda_duct / math.tan(math.radians(45)) / s_shear if s_shear > 0 else 0
-    Vr1 = phi_v * min(Vc1 + Vs1 + Vp, Vnmax)
+    Vn1_uncapped = Vc1 + Vs1 + Vp
+    Vn1_capped = Vn1_uncapped > Vnmax
+    Vr1 = phi_v * min(Vn1_uncapped, Vnmax)
 
     # Method 2
     bt2 = 4.8 / (1 + 750 * eps_s) if has_min_av else 4.8 / (1 + 750 * eps_s) * 51 / (39 + sxe)
     th2 = 29 + 3500 * eps_s
     Vc2 = 0.0316 * bt2 * lam * math.sqrt(fc) * bv * dv if fc > 0 else 0
     Vs2 = Av * fy_trans * dv * lambda_duct / math.tan(math.radians(th2)) / s_shear if s_shear > 0 and th2 > 0 else 0
-    Vr2 = phi_v * min(Vc2 + Vs2 + Vp, Vnmax)
+    Vn2_uncapped = Vc2 + Vs2 + Vp
+    Vn2_capped = Vn2_uncapped > Vnmax
+    Vr2 = phi_v * min(Vn2_uncapped, Vnmax)
 
     # Method 3
     vu_b5 = abs(Vu - phi_v * Vp) / (phi_v * bv * dv) if (phi_v * bv * dv) > 0 else 0
@@ -2666,7 +2690,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         b5denom = 2 * denom if has_min_av else denom
         ex = ex_num / b5denom if b5denom > 0 else 0
         if ex < 0:
-            Ec_val = Ec if Ec > 0 else 2500 * fc ** 0.33
+            Ec_val = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
             b5denom_neg = 2 * (Ec_val * Act + denom)
             ex = ex_num / b5denom_neg if b5denom_neg > 0 else 0
         if ex > b5_max_ex:
@@ -2682,10 +2706,14 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
             break
         th3, bt3 = th_new, bt_new
     Vr3 = 0
+    Vn3_uncapped = 0
+    Vn3_capped = False
     if b5_valid:
         Vc3 = 0.0316 * bt3 * lam * math.sqrt(fc) * bv * dv if fc > 0 else 0
         Vs3 = Av * fy_trans * dv * lambda_duct / math.tan(math.radians(th3)) / s_shear if s_shear > 0 and th3 > 0 else 0
-        Vr3 = phi_v * min(Vc3 + Vs3 + Vp, Vnmax)
+        Vn3_uncapped = Vc3 + Vs3 + Vp
+        Vn3_capped = Vn3_uncapped > Vnmax
+        Vr3 = phi_v * min(Vn3_uncapped, Vnmax)
 
     # Torsion geometry (matches compute_torsion_threshold / do_torsion)
     if is_rect:
@@ -2862,6 +2890,10 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
 
     return {
         "Mr": Mr_signed, "Vr1": Vr1, "Vr2": Vr2, "Vr3": Vr3, "Tr": Tr,
+        "Vnmax": Vnmax,
+        "Vn1_uncapped": Vn1_uncapped, "Vn1_capped": Vn1_capped,
+        "Vn2_uncapped": Vn2_uncapped, "Vn2_capped": Vn2_capped,
+        "Vn3_uncapped": Vn3_uncapped, "Vn3_capped": Vn3_capped,
         "crackStatus": crack_status, "flexStatus": flex_status, "shearStatus": shear_status,
         "torsionConsider": torsion_consider_row,
         "shReqd": sh_reqd, "hasMinAv": has_min_av,
@@ -2968,6 +3000,7 @@ def calculate_all(raw_inputs, demand_rows, active_row_idx):
     return {
         "inputs": {
             "Ec": Ec, "Es": I["Es"], "fpy": fpy,
+            "wc": I.get("wc", 0.145), "K1": I.get("K1", 1.0),
             "h": I["h"], "b": I["b"], "cover": I["cover"],
             "dp": I["dp"],
             "hf_top": I.get("hf_top", 0), "hf_bot": I.get("hf_bot", 0),

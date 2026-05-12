@@ -1,2 +1,8 @@
-pywebview
+# Pinned versions — do NOT remove version pins.
+# pywebview 4.x uses winforms/pythonnet on Windows; 5.x changed the backend.
+# pythonnet 3.0.x is compatible with pywebview 4.x and Python 3.12.
+# Pinning prevents silent breaking upgrades when rebuilding.
+pywebview==4.0
+pythonnet==3.0.5
+pyinstaller==6.20.0
 pytest

@@ -7,11 +7,14 @@ __pycache__/
 .venv/
 venv/
 env/
+.build_venv/
+.build_python/
 
 # Build artifacts
 build/
 dist/
 *.spec
+AASHTO_Concrete_App_release.zip
 
 # Documents
 *.pdf
@@ -21,3 +24,4 @@ dist/
 # Chat/debug
 chat.json
 verify_out.txt
+verification_report*.txt
