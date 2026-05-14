@@ -1,5 +1,87 @@
 # AASHTO Concrete App - Recent Fixes & Testing Guide
 
+---
+
+## AASHTO Citation Audit — completed 2026-05-14 (D1–D20)
+
+A 20-decision audit started on 2026-05-13 and finalized on 2026-05-14, covering
+every AASHTO citation in `calc_engine.py`, `pt_engine.py`, and `index.html`.
+All decisions implemented; full test suite (17 stages, 233 pytest cases + 6
+verification scripts) PASSES.
+
+**Calculation changes (numerical impact):**
+
+| # | Change | Impact |
+|---|---|---|
+| D1 | Eq. 5.7.3.6.3-1 Nu term: `ld_N = 0.5·Pu/φ_for_N` where φ = φ_c when Pu<0 (compression), φ_f when Pu>0 (tension). | Tension cases shift slightly (favorable, since φ_f ≥ φ_c); compression unchanged. |
+| D3/D4 | `fr = 0.24·λ·√fc'` (per AASHTO 5.4.2.6). λ multiplier was missing. | Lightweight concrete: lower Mcr, lower service stress threshold, slightly different εs. NW unchanged. |
+| D15 | `Av_min` and `min_trans = 0.0316·λ·√fc'·bv·s/fy` (per 5.7.2.5-1). λ missing. 3 sites. | Lightweight: easier to satisfy min transverse. NW unchanged. |
+| D17 | I-section torsion: `Tcr` uses full Acp/pc; `Ao` uses web-only sub-section (Acp_web=bw·h, pc_web=2(bw+h), be_web=Acp_web/pc_web, Ao=(bw−be_web)·(h−be_web)). 3 sites. Drops the previous `max(...)` heuristic. | I-section with torsion considered: lower Ao → lower Tn → higher torsion utilization (more conservative). Rectangular unchanged. |
+| D19 | `lookup_b5` invalidates Method 3 for ANY out-of-bounds input (vu/fc, sxe, εx<−0.20) instead of silently clamping; reason string surfaces in the report. | Method 3 may now be flagged "not applicable" in cases that previously got an extrapolated edge-value answer. Methods 1 and 2 unchanged. |
+
+**Display/UI changes:**
+
+- D2 — Eq. 5.7.3.6.3-1 breakdown now shows the actual φ value used per term (φ_f, φ_v, sign-dependent φ for N).
+- D8 — Expanded I-section warning in the torsion report (covers Veff, Ao, Eq. 5.7.3.6.3-2 box-only, plus the I-section-as-solid assumption).
+- D16 — HTML "min transverse" check (inline + PDF report) now compares against `Av + 2·At` (additional torsion stirrups normalized to s_shear), not just Av. Label was already "Av+2At required" but the prior check ignored At.
+- D18 — Torsion report explicitly states the Tcr-full / Tn-web split for I-sections.
+
+**Doc-only:**
+
+- D5/D6/D7 — kc per AASHTO 10th Ed §5.6.4.4 confirmed identical to α₁ per §5.6.2.2; comment strengthened.
+- D9 — `get_phi_flex` docstring documents the bonded-PT assumption (engine has no bond-type input; users with unbonded PT must override φ_f).
+- D10/D11/D12 — AASHTO + Caltrans `get_phi_flex` curves verified correct under the bonded assumption. No formula change.
+- D13/D14 — γ1 (1.6 default) and γ2 (1.1 default) comments strengthened with override notes (segmental → 1.2; unbonded → 1.0).
+- D20 — B5 tables block tagged as AASHTO LRFD 10th Ed Tables B5.2-1 / B5.2-2; full transcription verified cell-by-cell against PDF (all 320 values match).
+
+**New pinning tests (in `tests/test_invariants.py`):**
+
+- `test_fr_scales_with_lambda` — verifies D3/D4
+- `test_av_min_scales_with_lambda` — verifies D15
+- `test_long_comb_Nu_phi_sign_dependent` — verifies D1
+
+**Modified test (boundary-case adjustment):**
+
+- `test_lightweight_concrete_reduces_Vc` — now uses #5 stirrups so both NW and LW cases stay on the same side of the has_min_av boundary. With D15 making Av_min itself λ-dependent, the prior fixture (default #4 stirrups) inadvertently straddled the boundary, causing β to invert via the General Procedure. Behavior change is real and correct.
+
+**Files NOT touched in this audit:** `pt_engine.py`, `api.py`, `app.py`, the verification scripts at project root.
+
+---
+
+## CRITICAL REGRESSION GUARD — Al box-section checks (2026-05-13)
+
+> **DO NOT re-add `Al_tors`, `Al_min`, `Al_gov` or any AASHTO Eq. 5.7.3.6.3-2 implementation to `do_torsion` in `calc_engine.py`.** This has now been removed **TWICE**. See full details in `CODE_PROTECTION.md` § "Removed checks — DO NOT re-add".
+
+**Why they keep getting added back**
+
+AASHTO LRFD 5.7.3.6 talks about both transverse (At) and longitudinal (Al) torsion reinforcement. When an AI assistant or engineer reads §5.7.3.6 with a checklist mindset, the Al equations look "missing" and there's a temptation to add them. They are NOT missing — they are intentionally absent because this app does not model box sections.
+
+**The cycle so far**
+
+1. **Initial commit `0bd99ec`**: app shipped with `Al_tors`/`Al_min`/`Al_gov` implementing Eq. 5.7.3.6.3-2.
+2. **Commit `7939745`** ("Add longitudinal reinforcement ASTM grade options with gamma3 factors"): the Al block was REMOVED — Eq. 5.7.3.6.3-2 is box-only.
+3. **A prior AI-assisted session**: re-added `Al_tors`/`Al_min`/`Al_gov` while "fixing missing HTML report keys", citing a non-existent "Eq. 5.7.3.6.3-3" for the minimum.
+4. **2026-05-13 (this session)**: removed AGAIN, replaced with an I-section warning + full Eq. 5.7.3.6.3-1 breakdown.
+
+**What is allowed**
+
+- `long_dem_comb`, `long_cap_val`, `long_comb_ok` — the AASHTO **Eq. 5.7.3.6.3-1** combined longitudinal check. **This stays.** It is the AASHTO requirement applicable to solid and I sections.
+- `breakdown_long_comb` — the symbolic+numeric equation breakdown for Eq. 5.7.3.6.3-1.
+- An I-section warning rendered in the torsion report when `secType !== 'RECTANGULAR'` AND `tor.consider === true`.
+
+**What is NOT allowed without explicit user approval**
+
+- Re-introducing `Al_tors`, `Al_min`, `Al_gov` in any form.
+- Implementing AASHTO Eq. 5.7.3.6.3-2 (box-section longitudinal A_l).
+- Inventing a "5.7.3.6.3-3" minimum-Al formula — **no such equation exists** in current AASHTO LRFD.
+- Removing or weakening `tests/test_invariants.py::test_al_keys_removed_from_torsion`.
+
+**Regression test pinning this**
+
+`tests/test_invariants.py::test_al_keys_removed_from_torsion` will FAIL if any of these keys come back. Do not skip or modify this test without owner approval.
+
+---
+
 ## 1. Problem: "None" Shear Reinforcement Breaking Calculations
 
 **Root Cause**: When user selects "None" for shear bar size, the JavaScript sends `shN=0` to Python. However, `calc_engine.py` expects `shN` to be a valid BARS key {2,3,4,5,6,7,8,9,10,11,14,18}. The `.get()` method with default fallback wasn't being reached because the value 0 was invalid.

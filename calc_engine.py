@@ -50,7 +50,11 @@ BARS = {
     18: {"d": 2.257, "a": 4.00},
 }
 
-# ─── AASHTO B5 Tables ──────────────────────────────────────────────
+# ─── AASHTO LRFD 10th Ed Appendix B5 Tables ───────────────────────
+# Tables B5.2-1 (with min transverse reinforcement) and B5.2-2 (without).
+# Full transcription verified cell-by-cell against AASHTO LRFD 10th Ed
+# PDF on 2026-05-14 (audit decision D20). All 320 values match.
+# Used by Method 3 ("Table Method") in do_shear via lookup_b5.
 B5_T1_EX_COLS = [-0.20, -0.10, -0.05, 0, 0.125, 0.25, 0.50, 0.75, 1.00]
 B5_T1_VU_ROWS = [0.075, 0.100, 0.125, 0.150, 0.175, 0.200, 0.225, 0.250]
 B5_T1_THETA = [
@@ -128,20 +132,58 @@ def interp_b5(row_vals, col_vals, theta_grid, beta_grid, row_val, col_val):
 
 
 def lookup_b5(has_min_av, ex, vufc, sxe):
-    """Look up θ and β from AASHTO B5 tables. Returns None if εx exceeds table limits."""
+    """Look up θ and β from AASHTO LRFD 10th Ed Appendix B5 tables.
+
+    Returns dict with either:
+      {'valid': True, 'theta': float, 'beta': float}  — input in-bounds
+      {'valid': False, 'reason': str}                  — input out-of-bounds
+
+    Per audit 2026-05-14 (D19): ANY out-of-bounds input invalidates Method 3.
+    The previous behavior silently clamped vu/fc, sxe, and εx<−0.20 to the
+    table edges; only εx>max_ex was flagged. Silent clamping for vu/fc above
+    the upper bound was the most dangerous case (under-predicted θ).
+    """
     ex1000 = ex * 1000
+    if ex1000 < -0.20:
+        return {'valid': False,
+                'reason': f'εx·1000 = {ex1000:.3f} below table min (−0.20)'}
     if has_min_av:
         if ex1000 > 1.00:
-            return None
-        return interp_b5(B5_T1_VU_ROWS, B5_T1_EX_COLS, B5_T1_THETA, B5_T1_BETA, vufc, ex1000)
+            return {'valid': False,
+                    'reason': f'εx·1000 = {ex1000:.3f} above Table B5.2-1 max (+1.00)'}
+        if vufc < 0.075:
+            return {'valid': False,
+                    'reason': f'vu/fc = {vufc:.3f} below Table B5.2-1 min (0.075)'}
+        if vufc > 0.250:
+            return {'valid': False,
+                    'reason': f'vu/fc = {vufc:.3f} above Table B5.2-1 max (0.250) — section likely overstressed'}
+        result = interp_b5(B5_T1_VU_ROWS, B5_T1_EX_COLS, B5_T1_THETA, B5_T1_BETA, vufc, ex1000)
     else:
         if ex1000 > 2.00:
-            return None
-        return interp_b5(B5_T2_SXE_ROWS, B5_T2_EX_COLS, B5_T2_THETA, B5_T2_BETA, sxe, ex1000)
+            return {'valid': False,
+                    'reason': f'εx·1000 = {ex1000:.3f} above Table B5.2-2 max (+2.00)'}
+        if sxe < 5:
+            return {'valid': False,
+                    'reason': f'sxe = {sxe:.2f} in below Table B5.2-2 min (5 in)'}
+        if sxe > 80:
+            return {'valid': False,
+                    'reason': f'sxe = {sxe:.2f} in above Table B5.2-2 max (80 in)'}
+        result = interp_b5(B5_T2_SXE_ROWS, B5_T2_EX_COLS, B5_T2_THETA, B5_T2_BETA, sxe, ex1000)
+    result['valid'] = True
+    return result
 
 
 def get_phi_flex(code_edition, section_class, eps_t, ecl, etl):
-    """Flexural resistance factor per C5.5.4.2."""
+    """Flexural resistance factor per AASHTO LRFD 10th Ed §C5.5.4.2.
+
+    Bond assumption (audit decision D9, 2026-05-14): all PT (PP and CIP_PT)
+    is treated as BONDED. AASHTO 10th Ed §5.5.4.2 distinguishes bonded PT
+    (φ ceiling 1.00) from unbonded PT (φ ceiling 0.90); this engine does not
+    expose a bond-type input. Users with unbonded PT must override φ_f via
+    factor_overrides. The bonded case is the typical bridge condition
+    (grouted-duct PT). Caltrans amendments add a CIP-PT curve with slope
+    0.20 / ceiling 0.95 — implemented in the CA branch below.
+    """
     et = abs(eps_t)
     if et <= ecl:
         return 0.75
@@ -396,7 +438,11 @@ def build_pm_curve(I, comp_face="top"):
     Ag = b * h if is_rect else b * hf_top + bw * (h - hf_top - hf_bot) + b * hf_bot
     # AASHTO LRFD 10th Ed Eq. 5.6.4.4-3: Pn_max = 0.80[kc·f'c·(Ag-Ast-Aps) + fy_long·Ast - Aps·(fpe - Ep·εcu)]
     Ast = As_tens_total + As_comp_total
-    kc = alpha1  # kc per 5.6.4.4: same formula as α₁ (0.85 for f'c≤10, reduced above)
+    # kc per AASHTO LRFD 10th Ed §5.6.4.4: 0.85 for f'c ≤ 10 ksi, reduced by
+    # 0.02 per ksi above 10 ksi, floor 0.75 — IDENTICAL to the α₁ formula in
+    # §5.6.2.2 (verified against PDF, audit D6+D7 2026-05-14). The simplification
+    # kc = α₁ is therefore an exact restatement, not an approximation.
+    kc = alpha1
     pt_reduction = Aps * (fpe - Ept * 0.003) if Aps > 0 else 0
     Pn_max = -0.8 * (kc * fc * (Ag - Ast - Aps) + fy_long * Ast - pt_reduction)
     N = 40
@@ -903,7 +949,8 @@ def compute_pm_key_points(I, pm_curve, comp_face="top", Pu=0):
             steps.append(f"  Mpt = {Tpt:.1f}×{arm_pt:.3f} = {M_pt:.1f} kip-in")
 
         # Pn_max per AASHTO 10th Ed Eq. 5.6.4.4-3
-        kc = alpha1  # kc per 5.6.4.4: same formula as α₁
+        # kc per §5.6.4.4 = α₁ per §5.6.2.2 (identical formula, verified D7 audit)
+        kc = alpha1
         pt_reduction = Aps * (fpe - Ept * 0.003) if Aps > 0 else 0
         Pn_max = -0.8 * (kc * fc * (Ag - Ast - Aps) + fy_long * Ast - pt_reduction)
         Pn_raw = Cc + F_tens + F_comp + Tpt
@@ -1370,6 +1417,7 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     Aps, dp, cover = I["Aps"], I["dp"], I["cover"]
     n_mod, Ec = I["n_mod"], I["Ec"]
     gamma_e = I["gamma_e"]
+    lam = I["lam"]  # 5.4.2.8: lightweight concrete factor (used in fr per D3/D4)
     code_edition, section_class = I["codeEdition"], I["sectionClass"]
 
     # Assign tension/compression based on moment sign
@@ -1667,8 +1715,14 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
 
     # ── Minimum flexure reinforcement (5.6.3.3) ──
     fo = I.get("factor_overrides", {})
-    gamma1 = fo.get("gamma1_f", 1.6)  # Table 5.6.3.3-1: flexural cracking variability factor (all sections other than precast segmental)
-    gamma2 = fo.get("gamma2_f", 1.1)  # Table 5.6.3.3-1: prestress factor (bonded tendons)
+    # γ1 per AASHTO LRFD 10th Ed Table 5.6.3.3-1 (audit D13, verified 2026-05-14):
+    #   1.2  → precast segmental construction
+    #   1.6  → all other concrete structures (engine default)
+    # γ2 per same table (audit D14, consistent with bonded assumption D9):
+    #   1.1  → bonded tendons (engine default)
+    #   1.0  → unbonded tendons (override via factor_overrides if applicable)
+    gamma1 = fo.get("gamma1_f", 1.6)
+    gamma2 = fo.get("gamma2_f", 1.1)
     # γ3 per Table 5.6.3.3-1: depends on ASTM spec of reinforcement
     astm_spec = I.get("astm_spec", "A615_60")
     astm_gamma3_map = {
@@ -1679,7 +1733,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     }
     gamma3_default = astm_gamma3_map.get(astm_spec, 0.67)
     gamma3 = fo.get("gamma3_f", gamma3_default)
-    fr = 0.24 * math.sqrt(fc) if fc > 0 else 0
+    # AASHTO 5.4.2.6: fr = 0.24·λ·√fc' (λ from 5.4.2.8 for lightweight concrete)
+    fr = 0.24 * lam * math.sqrt(fc) if fc > 0 else 0
     if is_rect:
         Sc = b * h * h / 6
     else:
@@ -1920,14 +1975,19 @@ def compute_torsion_threshold(I, Tu):
         pc = (b + hf_top + (b - bw) / 2 + hw + (b - bw) / 2 + hf_bot
               + b + hf_bot + (b - bw) / 2 + hw + (b - bw) / 2 + hf_top)
 
-    be = Acp / pc if pc > 0 else 0
+    # Tcr (cracking torque) uses FULL cross-section Acp/pc (engineering judgment
+    # for I-sections — see audit 2026-05-14, decision D17). Ao for the
+    # post-cracking Tn calculation uses a WEB-ONLY sub-section for I-shapes.
     if is_rect:
+        be = Acp / pc if pc > 0 else 0
         Ao = (b - be) * (h - be)
-    else:
-        Ao = max((bw - be) * (h - be), (b - be) * (h - be) * 0.5)
-    if is_rect:
         ph = (b - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
     else:
+        # I-section: treat the web (bw × h) as its own rectangular sub-section for Ao
+        Acp_web = bw * h
+        pc_web = 2 * (bw + h)
+        be = Acp_web / pc_web if pc_web > 0 else 0  # be from web sub-section, used in Ao
+        Ao = (bw - be) * (h - be)
         ph = (bw - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
 
     K = 1
@@ -2017,7 +2077,8 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     stress_top = Pu / Ag - Mu * yt / Ig if Ag > 0 and Ig > 0 else 0
     stress_bot = Pu / Ag + Mu * yb / Ig if Ag > 0 and Ig > 0 else 0
     flex_compr = min(stress_top, stress_bot)
-    fr = 0.24 * math.sqrt(fc) if fc > 0 else 0
+    # AASHTO 5.4.2.6: fr = 0.24·λ·√fc' (λ from 5.4.2.8)
+    fr = 0.24 * lam * math.sqrt(fc) if fc > 0 else 0
     dbl_eps = flex_compr > fr
 
     # Strain eps_s (5.7.3.4.2-4) — uses Veff when torsion considered
@@ -2037,7 +2098,8 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Av_min = 0
         has_min_av = False
     else:
-        Av_min = 0.0316 * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
+        # AASHTO 5.7.2.5-1: Av_min = 0.0316·λ·√fc'·bv·s/fy
+        Av_min = 0.0316 * lam * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
         has_min_av = Av >= Av_min
 
     # Strain eps_s — Eq. 5.7.3.4.2-4 (with min Av) or -5 (without)
@@ -2091,6 +2153,7 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Act = b * hf_top + bw * max(h / 2 - hf_top, 0)
     b5_max_ex = 0.001 if has_min_av else 0.002
     th3, bt3, ex_b5, n_iter, b5_valid = 30, 2, 0, 0, True
+    b5_invalid_reason = ""  # populated when b5_valid becomes False
     # B5 intermediate values (saved from final iteration for reporting)
     b5_ex_num = 0
     b5_denom_used = 0
@@ -2122,10 +2185,12 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         b5_cot_th = cot_val
         if ex > b5_max_ex:
             b5_valid = False
+            b5_invalid_reason = f'εx = {ex:.5f} exceeds Method 3 strain limit ({b5_max_ex:.4f})'
             break
         tbl = lookup_b5(has_min_av, ex, vufc, sxe)
-        if tbl is None:
+        if not tbl['valid']:
             b5_valid = False
+            b5_invalid_reason = tbl['reason']
             break
         th_new, bt_new = tbl["theta"], tbl["beta"]
         if abs(th_new - th3) < 0.01 and abs(bt_new - bt3) < 0.001:
@@ -2237,8 +2302,8 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         )
     else:
         shear_breakdown_m3.add(
-            f"B5 Convergence Check",
-            f"B5 convergence failed (ex exceeded limit or table lookup invalid)",
+            f"Method 3 not applicable",
+            f"{b5_invalid_reason or 'B5 convergence failed (table lookup or strain limit)'}",
             0, "kip"
         )
 
@@ -2253,7 +2318,10 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     fo = I.get("factor_overrides", {})
     phi_c = fo.get("phi_c_f", 0.75)
     ld_M = abs(Mu) / (dv * phi_f) if (dv * phi_f) > 0 else 0
-    ld_N = 0.5 * Pu / phi_c
+    # phi for the Nu term is sign-dependent (D1, audit 2026-05-14):
+    # compression Pu uses phi_c; tension Pu uses phi_f (strain-region flexure phi)
+    phi_for_N = phi_c if Pu < 0 else phi_f
+    ld_N = 0.5 * Pu / phi_for_N if phi_for_N > 0 else 0
     long_cap = As * fy_long + (Aps_tens * fps_calc if Aps_tens > 0 else 0)
 
     # --- Method 2 (General Procedure) - existing logic, kept as primary ---
@@ -2269,6 +2337,60 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     ld_V = ld_V_shear  # keep for display
     long_dem = ld_M + ld_N + ld_VT * cott
     long_ok = long_cap >= long_dem
+
+    # ─── Eq. 5.7.3.6.3-1 Breakdown (combined longitudinal demand & capacity) ───
+    # Symbolic form + numeric substitution, rendered in the torsion report
+    # via renderDetailedBreakdown(). Method 2 (general procedure) used for θ.
+    long_breakdown = EqBreakdown("Combined Longitudinal Reinforcement (AASHTO 5.7.3.6.3-1)")
+    long_breakdown.add(
+        f"ld_M = |Mu| / (dv · φf)   [φf = {fmt_num(phi_f, 3)}, strain-region flexure]",
+        f"ld_M = |{fmt_num(Mu, 1)}| / ({fmt_num(dv, 3)} · {fmt_num(phi_f, 3)})",
+        ld_M, "kip"
+    )
+    # D2: show the actual phi used for Nu term — sign-dependent per D1
+    phi_N_label = "φc (compression)" if Pu < 0 else "φf (tension)"
+    long_breakdown.add(
+        f"ld_N = 0.5 · Pu / φ_N   [φ_N = {fmt_num(phi_for_N, 3)}, {phi_N_label}]",
+        f"ld_N = 0.5 · {fmt_num(Pu, 1)} / {fmt_num(phi_for_N, 3)}",
+        ld_N, "kip"
+    )
+    long_breakdown.add(
+        f"ld_V = max(|Vu|/φv − Vp − 0.5·Vs, 0)   [φv = {fmt_num(phi_v, 3)}]",
+        f"ld_V = max(|{fmt_num(Vu, 1)}|/{fmt_num(phi_v, 2)} − {fmt_num(Vp, 1)} − 0.5·{fmt_num(Vs_des, 2)}, 0)",
+        max(ld_V, 0), "kip"
+    )
+    if torsion_consider:
+        long_breakdown.add(
+            f"ld_T = 0.45 · ph · |Tu| / (2 · Ao · φv)   [φv = {fmt_num(phi_v, 3)}]",
+            f"ld_T = 0.45 · {fmt_num(tors_ph, 2)} · |{fmt_num(Tu, 1)}| / (2 · {fmt_num(tors_Ao, 1)} · {fmt_num(phi_v, 2)})",
+            ld_T_tors, "kip"
+        )
+        long_breakdown.add(
+            "ld_VT = √(ld_V² + ld_T²)",
+            f"ld_VT = √({fmt_num(max(ld_V, 0), 2)}² + {fmt_num(ld_T_tors, 2)}²)",
+            ld_VT, "kip"
+        )
+    else:
+        long_breakdown.add(
+            "ld_VT = ld_V   (no torsion contribution)",
+            f"ld_VT = {fmt_num(max(ld_V, 0), 2)}",
+            ld_VT, "kip"
+        )
+    long_breakdown.add(
+        "Demand = ld_M + ld_N + cot(θ) · ld_VT",
+        f"Demand = {fmt_num(ld_M, 1)} + {fmt_num(ld_N, 1)} + cot({fmt_num(th2, 1)}°) · {fmt_num(ld_VT, 1)}",
+        long_dem, "kip"
+    )
+    long_breakdown.add(
+        "Capacity = As · fy + Aps · fps",
+        f"Capacity = {fmt_num(As, 2)} · {fmt_num(fy_long, 1)} + {fmt_num(Aps_tens, 2)} · {fmt_num(fps_calc, 1)}",
+        long_cap, "kip"
+    )
+    long_breakdown.add(
+        "Check:  Capacity ≥ Demand",
+        f"{fmt_num(long_cap, 1)} ≥ {fmt_num(long_dem, 1)}  →  {'PASS' if long_ok else 'FAIL'}",
+        long_cap - long_dem, "kip"
+    )
 
     # --- Method 1 (Simplified, θ=45°) ---
     Vs_des_1 = min(Vs1, abs(Vu) / phi_v) if phi_v > 0 else Vs1
@@ -2325,6 +2447,7 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         "Vn2_uncapped": Vn2_uncapped, "Vn2_capped": Vn2_capped,
         # Method 3
         "th3": th3, "bt3": bt3, "ex_b5": ex_b5, "n_iter": n_iter, "b5_valid": b5_valid,
+        "b5_invalid_reason": b5_invalid_reason,
         "vu_b5": vu_b5, "vufc": vufc, "Act": Act, "b5_max_ex": b5_max_ex,
         "b5_ex_num": b5_ex_num, "b5_denom_used": b5_denom_used,
         "b5_ex_neg_recalc": b5_ex_neg_recalc, "b5_Vterm": b5_Vterm, "b5_cot_th": b5_cot_th,
@@ -2351,13 +2474,45 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         "breakdown_shear_m1": shear_breakdown_m1.to_dict(),
         "breakdown_shear_m2": shear_breakdown_m2.to_dict(),
         "breakdown_shear_m3": shear_breakdown_m3.to_dict(),
+        # Combined longitudinal (AASHTO 5.7.3.6.3-1) breakdown
+        "breakdown_long_comb": long_breakdown.to_dict(),
     }
 
 
 # ─── Torsion ────────────────────────────────────────────────────────
 
 def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
-    """Compute torsion capacity and combined checks. Returns dict."""
+    """Compute torsion capacity and combined checks. Returns dict.
+
+    ╔════════════════════════════════════════════════════════════════════╗
+    ║  ANTI-REGRESSION NOTICE — READ BEFORE EDITING THIS FUNCTION        ║
+    ║                                                                    ║
+    ║  Do NOT add `Al_tors`, `Al_min`, `Al_gov`, or any implementation   ║
+    ║  of AASHTO Eq. 5.7.3.6.3-2 (longitudinal A_l for torsion) here.    ║
+    ║                                                                    ║
+    ║  Eq. 5.7.3.6.3-2 applies to BOX SECTIONS ONLY. This app models     ║
+    ║  RECTANGULAR and T-SECTION (I-section) — neither is a box.         ║
+    ║                                                                    ║
+    ║  There is also NO Eq. 5.7.3.6.3-3 in AASHTO LRFD. A previous       ║
+    ║  AI-assisted session invented a "minimum Al" formula citing this   ║
+    ║  non-existent equation; it was an ACI 318 holdover, not AASHTO.    ║
+    ║                                                                    ║
+    ║  These keys have been removed TWICE — once in commit 7939745 and   ║
+    ║  again on 2026-05-13. The HTML report shows an I-section warning   ║
+    ║  instead, directing the user to perform supplementary checks       ║
+    ║  manually if their detail forms a partial closed (box) perimeter.  ║
+    ║                                                                    ║
+    ║  The legitimate combined longitudinal check (AASHTO Eq.            ║
+    ║  5.7.3.6.3-1) IS computed — see `long_dem_comb`, `long_cap_val`,   ║
+    ║  `long_comb_ok` below, plus `breakdown_long_comb` in do_shear.     ║
+    ║                                                                    ║
+    ║  Pinning test: tests/test_invariants.py::                          ║
+    ║                test_al_keys_removed_from_torsion                   ║
+    ║                                                                    ║
+    ║  See CODE_PROTECTION.md § "Removed checks — DO NOT re-add" and     ║
+    ║  FIXES_SUMMARY.md § "CRITICAL REGRESSION GUARD" for full context.  ║
+    ╚════════════════════════════════════════════════════════════════════╝
+    """
     fc, fy_long, lam, phi_v = I["fc"], I["fy_long"], I["lam"], I["phi_v"]
     fy_trans = I["fy_trans"]
     is_rect, b, h, bw, cover = I["isRect"], I["b"], I["h"], I["bw"], I["cover"]
@@ -2386,17 +2541,19 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
         # Outer perimeter: top flange top -> right -> step in -> web right -> step out -> bot flange -> left -> etc.
         pc = (b + hf_top + (b - bw) / 2 + hw + (b - bw) / 2 + hf_bot
               + b + hf_bot + (b - bw) / 2 + hw + (b - bw) / 2 + hf_top)
-    be = Acp / pc if pc > 0 else 0
-    # Ao: area enclosed by shear flow path (reduced by be)
+    # Tcr uses FULL cross-section Acp/pc; Ao uses WEB-ONLY sub-section for
+    # I-sections (audit 2026-05-14, decision D17). ph (stirrup centerline)
+    # is web-based for I-section regardless.
     if is_rect:
+        be = Acp / pc if pc > 0 else 0
         Ao = (b - be) * (h - be)
-    else:
-        # Use web-based Ao: conservative approach for T/I shapes
-        Ao = max((bw - be) * (h - be), (b - be) * (h - be) * 0.5)
-    # ph: perimeter of stirrup centerline
-    if is_rect:
         ph = (b - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
     else:
+        # I-section: treat the web (bw × h) as its own rectangular sub-section
+        Acp_web = bw * h
+        pc_web = 2 * (bw + h)
+        be = Acp_web / pc_web if pc_web > 0 else 0
+        Ao = (bw - be) * (h - be)
         ph = (bw - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
 
     # Tcr (5.7.2.1-4) — consistent with compute_torsion_threshold
@@ -2485,9 +2642,20 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
     Av_s_comb = Av_s_shear + 2 * At_s_tors
     comb_reinf_ok = Av_ext_s >= Av_s_comb
 
-    min_trans = 0.0316 * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
+    # AASHTO 5.7.2.5-1: min transverse = 0.0316·λ·√fc'·bv·s/fy (combined shear+torsion stirrups)
+    min_trans = 0.0316 * lam * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
 
     s_max_tors = min(ph / 8, 12) if ph > 0 else 12
+
+    # Combined longitudinal demand / capacity per AASHTO Eq. 5.7.3.6.3-1.
+    # do_shear already computes these (factoring torsion into ld_VT when
+    # torsion_consider is True). Re-expose under the keys the HTML report
+    # reads. Eq. 5.7.3.6.3-2 (longitudinal Al for torsion) applies to box
+    # sections only and is NOT evaluated by this app — see the I-section
+    # warning rendered in the report when torsion is considered.
+    long_dem_comb = shear.get("long_dem", 0)
+    long_cap_val = shear.get("long_cap", 0)
+    long_comb_ok = (long_cap_val >= long_dem_comb) if consider else True
 
     return {
         "pc": pc, "Acp": Acp, "be": be, "Ao": Ao, "ph": ph,
@@ -2497,9 +2665,16 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
         "tors_shear": tors_shear, "Veff": Veff,
         "comb_stress": comb_stress, "comb_lim": comb_lim, "comb_ok": comb_ok,
         "Av_s_shear": Av_s_shear, "At_s_tors": At_s_tors,
-        "Av_s_comb": Av_s_comb, "Av_ext_s": Av_ext_s, "comb_reinf_ok": comb_reinf_ok,
+        "Av_s_comb": Av_s_comb, "Av_ext_s": Av_ext_s,
+        "Av_s_prov": Av_ext_s,  # alias used by HTML report
+        "comb_reinf_ok": comb_reinf_ok,
         "min_trans": min_trans,
         "s_max_tors": s_max_tors,
+        # AASHTO Eq. 5.7.3.6.3-1 combined longitudinal check (applicable to
+        # solid and I sections). Eq. 5.7.3.6.3-2 is intentionally not
+        # computed (box sections only — see report warning).
+        "long_dem_comb": long_dem_comb, "long_cap_val": long_cap_val,
+        "long_comb_ok": long_comb_ok,
         # Torsion Breakdowns
         "breakdown_torsion_tcr": torsion_breakdown_tcr.to_dict(),
         "breakdown_torsion_tn": torsion_breakdown_tn.to_dict(),
@@ -2633,7 +2808,8 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         Av_min = 0
         has_min_av = False
     else:
-        Av_min = 0.0316 * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
+        # AASHTO 5.7.2.5-1: Av_min = 0.0316·λ·√fc'·bv·s/fy
+        Av_min = 0.0316 * lam * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
         has_min_av = Av >= Av_min
 
     # Strain eps_s — Eq. 5.7.3.4.2-4 (with min Av) or -5 (without)
@@ -2697,7 +2873,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
             b5_valid = False
             break
         tbl = lookup_b5(has_min_av, ex, vufc, sxe)
-        if tbl is None:
+        if not tbl['valid']:
             b5_valid = False
             break
         th_new, bt_new = tbl["theta"], tbl["beta"]
@@ -2715,23 +2891,25 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         Vn3_capped = Vn3_uncapped > Vnmax
         Vr3 = phi_v * min(Vn3_uncapped, Vnmax)
 
-    # Torsion geometry (matches compute_torsion_threshold / do_torsion)
+    # Torsion geometry (matches compute_torsion_threshold / do_torsion).
+    # Tcr uses full Acp/pc; Ao for I-section uses WEB-ONLY sub-section
+    # (audit 2026-05-14, decision D17).
     if is_rect:
         pc = 2 * b + 2 * h
         Acp = b * h
+        be_t = Acp / pc if pc > 0 else 0
+        Ao = (b - be_t) * (h - be_t)
+        ph = (b - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
     else:
         hw = h - hf_top - hf_bot
         Acp = b * hf_top + bw * hw + b * hf_bot
         pc = (b + hf_top + (b - bw) / 2 + hw + (b - bw) / 2 + hf_bot
               + b + hf_bot + (b - bw) / 2 + hw + (b - bw) / 2 + hf_top)
-    be_t = Acp / pc if pc > 0 else 0
-    if is_rect:
-        Ao = (b - be_t) * (h - be_t)
-    else:
-        Ao = max((bw - be_t) * (h - be_t), (b - be_t) * (h - be_t) * 0.5)
-    if is_rect:
-        ph = (b - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
-    else:
+        # I-section: treat the web (bw × h) as its own rectangular sub-section for Ao
+        Acp_web = bw * h
+        pc_web = 2 * (bw + h)
+        be_t = Acp_web / pc_web if pc_web > 0 else 0
+        Ao = (bw - be_t) * (h - be_t)
         ph = (bw - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
     theta = th2 if th2 else 35
     cott = 1 / math.tan(math.radians(theta)) if theta > 0 else 0
@@ -2797,7 +2975,8 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         "A615": 0.67, "A706": 0.75  # Legacy values
     }
     gamma3 = astm_gamma3_map.get(astm_spec, 0.67)
-    fr_c = 0.24 * math.sqrt(fc) if fc > 0 else 0
+    # AASHTO 5.4.2.6: fr = 0.24·λ·√fc' (λ from 5.4.2.8)
+    fr_c = 0.24 * lam * math.sqrt(fc) if fc > 0 else 0
     if is_rect:
         Sc_c = b * h ** 2 / 6
     else:

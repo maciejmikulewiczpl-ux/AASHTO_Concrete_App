@@ -33,10 +33,16 @@ test_input = {
     'hf_top': 0,
     'hf_bot': 0,
     'cover': 2.0,
+    'ecl_override': False,
+    'etl_override': False,
     'barN_top': 7,
     'nBars_top': 4,
+    'd_top': 2.5,
     'barN_bot': 7,
     'nBars_bot': 4,
+    'd_bot': 21.5,
+    'As_top_ovr': None,
+    'As_bot_ovr': None,
     'nStrands': 0,
     'strand_area': 0.196,
     'dp': 4.0,
@@ -63,13 +69,13 @@ demand_rows = [
 print("Testing calculate_all with shN=4 (remapped from None)...")
 try:
     result = calculate_all(test_input, demand_rows, 0)
-    print("✓ Calculation succeeded!")
+    print("[OK] Calculation succeeded!")
     print(f"  Flexure result keys: {list(result['flexure'].keys())}")
     print(f"  Shear result keys: {list(result['shear'].keys())}")
     print(f"  Torsion result keys: {list(result['torsion'].keys())}")
     print("Test PASSED: None shear reinforcement is handled correctly.")
 except Exception as e:
-    print(f"✗ Calculation FAILED: {e}")
+    print(f"[FAIL] Calculation FAILED: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)

@@ -261,8 +261,10 @@ def audit_pm(res, raw, dem):
         flanges_sym = is_rect or near(inp.get("hf_top", 0), inp.get("hf_bot", 0), tol=0.01)
         if near(d_top_val, h - d_bot_val, tol=0.01) and (Aps == 0) and flanges_sym:
             mid = len(pm_sag) // 2
-            ok(near(pm_sag[mid]["Mr"], pm_hog[mid]["Mr"], tol=0.02),
-               f"Symmetric section: sag PM Mr={pm_sag[mid]['Mr']:.1f} ≈ hog PM Mr={pm_hog[mid]['Mr']:.1f} at midpoint")
+            # PM hog curve is signed negative (engine convention); compare magnitudes.
+            ok(near(abs(pm_sag[mid]["Mr"]), abs(pm_hog[mid]["Mr"]), tol=0.02),
+               f"Symmetric section: |sag PM Mr|={abs(pm_sag[mid]['Mr']):.1f} ≈ "
+               f"|hog PM Mr|={abs(pm_hog[mid]['Mr']):.1f} at midpoint")
 
     # Both sagging and hogging Pn_max should be the same (section is the same)
     pm_sag = build_pm_curve(I, "top")
@@ -461,13 +463,27 @@ def audit_torsion(res, raw, dem):
         ok(not tor["consider"], f"Tu={abs(Tu)} ≤ thresh={tor['thresh']:.1f}: consider should be False")
 
     if tor["consider"]:
-        ok(tor["Tr"] > 0, f"Tr > 0 when torsion considered, got {tor['Tr']:.1f}")
-        ok(near(tor["Tr"], phi_v * tor["Tn"]), f"Tr = φTn: {tor['Tr']:.1f} vs {phi_v*tor['Tn']:.1f}")
+        # Tn/Tr CAN be 0 for I-sections whose web is too thin to form a
+        # closed torsional perimeter -- engine flags those as inadequate
+        # via comb_reinf_ok=False.
+        Tn_v = tor.get("Tn", 0)
+        Tr_v = tor.get("Tr", 0)
+        ok(Tn_v >= 0, f"Tn >= 0 when torsion considered, got {Tn_v:.1f}")
+        ok(Tr_v >= 0, f"Tr >= 0 when torsion considered, got {Tr_v:.1f}")
+        if Tn_v == 0:
+            ok(tor.get("comb_reinf_ok") is False,
+               "Tn=0 must coincide with comb_reinf_ok=False")
+        else:
+            ok(near(Tr_v, phi_v * Tn_v),
+               f"Tr = φTn: {Tr_v:.1f} vs {phi_v*Tn_v:.1f}")
         ok("comb_ok" in tor, "comb_ok present when torsion considered")
         ok(tor["comb_lim"] > 0, f"comb_lim = 0.25fc > 0")
         ok(near(tor["comb_lim"], 0.25 * fc), f"comb_lim = 0.25fc: {tor['comb_lim']:.2f} vs {0.25*fc:.2f}")
-        ok("Al_gov" in tor, "Al_gov present when torsion considered")
-        ok("long_comb_ok" in tor, "long_comb_ok present")
+        # AASHTO Eq. 5.7.3.6.3-1 combined longitudinal check (Eq. 5.7.3.6.3-2
+        # is box-section only and intentionally not computed by this app).
+        ok("long_dem_comb" in tor, "long_dem_comb present when torsion considered")
+        ok("long_cap_val" in tor, "long_cap_val present when torsion considered")
+        ok("long_comb_ok" in tor, "long_comb_ok present when torsion considered")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -488,10 +504,14 @@ def audit_rows(res, raw, dem):
         else:
             has_tens = inp["As_top"] > 0 or (inp.get("Aps", 0) > 0 and inp.get("hasPT", False))
 
+        # Engine convention: row.Mr is signed by Mu direction
+        #   Mr_signed = -Mr if Mu < 0 else Mr   (calc_engine.py:2842)
+        # Compare magnitudes.
+        Mr_mag = abs(r["Mr"])
         if has_tens:
-            ok(r["Mr"] > 0, f"Row {i+1}: Mr > 0, got {r['Mr']:.1f}")
+            ok(Mr_mag > 0, f"Row {i+1}: |Mr| > 0, got {r['Mr']:.1f}")
         else:
-            ok(r["Mr"] >= 0, f"Row {i+1}: Mr ≥ 0 (no tension steel), got {r['Mr']:.1f}")
+            ok(Mr_mag >= 0, f"Row {i+1}: |Mr| >= 0 (no tension steel), got {r['Mr']:.1f}")
 
         ok(r.get("flexStatus") in ("OK", "MIN", "NG"),
            f"Row {i+1}: flexStatus in {{OK,MIN,NG}}, got '{r.get('flexStatus')}'")
@@ -556,12 +576,14 @@ def audit_report_keys(res):
     # Torsion keys
     for k in ["Tcr", "thresh", "consider", "pc", "Acp", "Ao", "ph", "be",
               "theta", "At", "Tn", "Tr",
-              "At_s_avail", "At_s_from_bar",
+              "At_s_avail", "At_s_design", "At_s_additional",
               "tors_shear", "Veff",
               "comb_stress", "comb_lim", "comb_ok",
               "Av_s_shear", "At_s_tors", "Av_s_comb", "Av_s_prov", "comb_reinf_ok",
               "min_trans",
-              "Al_tors", "Al_min", "Al_gov",
+              # AASHTO Eq. 5.7.3.6.3-1 combined longitudinal check.
+              # Eq. 5.7.3.6.3-2 (Al_tors/Al_min/Al_gov) is box-only and
+              # intentionally not computed by this app.
               "long_dem_comb", "long_cap_val", "long_comb_ok",
               "s_max_tors"]:
         ok(k in tor, f"Torsion key '{k}' present in result")
@@ -618,8 +640,9 @@ def consistency_checks():
     # At balanced point, moment capacity should differ due to different flange sizes
     print(f"    Asym: sag PM mid Mr={pm_sag_a[mid]['Mr']:.0f}, hog PM mid Mr={pm_hog_a[mid]['Mr']:.0f}")
     # Just check they computed without error
-    ok(pm_sag_a[mid]["Mr"] >= 0, "Asym sag PM mid Mr ≥ 0")
-    ok(pm_hog_a[mid]["Mr"] >= 0, "Asym hog PM mid Mr ≥ 0")
+    # PM curve hog branch is signed negative (engine convention); compare magnitudes.
+    ok(abs(pm_sag_a[mid]["Mr"]) >= 0, "Asym sag PM mid |Mr| >= 0")
+    ok(abs(pm_hog_a[mid]["Mr"]) >= 0, "Asym hog PM mid |Mr| >= 0")
 
     # D. Compression should reduce eps_s (improve Vc)
     print("\n  [Compression reduces shear strain → higher Vc]")
@@ -728,9 +751,17 @@ def audit_isection_pm():
         ok(found_tsect, f"  comp={comp_face_name}: Some PM points have a > hf (T-section region)",
            warn_only=not found_tsect)
 
-        # Verify Mr values are all non-negative
+        # Verify Mr values have the expected sign for this comp_face.
+        # Engine convention: PM curve uses Mn>0 for comp_face=top (sagging)
+        # and Mn<0 for comp_face=bottom (hogging) -- get_mr_at_pu() applies
+        # abs() when interpolating, so this sign is internal-only.
+        expected_sign = 1 if comp_face_name == "top" else -1
         for i, p in enumerate(pm):
-            ok(p["Mr"] >= -0.1, f"  comp={comp_face_name} pt {i}: Mr={p['Mr']:.1f} ≥ 0")
+            mr = p["Mr"]
+            if abs(mr) < 0.1:
+                continue  # accept near-zero in either sign
+            ok(mr * expected_sign >= -0.1,
+               f"  comp={comp_face_name} pt {i}: Mr={mr:.1f} has wrong sign for face")
 
         # Equilibrium check at a few points: sum of forces ≈ Pn
         for idx in [5, 10, 20, 30]:

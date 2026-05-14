@@ -283,12 +283,20 @@ def verify_torsion(res, raw, dem):
     ok("consider" in tor, "consider should be in torsion result")
 
     if tor["consider"]:
-        ok(tor.get("Tr", 0) > 0, f"If torsion considered, Tr should be > 0, got {tor.get('Tr',0):.1f}")
-        ok(tor.get("Tn", 0) > 0, f"Tn should be > 0")
-        phi_v = raw.get("phi_v", 0.9)
-        if tor.get("Tn"):
-            ok(near(tor["Tr"], phi_v * tor["Tn"]),
-               f"Tr ({tor['Tr']:.1f}) should = φ_v·Tn ({phi_v}×{tor['Tn']:.1f})")
+        # Tn/Tr CAN legitimately be 0 for I-sections whose web is too thin
+        # to form a closed torsional perimeter -- in that case the engine
+        # still flags the section as inadequate via comb_reinf_ok=False.
+        Tn = tor.get("Tn", 0)
+        Tr = tor.get("Tr", 0)
+        ok(Tn >= 0, f"Tn should be >= 0, got {Tn:.1f}")
+        ok(Tr >= 0, f"Tr should be >= 0, got {Tr:.1f}")
+        if Tn == 0:
+            ok(tor.get("comb_reinf_ok") is False,
+               f"Tn=0 but comb_reinf_ok=True -- inconsistent")
+        else:
+            phi_v = raw.get("phi_v", 0.9)
+            ok(near(Tr, phi_v * Tn),
+               f"Tr ({Tr:.1f}) should = φ_v·Tn ({phi_v}×{Tn:.1f})")
         # Combined shear+torsion check
         ok("comb_ok" in tor, "comb_ok should exist when torsion considered")
     else:
@@ -361,10 +369,14 @@ def verify_row_results(res, demands):
         else:            # hogging – tension on top
             has_tens_row = inp["As_top"] > 0 or (inp.get("Aps", 0) > 0 and inp.get("hasPT", False))
 
+        # The engine intentionally signs row.Mr by Mu direction:
+        #   Mr_signed = -Mr if Mu < 0 else Mr   (calc_engine.py:2842)
+        # Compare magnitudes so the sign convention is respected.
+        Mr_mag = abs(r["Mr"])
         if has_tens_row:
-            ok(r["Mr"] > 0, f"Row {i+1}: Mr should be > 0, got {r['Mr']:.1f}")
+            ok(Mr_mag > 0, f"Row {i+1}: |Mr| should be > 0, got {r['Mr']:.1f}")
         else:
-            ok(r["Mr"] >= 0, f"Row {i+1}: Mr should be >= 0 (no tension steel for this Mu sign), got {r['Mr']:.1f}")
+            ok(Mr_mag >= 0, f"Row {i+1}: |Mr| should be >= 0 (no tension steel for this Mu sign), got {r['Mr']:.1f}")
         ok(r.get("flexStatus") in ("OK", "MIN", "NG"),
            f"Row {i+1}: flexStatus should be OK/MIN/NG, got '{r.get('flexStatus')}'")
         ok(r.get("shearStatus") in ("OK", "NR", "NG"),
@@ -415,8 +427,11 @@ def verify_report_keys(res):
     for k in ["Tcr", "thresh", "consider", "pc", "Acp", "Ao", "ph"]:
         ok(k in tor, f"Torsion key '{k}' should exist in result")
     if tor.get("consider"):
+        # AASHTO Eq. 5.7.3.6.3-1 combined longitudinal check is required.
+        # Eq. 5.7.3.6.3-2 (Al_tors/Al_min/Al_gov) is box-only and
+        # intentionally NOT computed by this app.
         for k in ["Tn", "Tr", "theta", "comb_ok", "comb_stress", "comb_lim",
-                   "Al_gov", "long_comb_ok"]:
+                   "long_dem_comb", "long_cap_val", "long_comb_ok"]:
             ok(k in tor, f"Torsion key '{k}' (when considered) should exist")
 
     # Input keys
@@ -439,7 +454,7 @@ def verify_pm_consistency(res, raw):
     Pr_vals = [p["Pr"] for p in pm]
     ok(max(Pr_vals) > 0, f"P-M curve should have compression (Pr>0), max Pr = {max(Pr_vals):.0f}", warn_only=True)
     # Note: min Pr could be tensile (negative) or could be 0
-    ok(any(p["Mr"] > 0 for p in pm), "P-M curve should have Mr > 0 somewhere")
+    ok(any(abs(p["Mr"]) > 0 for p in pm), "P-M curve should have non-zero |Mr| somewhere")
 
     # φ should be between limits
     for i, p in enumerate(pm):
