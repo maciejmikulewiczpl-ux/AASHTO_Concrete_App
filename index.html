@@ -45,6 +45,10 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background
 .dirty-dot { color: #f39c12; font-size: 1.1rem; margin-left: 2px; animation: pulse-dot 1.5s infinite; }
 @keyframes pulse-dot { 0%,100%{ opacity:1; } 50%{ opacity:0.4; } }
 
+.unit-switcher { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; padding: 4px 8px; background: rgba(255,255,255,0.08); border-radius: 4px; }
+.unit-switcher .us-label { font-size: 0.75rem; color: rgba(255,255,255,0.85); margin-right: 2px; }
+.unit-switcher .us-sel { font-size: 0.78rem; padding: 2px 4px; border: 1px solid rgba(255,255,255,0.3); background: white; color: #1a5276; border-radius: 3px; cursor: pointer; }
+
 .tab-bar { display: flex; background: var(--card); border-bottom: 2px solid var(--border); padding: 0 16px; box-shadow: var(--shadow); }
 .tab-btn { padding: 12px 24px; border: none; background: none; cursor: pointer; font-size: 0.9rem; font-weight: 500; color: var(--text-light); border-bottom: 3px solid transparent; transition: all 0.2s; margin-bottom: -2px; }
 .tab-btn:hover { color: var(--primary); background: rgba(26,82,118,0.05); }
@@ -324,6 +328,17 @@ canvas { width: 100% !important; height: 100% !important; }
     <span id="dirtyIndicator" class="dirty-dot" style="display:none" title="Unsaved changes">&#9679;</span>
   </div>
   <div class="header-controls">
+    <div class="unit-switcher" title="Display units. AASHTO equation breakdowns always remain in kip-in-ksi (their native units).">
+      <span class="us-label">Units:</span>
+      <select id="unitForce" onchange="setDisplayUnit('force', this.value)" class="us-sel">
+        <option value="kip">kip</option>
+        <option value="lbf">lbf</option>
+      </select>
+      <select id="unitLength" onchange="setDisplayUnit('length', this.value)" class="us-sel">
+        <option value="in">in</option>
+        <option value="ft">ft</option>
+      </select>
+    </div>
     <button class="toggle-btn" id="btnShowAll" onclick="toggleShowAll()">Show All Tabs</button>
   </div>
 </div>
@@ -369,8 +384,8 @@ canvas { width: 100% !important; height: 100% !important; }
         <div class="form-row"><label class="ovr-label"><input type="checkbox" id="wc_ovr" class="ovr-cb"></label><label>Unit weight, w<sub>c</sub></label><input type="number" id="wc" value="0.145" step="any" readonly class="auto-calc"><span class="unit">kcf</span><span class="note" id="wcNote">0.145 (f'<sub>c</sub> &le; 5 ksi)</span></div>
         <div class="form-row"><span></span><label>K<sub>1</sub></label><input type="number" id="K1" value="1.0" step="any"><span class="unit"></span><span class="note">aggregate correction factor (1.0 unless owner-specified)</span></div>
         <div class="form-row"><span></span><label>Longitudinal Reinforcement ASTM</label><select id="astm_spec" class="wide"><option value="A615_60" selected>ASTM A615 (Grade 60)</option><option value="A615_75">ASTM A615 (Grade 75)</option><option value="A615_80">ASTM A615 (Grade 80)</option><option value="A706_60">ASTM A706 (Grade 60)</option><option value="A706_80">ASTM A706 (Grade 80)</option><option value="A1035_100">ASTM A1035 (Grade 100)</option></select><span></span></div>
-        <div class="form-row"><span></span><label>f<sub>y</sub> (longitudinal)</label><input type="number" id="fy" value="60" step="any"><span class="unit">ksi</span><span class="note" id="fy_note">ASTM A615 Grade 60</span></div>
-        <div class="form-row"><span></span><label>f<sub>y,trans</sub> (stirrups)</label><input type="number" id="fy_trans" value="60" step="any"><span class="unit">ksi</span><span class="note">ASTM Grade 60</span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="fy_ovr" class="ovr-cb" title="Override fy (longitudinal) from ASTM grade"></label><label>f<sub>y</sub> (longitudinal)</label><input type="number" id="fy" value="60" step="any" readonly class="auto-calc"><span class="unit">ksi</span><span class="note" id="fy_note">ASTM A615 Grade 60</span></div>
+        <div class="form-row"><label class="ovr-label"><input type="checkbox" id="fy_trans_ovr" class="ovr-cb" title="Override fy,trans (stirrups) from ASTM grade"></label><label>f<sub>y,trans</sub> (stirrups)</label><input type="number" id="fy_trans" value="60" step="any" readonly class="auto-calc"><span class="unit">ksi</span><span class="note" id="fy_trans_note">ASTM A615 Grade 60</span></div>
         <div class="form-row"><label class="ovr-label"><input type="checkbox" id="Ec_ovr" class="ovr-cb"></label><label>E<sub>c</sub></label><input type="number" id="Ec" value="0" step="any" readonly class="auto-calc"><span class="unit">ksi</span><span class="note" id="ecNote">120000&middot;K<sub>1</sub>&middot;w<sub>c</sub><sup>2</sup>&middot;f'<sub>c</sub><sup>0.33</sup> (AASHTO 5.4.2.4-1)</span></div>
         <div class="form-row"><span></span><label>E<sub>s</sub></label><input type="number" id="Es" value="29000" step="any"><span class="unit">ksi</span><span></span></div>
         <div class="form-row"><span></span><label>f<sub>pu</sub></label><input type="number" id="fpu" value="270" step="any"><span class="unit">ksi</span><span></span></div>
@@ -706,6 +721,7 @@ canvas { width: 100% !important; height: 100% !important; }
       <div class="demand-btn-bar">
         <button class="demand-btn" onclick="addDemandRow()">&#43; Add Row</button>
         <button class="demand-btn danger" onclick="removeLastDemandRow()">&#8722; Remove Last</button>
+        <button class="demand-btn danger" onclick="clearAllDemandRows()" title="Remove all demand rows (one empty row will remain)">&#10006; Remove All</button>
       </div>
     </div>
   </div>
@@ -966,6 +982,7 @@ function getDefaultSectionState(){
       secType:'RECTANGULAR', b:16.38, h:27.5, bw_input:12, hf_top:8, hf_bot:12, cover:2,
       barN_top:7, nBars_top:5, barN_bot:7, nBars_bot:5,
       d_top_ovr:false, d_bot_ovr:false, Ec_ovr:false, fpy_ovr:false, ecl_ovr:false, etl_ovr:false,
+      fy_ovr:false, fy_trans_ovr:false, fy_val:'', fy_trans_val:'',
       Ec_val:'', fpy_val:'', ecl_val:'', etl_val:'', d_top_val:'', d_bot_val:'',
       nStrands:10, strand_area:0.217, dp_mode:'layout', dp_input:15.5, fpe_mode:'layout', fpe_input:0, duct_dia:6,
       shN:4, shear_legs:2, shear_s:4, at_add_bar_N:0, at_add_s:12
@@ -1020,6 +1037,10 @@ function saveCurrentSectionState(){
     fpy_ovr: document.getElementById('fpy_ovr').checked,
     ecl_ovr: document.getElementById('ecl_ovr').checked,
     etl_ovr: document.getElementById('etl_ovr').checked,
+    fy_ovr: document.getElementById('fy_ovr').checked,
+    fy_trans_ovr: document.getElementById('fy_trans_ovr').checked,
+    fy_val: document.getElementById('fy').value,
+    fy_trans_val: document.getElementById('fy_trans').value,
     Ec_val: document.getElementById('Ec').value,
     fpy_val: document.getElementById('fpy').value,
     ecl_val: document.getElementById('ecl').value,
@@ -1115,6 +1136,12 @@ function loadSectionState(name){
   document.getElementById('etl_ovr').checked = !!inp.etl_ovr;
   document.getElementById('d_top_ovr').checked = !!inp.d_top_ovr;
   document.getElementById('d_bot_ovr').checked = !!inp.d_bot_ovr;
+  document.getElementById('fy_ovr').checked = !!inp.fy_ovr;
+  document.getElementById('fy_trans_ovr').checked = !!inp.fy_trans_ovr;
+  if(inp.fy_val) setV('fy', inp.fy_val);
+  if(inp.fy_trans_val) setV('fy_trans', inp.fy_trans_val);
+  // Sync fy / fy_trans to ASTM (or restore overridden values)
+  applyAstmFy();
   if(inp.wc_val) setV('wc',inp.wc_val);
   if(inp.K1_val) setV('K1',inp.K1_val);
   if(inp.Ec_val) setV('Ec',inp.Ec_val);
@@ -1314,7 +1341,7 @@ function saveProjectQuick(){
   if(!currentFilePath){ saveProject(); return; }
   saveCurrentSectionState();
   try{ readOptParamsFromDOM(); }catch(e){}
-  const project={version:1,activeSection:activeSection,sections:sections,optParams:optParams};
+  const project={version:1,activeSection:activeSection,sections:sections,optParams:optParams,displayUnits:displayUnits};
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project_to_path){
     window.pywebview.api.save_project_to_path(json, currentFilePath).then(res=>{
@@ -1334,7 +1361,8 @@ function saveProject(){
     version:1,
     activeSection:activeSection,
     sections:sections,
-    optParams:optParams
+    optParams:optParams,
+    displayUnits:displayUnits
   };
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project){
@@ -1400,6 +1428,21 @@ function applyProjectData(data){
     if(data.optParams.stir) Object.assign(optParams.stir, data.optParams.stir);
   }
   try{ writeOptParamsToDOM(); }catch(e){}
+  // Restore display unit preferences if present in project file (Feature 2)
+  if(data.displayUnits && (data.displayUnits.force==='kip'||data.displayUnits.force==='lbf')
+     && (data.displayUnits.length==='in'||data.displayUnits.length==='ft')){
+    const prev = {...displayUnits};
+    displayUnits = data.displayUnits;
+    const fSel = document.getElementById('unitForce');
+    const lSel = document.getElementById('unitLength');
+    if(fSel) fSel.value = displayUnits.force;
+    if(lSel) lSel.value = displayUnits.length;
+    // Refresh unit-span labels (loadSectionState below will set field values)
+    document.querySelectorAll('[data-unit-kind]').forEach(el => {
+      el.innerHTML = unitLabel(el.dataset.unitKind);
+    });
+    try{ localStorage.setItem('displayUnits', JSON.stringify(displayUnits)); }catch(e){}
+  }
   loadSectionState(activeSection);
   updateSectionDropdown();
   updateFileDisplay(data._filepath||null);
@@ -1436,21 +1479,15 @@ function setupAutoCalculate(){
     if(e.target.matches('input[type="number"], input[type="text"], select, input[type="checkbox"]')){
       debouncedCalculate();
     }
-    // Handle Longitudinal Reinforcement ASTM spec change
+    // Handle Longitudinal Reinforcement ASTM spec change — drives BOTH fy and
+    // fy_trans unless the per-field override checkbox is checked.
     if(e.target.id === 'astm_spec'){
-      const astmMap = {
-        'A615_60': {fy: 60, note: 'ASTM A615 Grade 60'},
-        'A615_75': {fy: 75, note: 'ASTM A615 Grade 75'},
-        'A615_80': {fy: 80, note: 'ASTM A615 Grade 80'},
-        'A706_60': {fy: 60, note: 'ASTM A706 Grade 60'},
-        'A706_80': {fy: 80, note: 'ASTM A706 Grade 80'},
-        'A1035_100': {fy: 100, note: 'ASTM A1035 Grade 100'}
-      };
-      const spec = astmMap[e.target.value];
-      if(spec){
-        document.getElementById('fy').value = spec.fy;
-        document.getElementById('fy_note').textContent = spec.note;
-      }
+      applyAstmFy();
+    }
+    // Override toggles for fy and fy_trans — unlock the field for editing,
+    // or re-lock and re-derive from current ASTM spec.
+    if(e.target.id === 'fy_ovr' || e.target.id === 'fy_trans_ovr'){
+      applyAstmFy();
     }
     // Auto-run PT calc when any PT tab input changes (but not demand-row fields)
     if(e.target.closest('#tab-pt') && !e.target.closest('#tab-demands')){
@@ -2366,20 +2403,23 @@ function rebuildDemandThead(){
     // ── Row 2: column sub-headers ────────────────────────────────────────────
     // rs2 adds rowspan="2" to every non-D/C cell when nRows=3, so those columns
     // are fully covered in row 3 (which otherwise only contains V and Long.).
-    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>`;
-    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small>in</small></th>`;
-    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small>ksi</small></th>`;
-    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>`;
-    r2+=`<th${rs2} class="grp-demand">P<sub>u</sub><br><small>kip</small></th>`;
-    r2+=`<th${rs2} class="grp-demand">M<sub>u</sub><br><small>k-in</small></th>`;
-    r2+=`<th${rs2} class="grp-demand">V<sub>u</sub><br><small>kip</small></th>`;
-    r2+=`<th${rs2} class="grp-demand">T<sub>u</sub><br><small>k-in</small></th>`;
+    // Demand-table units render via unitLabel() so they auto-track displayUnits.
+    // Note: column header for x is the location-along-span (always shown in user
+    // length units); k-in shorthand is rendered as 'kip-in'/'kip-ft' etc.
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">x<br><small data-unit-kind="length">${unitLabel('length')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">y<sub>p</sub><br><small data-unit-kind="length">${unitLabel('length')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">f<sub>pe</sub><br><small data-unit-kind="stress">${unitLabel('stress')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small data-unit-kind="force">${unitLabel('force')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">P<sub>u</sub><br><small data-unit-kind="force">${unitLabel('force')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">M<sub>u</sub><br><small data-unit-kind="moment">${unitLabel('moment')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">V<sub>u</sub><br><small data-unit-kind="force">${unitLabel('force')}</small></th>`;
+    r2+=`<th${rs2} class="grp-demand">T<sub>u</sub><br><small data-unit-kind="moment">${unitLabel('moment')}</small></th>`;
     r2+=`<th${rs2} class="grp-status">Considered?</th>`;
-    r2+=`<th${rs2} class="grp-capacity">M<sub>r</sub><br><small>k-in</small></th>`;
-    if(flags.m1) r2+=`<th${rs2} class="grp-capacity">Simp.<br><small>kip</small></th>`;
-    if(flags.m2) r2+=`<th${rs2} class="grp-capacity">GP<br><small>kip</small></th>`;
-    if(flags.m3) r2+=`<th${rs2} class="grp-capacity">B5<br><small>kip</small></th>`;
-    r2+=`<th${rs2} class="grp-capacity">T<sub>r</sub><br><small>k-in</small></th>`;
+    r2+=`<th${rs2} class="grp-capacity">M<sub>r</sub><br><small data-unit-kind="moment">${unitLabel('moment')}</small></th>`;
+    if(flags.m1) r2+=`<th${rs2} class="grp-capacity">Simp.<br><small data-unit-kind="force">${unitLabel('force')}</small></th>`;
+    if(flags.m2) r2+=`<th${rs2} class="grp-capacity">GP<br><small data-unit-kind="force">${unitLabel('force')}</small></th>`;
+    if(flags.m3) r2+=`<th${rs2} class="grp-capacity">B5<br><small data-unit-kind="force">${unitLabel('force')}</small></th>`;
+    r2+=`<th${rs2} class="grp-capacity">T<sub>r</sub><br><small data-unit-kind="moment">${unitLabel('moment')}</small></th>`;
     // D/C sub-headers in row 2
     if(flags.longReinf){
       // M and T span rows 2+3; Shear spans 2 cols, with V and Long. filling row 3
@@ -2510,6 +2550,31 @@ function removeLastDemandRow(){
   demandRowCount--;
   if(activeRow>demandRowCount) selectDemandRow(demandRowCount);
 }
+function clearAllDemandRows(){
+  // Remove all demand rows, leaving one empty row (matches min-1 convention
+  // of removeLastDemandRow). Confirm prompt only when >1 row exists.
+  if(demandRowCount>1){
+    if(!confirm(`Remove all ${demandRowCount} demand rows? One empty row will remain.`)) return;
+    while(demandRowCount>1){
+      document.getElementById('dr_'+demandRowCount).remove();
+      demandRowCount--;
+    }
+  }
+  // Reset the remaining row #1 to defaults (zeros for forces, blank for optional location/PT overrides)
+  const row=document.getElementById('dr_1');
+  if(row){
+    row.querySelectorAll('input').forEach(inp=>{
+      if(inp.classList.contains('dr-x')||inp.classList.contains('dr-dp')||inp.classList.contains('dr-fpe')){
+        inp.value='';
+      } else {
+        inp.value='0';
+      }
+    });
+    const modeSelect=row.querySelector('.dr-pt-mode');
+    if(modeSelect) modeSelect.value='layout';
+  }
+  selectDemandRow(1);
+}
 function selectDemandRow(n){
   activeRow=n;
   document.querySelectorAll('#demandBody tr').forEach(tr=>tr.classList.remove('active-row'));
@@ -2520,8 +2585,22 @@ function selectDemandRow(n){
 function getDemandRow(n){
   const row=document.getElementById('dr_'+n);
   if(!row) return null;
-  const gv=(cls)=>{const v=parseFloat(row.querySelector('.'+cls).value);return isNaN(v)?0:v;};
-  const gvn=(cls)=>{const el=row.querySelector('.'+cls);if(!el)return null;const v=parseFloat(el.value);return isNaN(v)||el.value.trim()===''?null:v;};
+  // gv / gvn return values converted from display units to engine units
+  // (kip/in/ksi) via DEMAND_ROW_KINDS — engine never sees lbf or ft.
+  const gv=(cls)=>{
+    const v=parseFloat(row.querySelector('.'+cls).value);
+    if(isNaN(v)) return 0;
+    const kind=DEMAND_ROW_KINDS[cls];
+    return (kind && kind!=='dimensionless') ? toEngine(v, kind) : v;
+  };
+  const gvn=(cls)=>{
+    const el=row.querySelector('.'+cls);
+    if(!el) return null;
+    const v=parseFloat(el.value);
+    if(isNaN(v)||el.value.trim()==='') return null;
+    const kind=DEMAND_ROW_KINDS[cls];
+    return (kind && kind!=='dimensionless') ? toEngine(v, kind) : v;
+  };
   return {Pu:gv('dr-Pu'),Mu:gv('dr-Mu'),Vu:gv('dr-Vu'),Tu:gv('dr-Tu'),Vp:gv('dr-Vp'),Ps:gv('dr-Ps'),Ms:gv('dr-Ms'),
           x:gvn('dr-x'),dp:gvn('dr-dp'),fpe:gvn('dr-fpe')};
 }
@@ -3431,8 +3510,266 @@ const V=id=>{const el=document.getElementById(id);const v=parseFloat(el.value);r
 // AASHTO 5.4.2.4-1 helpers (shared between gatherInputs, buildInputsFromState, PT tab):
 function computeWc(fc){ return fc<=5 ? 0.145 : 0.140 + 0.001*fc; }              // kcf
 function computeEcAASHTO(fc, K1, wc){ return 120000*K1*wc*wc*Math.pow(fc,0.33); } // ksi
+
+// ASTM grade → standard yield strength fy (ksi) and human-readable note.
+// Used by both the longitudinal (fy) and stirrup (fy_trans) inputs unless
+// the per-field override checkbox is active.
+const ASTM_FY_MAP = {
+  'A615_60':   {fy: 60,  note: 'ASTM A615 Grade 60'},
+  'A615_75':   {fy: 75,  note: 'ASTM A615 Grade 75'},
+  'A615_80':   {fy: 80,  note: 'ASTM A615 Grade 80'},
+  'A706_60':   {fy: 60,  note: 'ASTM A706 Grade 60'},
+  'A706_80':   {fy: 80,  note: 'ASTM A706 Grade 80'},
+  'A1035_100': {fy: 100, note: 'ASTM A1035 Grade 100'}
+};
+function applyAstmFy(){
+  // Sync fy and fy_trans to the chosen ASTM spec, respecting per-field overrides.
+  const spec = ASTM_FY_MAP[document.getElementById('astm_spec').value];
+  if(!spec) return;
+  ['fy','fy_trans'].forEach(id=>{
+    const ovr = document.getElementById(id+'_ovr').checked;
+    const el  = document.getElementById(id);
+    const noteEl = document.getElementById(id+'_note');
+    if(ovr){
+      el.readOnly = false;
+      el.classList.remove('auto-calc');
+      if(noteEl) noteEl.textContent = 'Override (manual)';
+    } else {
+      el.value = spec.fy;
+      el.readOnly = true;
+      el.classList.add('auto-calc');
+      if(noteEl) noteEl.textContent = spec.note;
+    }
+  });
+}
 const F=(v,d=2)=>isFinite(v)?v.toFixed(d):'—';
-const R=(l,v,u='')=>`<div class="result-row"><span class="result-label">${l}</span><span class="result-value">${v}<span class="result-unit">${u}</span></span></div>`;
+const R=(l,v,u='')=>`<div class="result-row"><span class="result-label">${l}</span><span class="result-value">${v}<span class="result-unit" data-engine-unit="${u}">${u}</span></span></div>`;
+
+/* ====== UNIT SYSTEM (force: kip↔lbf, length: in↔ft) ======
+ * Engine always works in kip / inch / ksi. UI converts at the boundary:
+ *   - Inputs: toEngine() before sending to Python (in gatherInputs).
+ *   - Outputs: post-render DOM walk converts displayed values + relabels units.
+ * On unit switch: convert all input fields, re-render outputs (which then
+ * get post-converted). Persisted to localStorage. */
+let displayUnits = { force: 'kip', length: 'in' };
+
+function unitFactor(kind) {
+  // Engine value × factor = display value
+  const f = displayUnits.force === 'lbf' ? 1000 : 1;
+  const l = displayUnits.length === 'ft' ? 1/12 : 1;
+  switch (kind) {
+    case 'force':            return f;
+    case 'length':           return l;
+    case 'stress':           return f / (l * l);
+    case 'moment':           return f * l;
+    case 'area':             return l * l;
+    case 'force_per_length': return f / l;
+    case 'area_per_length':  return l;
+    case 'unit_weight':      return f;
+    case 'dimensionless':    return 1;
+    default:                 return 1;
+  }
+}
+function fromEngine(v, kind) { return isFinite(v) ? v * unitFactor(kind) : v; }
+function toEngine(v, kind)   { return isFinite(v) ? v / unitFactor(kind) : v; }
+
+function unitLabel(kind) {
+  const f = displayUnits.force, l = displayUnits.length;
+  const tbl = {
+    force:           {kip:{in:'kip',ft:'kip'},     lbf:{in:'lbf',ft:'lbf'}},
+    length:          {kip:{in:'in',ft:'ft'},       lbf:{in:'in',ft:'ft'}},
+    stress:          {kip:{in:'ksi',ft:'ksf'},     lbf:{in:'psi',ft:'psf'}},
+    moment:          {kip:{in:'kip-in',ft:'kip-ft'}, lbf:{in:'lbf-in',ft:'lbf-ft'}},
+    area:            {kip:{in:'in&sup2;',ft:'ft&sup2;'}, lbf:{in:'in&sup2;',ft:'ft&sup2;'}},
+    force_per_length:{kip:{in:'kip/in',ft:'kip/ft'}, lbf:{in:'lbf/in',ft:'lbf/ft'}},
+    area_per_length: {kip:{in:'in&sup2;/in',ft:'ft&sup2;/ft'}, lbf:{in:'in&sup2;/in',ft:'ft&sup2;/ft'}},
+    unit_weight:     {kip:{in:'kcf',ft:'kcf'},     lbf:{in:'pcf',ft:'pcf'}},
+    dimensionless:   {kip:{in:'',ft:''},           lbf:{in:'',ft:''}},
+  };
+  return tbl[kind]?.[f]?.[l] ?? '';
+}
+
+// Map engine unit string (as appears in HTML/R/RR) → unit kind
+const UNIT_TO_KIND = {
+  'in':'length', 'in.':'length',
+  'kip':'force',
+  'kip-in':'moment', 'kip·in':'moment', 'kip&middot;in':'moment',
+  'kip-ft':'moment', 'kip·ft':'moment', 'kip&middot;ft':'moment',
+  'ksi':'stress',
+  'in²':'area', 'in&sup2;':'area',
+  'kcf':'unit_weight',
+  'kip/in':'force_per_length',
+  'in²/in':'area_per_length', 'in&sup2;/in':'area_per_length',
+};
+
+// Input fields that hold engine-unit values needing conversion on unit switch
+const INPUT_FIELD_KINDS = {
+  // Geometry — length
+  b_flange:'length', h_total:'length', b_web:'length',
+  hf_top:'length', hf_bot:'length', cover:'length',
+  ag:'length',
+  // Materials — stress
+  fc:'stress', fy:'stress', fy_trans:'stress',
+  Ec:'stress', Es:'stress', fpu:'stress', fpy:'stress',
+  Ept:'stress', fpe:'stress', fci:'stress',
+  // Materials — special
+  wc:'unit_weight',
+  // Spacings — length
+  shear_s:'length', s_torsion:'length', at_add_s:'length', duct_dia:'length',
+  // PT — stress / length / moment
+  pt_fpj:'stress', pt_fpe:'stress',
+  delta_set:'length', pt_H:'length',
+  pt_M_sw:'moment',
+  // Strand area
+  strand_area:'area',
+  // dp / dp_input — length
+  dp_input:'length',
+  // Override fields for d_top / d_bot
+  d_top_override:'length', d_bot_override:'length',
+};
+
+// Demand row CSS classes → kind
+const DEMAND_ROW_KINDS = {
+  'dr-Pu':'force','dr-Vu':'force','dr-Vp':'force','dr-Ps':'force',
+  'dr-Mu':'moment','dr-Tu':'moment','dr-Ms':'moment',
+  'dr-x':'length','dr-dp':'length','dr-fpe':'stress',
+};
+
+// Walk all input fields in INPUT_FIELD_KINDS, find the sibling unit span,
+// and tag it with data-unit-kind so applyUnits() can refresh its label.
+function autoTagInputUnits() {
+  for (const [id, kind] of Object.entries(INPUT_FIELD_KINDS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    let sib = el.nextElementSibling;
+    while (sib && !(sib.tagName === 'SPAN' && sib.classList.contains('unit'))) {
+      sib = sib.nextElementSibling;
+    }
+    if (sib) sib.dataset.unitKind = kind;
+  }
+}
+
+// Post-render: walk all rendered output spans and convert values/labels
+// from engine units into current display units. Idempotent — uses
+// data-engine-unit on each unit span (set by R/RR) to find the kind.
+function convertRenderedOutputs(root) {
+  root = root || document;
+  // Inline report rows (R helper) and PDF report rows (RR helper) both
+  // produce <span class="result-unit"> or <span class="rpt-unit">.
+  root.querySelectorAll('.result-unit, .rpt-unit').forEach(unitSpan => {
+    // Skip equation breakdowns — they use AASHTO-native units (kip-in-ksi)
+    if (unitSpan.closest('.no-unit-convert')) return;
+    const engineUnit = unitSpan.dataset.engineUnit;
+    if (engineUnit === undefined || engineUnit === '') return;
+    const kind = UNIT_TO_KIND[engineUnit];
+    if (!kind || kind === 'dimensionless') return;
+    const valueSpan = unitSpan.parentElement;
+    if (!valueSpan) return;
+    // Value lives in a text node before the unit span. Find it.
+    let valueNode = null;
+    for (const n of valueSpan.childNodes) {
+      if (n.nodeType === Node.TEXT_NODE && n.textContent.trim()) { valueNode = n; break; }
+    }
+    if (!valueNode) return;
+    const txt = valueNode.textContent.trim();
+    // Track decimals from original render
+    let decimals = parseInt(unitSpan.dataset.decimals || '');
+    if (!isFinite(decimals)) {
+      decimals = (txt.split('.')[1] || '').length;
+      unitSpan.dataset.decimals = decimals;
+    }
+    // Engine value: re-derive from data-engine-value if set, else from current text
+    let engineV = parseFloat(unitSpan.dataset.engineValue);
+    if (!isFinite(engineV)) {
+      engineV = parseFloat(txt);
+      if (!isFinite(engineV)) return;
+      unitSpan.dataset.engineValue = engineV;
+    }
+    const display = fromEngine(engineV, kind);
+    valueNode.textContent = display.toFixed(decimals);
+    unitSpan.textContent = unitLabel(kind);
+  });
+}
+
+function applyUnits(prevUnits) {
+  // 1. Convert all input fields' values from prevUnits to current displayUnits.
+  if (prevUnits) {
+    const savedDisplay = displayUnits;
+    const convertField = (el, kind) => {
+      if (!el || el.value === '' || el.value == null) return;
+      const v = parseFloat(el.value);
+      if (!isFinite(v)) return;
+      // (display in prevUnits) → engine → (display in current)
+      displayUnits = prevUnits;
+      const engineV = toEngine(v, kind);
+      displayUnits = savedDisplay;
+      const newDisplay = fromEngine(engineV, kind);
+      // Trim trailing zeros for cleanliness; keep up to 4 decimals
+      const formatted = (Math.abs(newDisplay) < 1e-9) ? '0'
+                       : newDisplay.toFixed(4).replace(/(\.\d*?)0+$/,'$1').replace(/\.$/,'');
+      el.value = formatted;
+    };
+    for (const [id, kind] of Object.entries(INPUT_FIELD_KINDS)) {
+      convertField(document.getElementById(id), kind);
+    }
+    document.querySelectorAll('#demandBody tr').forEach(tr => {
+      for (const [cls, kind] of Object.entries(DEMAND_ROW_KINDS)) {
+        convertField(tr.querySelector('.' + cls), kind);
+      }
+    });
+  }
+  // 2. Update all input unit-span labels.
+  document.querySelectorAll('[data-unit-kind]').forEach(el => {
+    el.innerHTML = unitLabel(el.dataset.unitKind);
+  });
+  // 3. Re-render outputs (Python returns values in engine units; R/RR
+  //    will produce engine-unit HTML; convertRenderedOutputs will then
+  //    rewrite values + labels into display units).
+  if (typeof runAllCalculations === 'function') runAllCalculations();
+  // 4. Persist
+  try { localStorage.setItem('displayUnits', JSON.stringify(displayUnits)); } catch(e) {}
+}
+
+function setDisplayUnit(axis, value) {
+  if (displayUnits[axis] === value) return;
+  const prev = { ...displayUnits };
+  displayUnits[axis] = value;
+  applyUnits(prev);
+}
+
+function restoreUnits() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('displayUnits') || 'null');
+    if (saved && (saved.force === 'kip' || saved.force === 'lbf')
+              && (saved.length === 'in' || saved.length === 'ft')) {
+      displayUnits = saved;
+      // Sync the dropdowns
+      const fSel = document.getElementById('unitForce');
+      const lSel = document.getElementById('unitLength');
+      if (fSel) fSel.value = saved.force;
+      if (lSel) lSel.value = saved.length;
+    }
+  } catch(e) {}
+}
+
+// VE(id) — read a numeric input field's value AS THE ENGINE EXPECTS IT
+// (kip / inch / ksi), converting from the user's display units.
+// Use this in place of V() throughout gatherInputs() so the engine never
+// sees lbf or ft, no matter what the user has selected in the switcher.
+function VE(id){
+  const v = V(id);
+  const kind = INPUT_FIELD_KINDS[id];
+  return (kind && kind !== 'dimensionless') ? toEngine(v, kind) : v;
+}
+// setVE(id, engineVal, decimals) — write an auto-calculated engine-unit
+// value back into a display field, converting to the user's display units.
+function setVE(id, engineVal, decimals=4){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const kind = INPUT_FIELD_KINDS[id];
+  const display = (kind && kind !== 'dimensionless') ? fromEngine(engineVal, kind) : engineVal;
+  el.value = isFinite(display) ? display.toFixed(decimals) : '';
+}
 const BG=(ok,y='PASS',n='FAIL')=>ok?`<span class="badge badge-pass">${y}</span>`:`<span class="badge badge-fail">${n}</span>`;
 const BW=t=>`<span class="badge badge-warn">${t}</span>`;
 const BI=t=>`<span class="badge badge-info">${t}</span>`;
@@ -3474,7 +3811,9 @@ function toggleShowAll(){
 
 /* ====== MAIN — calls Python calc engine via pywebview bridge ====== */
 function gatherInputs(){
-  const fc=V('fc'),fy=V('fy'),fy_trans=V('fy_trans'),Es=V('Es'),fpu=V('fpu'),Ept=V('Ept'),ag=V('ag'),lam=V('lambda'),phi_v=V('phi_v'),gamma_e=parseFloat(document.getElementById('gamma_e').value);
+  // VE(id) returns engine-unit values (kip/in/ksi) regardless of displayUnits.
+  // Use VE() for everything that goes into AASHTO formulas (engine-side).
+  const fc=VE('fc'),fy=VE('fy'),fy_trans=VE('fy_trans'),Es=VE('Es'),fpu=VE('fpu'),Ept=VE('Ept'),ag=VE('ag'),lam=V('lambda'),phi_v=V('phi_v'),gamma_e=parseFloat(document.getElementById('gamma_e').value);
   const codeEdition=document.getElementById('codeEdition').value;
   const sectionClass=document.getElementById('sectionClass').value;
   // Unit weight wc (kcf) — auto from f'c rule unless override
@@ -3482,24 +3821,24 @@ function gatherInputs(){
   const wcNoteEl=document.getElementById('wcNote');
   let wc;
   if(document.getElementById('wc_ovr').checked){
-    wc=V('wc'); wcEl.readOnly=false; wcEl.classList.remove('auto-calc');
+    wc=VE('wc'); wcEl.readOnly=false; wcEl.classList.remove('auto-calc');
   } else {
-    wc=computeWc(fc); wcEl.value=wc.toFixed(3); wcEl.readOnly=true; wcEl.classList.add('auto-calc');
+    wc=computeWc(fc); setVE('wc', wc, 3); wcEl.readOnly=true; wcEl.classList.add('auto-calc');
     if(wcNoteEl) wcNoteEl.innerHTML = (fc<=5)
       ? "0.145 (f'<sub>c</sub> &le; 5 ksi)"
       : "0.140 + 0.001&middot;f'<sub>c</sub>";
   }
-  // K1 (default 1.0 if blank)
+  // K1 (default 1.0 if blank) — dimensionless, no conversion needed
   const K1 = V('K1') || 1.0;
-  // Ec — AASHTO 5.4.2.4-1
+  // Ec — AASHTO 5.4.2.4-1 (works in engine units: ksi out from kcf, ksi in)
   const ecEl=document.getElementById('Ec');
-  let Ec; if(document.getElementById('Ec_ovr').checked){ Ec=V('Ec'); ecEl.readOnly=false; ecEl.classList.remove('auto-calc'); }
-  else { Ec=computeEcAASHTO(fc,K1,wc); ecEl.value=Ec.toFixed(1); ecEl.readOnly=true; ecEl.classList.add('auto-calc'); }
+  let Ec; if(document.getElementById('Ec_ovr').checked){ Ec=VE('Ec'); ecEl.readOnly=false; ecEl.classList.remove('auto-calc'); }
+  else { Ec=computeEcAASHTO(fc,K1,wc); setVE('Ec', Ec, 1); ecEl.readOnly=true; ecEl.classList.add('auto-calc'); }
   // fpy
   const fpyEl=document.getElementById('fpy');
-  let fpy; if(document.getElementById('fpy_ovr').checked){ fpy=V('fpy'); fpyEl.readOnly=false; fpyEl.classList.remove('auto-calc'); }
-  else { fpy=0.9*fpu; fpyEl.value=fpy.toFixed(1); fpyEl.readOnly=true; fpyEl.classList.add('auto-calc'); }
-  // ecl (compression-controlled strain limit)
+  let fpy; if(document.getElementById('fpy_ovr').checked){ fpy=VE('fpy'); fpyEl.readOnly=false; fpyEl.classList.remove('auto-calc'); }
+  else { fpy=0.9*fpu; setVE('fpy', fpy, 1); fpyEl.readOnly=true; fpyEl.classList.add('auto-calc'); }
+  // ecl (compression-controlled strain limit) — dimensionless, no conversion
   const eclEl=document.getElementById('ecl');
   let ecl_override=document.getElementById('ecl_ovr').checked;
   let ecl;
@@ -3524,35 +3863,36 @@ function gatherInputs(){
     document.getElementById('etlNote').textContent=fy<=75?'0.005 (f_y ≤ 75)':'interpolated';
   }
   const secType=document.getElementById('sectionType').value;
-  const b=V('b_flange'),h=V('h_total'),bw_input=V('b_web'),hf_top=V('hf_top'),hf_bot=V('hf_bot'),cover=V('cover');
+  // All geometric values in engine units (in) regardless of display units
+  const b=VE('b_flange'),h=VE('h_total'),bw_input=VE('b_web'),hf_top=VE('hf_top'),hf_bot=VE('hf_bot'),cover=VE('cover');
   // Stirrup bar (read early — needed for d_top/d_bot auto-calc)
   const shN=parseInt(document.getElementById('shear_bar').value);
   const shBar=(shN===0)?null:(BARS[shN]||BARS[4]);
   let shear_legs=V('shear_legs');
-  let s_shear=V('shear_s');
+  let s_shear=VE('shear_s');
   // When "None" is selected for stirrups, force shear_legs and s_shear to 0 so Av=0 in Python
   if(shN===0) { shear_legs=0; s_shear=0; }
-  const db_stir=(shBar)?shBar.d:0; // stirrup bar diameter, 0 if None selected
+  const db_stir=(shBar)?shBar.d:0; // stirrup bar diameter (in, hardcoded in BARS)
   // Additional torsion bar inputs
   const at_add_bar_N = parseInt(document.getElementById('at_add_bar').value) || 0;
-  const s_at_add = at_add_bar_N > 0 ? V('at_add_s') : 0;
+  const s_at_add = at_add_bar_N > 0 ? VE('at_add_s') : 0;
   // Top bars
   const barN_top=parseInt(document.getElementById('top_bar').value);
   const nBars_top=V('n_bars_top');
   const bar_top=BARS[barN_top]||null;
   const dTopEl=document.getElementById('d_top_override');
-  let d_top; if(document.getElementById('d_top_ovr').checked){ d_top=V('d_top_override'); dTopEl.readOnly=false; dTopEl.classList.remove('auto-calc'); }
-  else { d_top=(bar_top?cover+db_stir+bar_top.d/2:cover); dTopEl.value=d_top.toFixed(4); dTopEl.readOnly=true; dTopEl.classList.add('auto-calc'); }
+  let d_top; if(document.getElementById('d_top_ovr').checked){ d_top=VE('d_top_override'); dTopEl.readOnly=false; dTopEl.classList.remove('auto-calc'); }
+  else { d_top=(bar_top?cover+db_stir+bar_top.d/2:cover); dTopEl.value=fromEngine(d_top,'length').toFixed(4); dTopEl.readOnly=true; dTopEl.classList.add('auto-calc'); }
   // Bottom bars
   const barN_bot=parseInt(document.getElementById('bot_bar').value);
   const nBars_bot=V('n_bars_bot');
   const bar_bot=BARS[barN_bot]||BARS[7];
   const dBotEl=document.getElementById('d_bot_override');
-  let d_bot; if(document.getElementById('d_bot_ovr').checked){ d_bot=V('d_bot_override'); dBotEl.readOnly=false; dBotEl.classList.remove('auto-calc'); }
-  else { d_bot=h-cover-db_stir-bar_bot.d/2; dBotEl.value=d_bot.toFixed(4); dBotEl.readOnly=true; dBotEl.classList.add('auto-calc'); }
-  const nStrands=V('n_strands'), strand_area=V('strand_area'), ductDia=V('duct_dia');
+  let d_bot; if(document.getElementById('d_bot_ovr').checked){ d_bot=VE('d_bot_override'); dBotEl.readOnly=false; dBotEl.classList.remove('auto-calc'); }
+  else { d_bot=h-cover-db_stir-bar_bot.d/2; dBotEl.value=fromEngine(d_bot,'length').toFixed(4); dBotEl.readOnly=true; dBotEl.classList.add('auto-calc'); }
+  const nStrands=V('n_strands'), strand_area=VE('strand_area'), ductDia=VE('duct_dia');
   // dp and fpe: when mode=layout, use value from PT-populated demand row; when manual, use input directly
-  const dp=V('dp_input'), fpe=V('fpe_input')||0;
+  const dp=VE('dp_input'), fpe=V('fpe_input')||0;
   const tN=(shN===0)?4:shN; // Default to #4 if None selected, for Python processing
   const s_torsion=s_shear;
   // Multi-row As overrides (when mixed bar sizes, nBars*bar_a won't match real total)
@@ -3638,23 +3978,23 @@ function runAllCalculations(){
         try{ drawPMStrainStress(res.flexure, res.inputs, res.demands.Pu, res.demands.Mu); }catch(e){ console.error('drawPMStrainStress error:',e); }
         try{ fillPMTable(res.flexure.pm_data); }catch(e){ console.error('fillPMTable error:',e); }
         try{ fillPMKeyPoints(res.flexure.pm_key_points||[]); }catch(e){ console.error('fillPMKeyPoints error:',e); }
-        // Demand rows
+        // Demand rows — convert engine values to display units (Mr=moment, Vr=force, Tr=moment)
         res.row_results.forEach((cap,i)=>{
           const n=i+1;
-          document.getElementById('cap_Mr_'+n).textContent=F(cap.Mr,0);
+          document.getElementById('cap_Mr_'+n).textContent=F(fromEngine(cap.Mr,'moment'),0);
           // Vr cells with capped marker (†) and tooltip when Vnmax governs
           const setCapVr=(id,val,capped,uncapped)=>{
             const el=document.getElementById(id);
-            el.textContent=F(val,0)+(capped?' †':'');
+            el.textContent=F(fromEngine(val,'force'),0)+(capped?' †':'');
             el.title=capped
-              ? `V_n,max governs: V_c+V_s+V_p = ${F(uncapped,1)} kip > V_n,max = ${F(cap.Vnmax,1)} kip → V_r capped at φ·V_n,max (AASHTO 5.7.3.3-2)`
+              ? `V_n,max governs: V_c+V_s+V_p = ${F(fromEngine(uncapped,'force'),1)} ${unitLabel('force')} > V_n,max = ${F(fromEngine(cap.Vnmax,'force'),1)} ${unitLabel('force')} → V_r capped at φ·V_n,max (AASHTO 5.7.3.3-2)`
               : '';
             el.classList.toggle('cap-cell-vnmax',capped);
           };
           setCapVr('cap_Vr1_'+n,cap.Vr1,cap.Vn1_capped,cap.Vn1_uncapped);
           setCapVr('cap_Vr2_'+n,cap.Vr2,cap.Vn2_capped,cap.Vn2_uncapped);
           setCapVr('cap_Vr3_'+n,cap.Vr3,cap.Vn3_capped,cap.Vn3_uncapped);
-          document.getElementById('cap_Tr_'+n).textContent=F(cap.Tr,0);
+          document.getElementById('cap_Tr_'+n).textContent=F(fromEngine(cap.Tr,'moment'),0);
           setDC(n,'M',demandRows[i].Mu,cap.Mr);
           setDCShear(n,demandRows[i].Vu,cap.Vr1,cap.Vr2,cap.Vr3);
           setDC(n,'T',demandRows[i].Tu,cap.Tr);
@@ -3701,6 +4041,10 @@ function runAllCalculations(){
           }
         });
         applyDemandColVisibility();
+        // Post-render unit conversion: walk all .result-unit/.rpt-unit spans
+        // and convert engine values + labels into the user's display units.
+        // Spans inside .no-unit-convert (equation breakdowns) are skipped.
+        try{ convertRenderedOutputs(document); }catch(e){ console.error('convertRenderedOutputs error:',e); }
       }catch(e){ console.error('Parse error:',e); }
     });
   } else { console.warn('pywebview.api not available — running in browser without Python backend'); }
@@ -5310,7 +5654,7 @@ function drawPtForceProfile(res){
    REPORT GENERATION
    ==================================================================== */
 let _lastRes=null; // store last full calculation result
-function RR(lbl,val,unit){return `<div class="rpt-row"><span class="rpt-lbl">${lbl}</span><span class="rpt-val">${val}${unit?'<span class="rpt-unit">'+unit+'</span>':''}</span></div>`;}
+function RR(lbl,val,unit){return `<div class="rpt-row"><span class="rpt-lbl">${lbl}</span><span class="rpt-val">${val}${unit?'<span class="rpt-unit" data-engine-unit="'+unit+'">'+unit+'</span>':''}</span></div>`;}
 function REQ(eq){return `<div class="rpt-eq">${eq}</div>`;}
 function RREF(ref){return `<span class="rpt-ref">[${ref}]</span>`;}
 function RCHK(ok,y,n){return `<span class="rpt-check ${ok?'pass':'fail'}">${ok?'&#10003;':'&#10007;'}</span><span class="${ok?'rpt-pass':'rpt-fail'}">${ok?(y||'PASS'):(n||'FAIL')}</span>`;}
@@ -5319,7 +5663,11 @@ function RPF(ok){return ok?'<span class="rpt-pass">PASS</span>':'<span class="rp
 function renderDetailedBreakdown(breakdown, showDetails){
   if(!breakdown || !breakdown.steps || breakdown.steps.length===0) return '';
   if(!showDetails) return '';
-  let html = `<div style="background:#f7f9fc; border:1px solid #e0e6ed; border-radius:4px; padding:12px; margin:12px 0; font-family:Consolas,'Courier New',monospace; font-size:9pt; line-height:1.5; color:#2c3e50;">`;
+  // class="no-unit-convert" preserves AASHTO equation-native units (kip-in-ksi)
+  // even when the global unit switcher is set to lbf/ft. AASHTO formulas (e.g.
+  // 0.0316·λ·√fc') have hardcoded coefficients calibrated to kip/in/ksi; converting
+  // numeric substitutions in the breakdown would make them mathematically inconsistent.
+  let html = `<div class="no-unit-convert" style="background:#f7f9fc; border:1px solid #e0e6ed; border-radius:4px; padding:12px; margin:12px 0; font-family:Consolas,'Courier New',monospace; font-size:9pt; line-height:1.5; color:#2c3e50;">`;
   html += `<div style="font-weight:600; color:#1a5276; margin-bottom:8px;">${breakdown.title}</div>`;
   breakdown.steps.forEach((step,i)=>{
     html += `<div style="margin:6px 0; padding:4px 0; border-bottom:1px dotted #d0d0d0;">`;
@@ -6509,6 +6857,11 @@ function clearMR(side){
 
 window.addEventListener('load',()=>{
   updateSectionFields();updatePTFields();setupDpFpeModes();syncApsToTab();
+  // Sync fy / fy_trans to default ASTM grade on first load (Feature 3)
+  applyAstmFy();
+  // Restore saved unit preferences and tag input unit spans (Feature 2)
+  restoreUnits();
+  autoTagInputUnits();
   rebuildDemandThead();
   addDemandRow(0,6953,108,0,0,2500,-100);
   addPtParabola(0,8,50.4,24,113.4,4);addPtParabola(113.4,4,126,3,142.8,4.5);addPtParabola(142.8,4.5,210,24,277.2,4.5);addPtParabola(277.2,4.5,294,3,305.8,4);addPtParabola(305.8,4,364.8,24,412,8);
@@ -6527,7 +6880,14 @@ window.addEventListener('load',()=>{
   ['chk_method1','chk_method2','chk_method3','chk_long_reinf'].forEach(id=>{
     document.getElementById(id).addEventListener('change',()=>{rebuildDemandThead();applyDemandColVisibility();});
   });
-  setupAutoCalculate();runAllCalculations();
+  setupAutoCalculate();
+  // If user has a saved non-default unit preference, convert HTML defaults
+  // (which were authored in kip/in) into those units before the first calc.
+  if(displayUnits.force !== 'kip' || displayUnits.length !== 'in'){
+    applyUnits({force:'kip', length:'in'});
+  } else {
+    runAllCalculations();
+  }
   // Initial PT calc after backend is ready
   setTimeout(()=>runPtCalc(),800);
 
