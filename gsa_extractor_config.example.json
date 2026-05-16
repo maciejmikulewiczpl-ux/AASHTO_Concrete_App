@@ -1,0 +1,113 @@
+{
+  "_comment_top": "Example config for gsa_force_extractor.py. Copy this file, rename to e.g. gsa_extractor_config.json, edit, then run: python gsa_force_extractor.py gsa_extractor_config.json",
+
+  "gsa_file": "C:/path/to/Bridge.gwb",
+  "output_csv": "C:/path/to/forces.csv",
+  "output_tsv": "C:/path/to/forces.tsv",
+
+  "units": {
+    "_comment": "Output units for forces and moments. GSA model units are detected automatically at run time.",
+    "output_force":  "kip",
+    "output_moment": "kip-in"
+  },
+
+  "signs": {
+    "_comment": "Each flag describes GSA's convention. The script flips iff GSA disagrees with the app (Pu < 0 = compression, Mu < 0 = hogging). Defaults assume the typical GSA convention: tension-positive Fx (matches app -> no flip) and hogging-positive Myy/Mzz (differs from app -> flip).",
+    "axial_compression_positive_in_gsa": false,
+    "moment_hogging_positive_in_gsa": true
+  },
+
+  "jobs": [
+    {
+      "name": "Pier cap mid-span (strength)",
+      "_comment_location": "Pick exactly one of: element / elements / group / property. Position is 0..1 along the element local x-axis, OR the string 'max' to capture the position where each enveloped force is largest.",
+      "location": {
+        "element": 124,
+        "position": "max"
+      },
+      "combo": "C1",
+      "_comment_axes": "Map app-side force names to GSA local axes. Defaults: Pu=Fx, Mu=Myy, Vu=Fz, Tu=Mxx (the convention for typical GSA beam elements where Myy is the principal bending moment).",
+      "axes": {
+        "Pu": "Fx",
+        "Mu": "Myy",
+        "Vu": "Fz",
+        "Tu": "Mxx"
+      },
+      "forces_to_output": ["Pu", "Mu", "Vu", "Tu"],
+      "_comment_envelopes": "Each rule emits top_n rows for that ranking. Coexistent forces in the same row come from the same GSA permutation (and same position when 'max' is used).",
+      "envelopes": [
+        { "action": "max",     "on": "Mu", "top_n": 3 },
+        { "action": "min",     "on": "Mu", "top_n": 3 },
+        { "action": "max_abs", "on": "Vu", "top_n": 2 },
+        { "action": "max_abs", "on": "Tu", "top_n": 1 },
+        { "action": "max",     "on": "Pu", "top_n": 1 },
+        { "action": "min",     "on": "Pu", "top_n": 1 }
+      ]
+    },
+
+    {
+      "name": "Pier cap mid-span (service)",
+      "location": {
+        "element": 124,
+        "position": 0.5
+      },
+      "combo": "C2",
+      "axes": {
+        "Ps": "Fx",
+        "Ms": "Myy"
+      },
+      "forces_to_output": ["Ps", "Ms"],
+      "envelopes": [
+        { "action": "max", "on": "Ms", "top_n": 1 },
+        { "action": "min", "on": "Ms", "top_n": 1 }
+      ]
+    },
+
+    {
+      "name": "Pile group reactions (summed)",
+      "_comment": "Set sum_across_elements=true to add force components across every element in the selection per (permutation, position). Useful for total reaction at a pile cap, total shear in a deck cross-section, etc. The Element column shows e.g. 'sum(PileGroupA)'. Requires consistent local axes across the summed elements.",
+      "location": {
+        "group": "PileGroupA",
+        "position": 0.0,
+        "sum_across_elements": true
+      },
+      "combo": "C1",
+      "axes": {
+        "Pu": "Fx",
+        "Mu": "Myy",
+        "Vu": "Fz",
+        "Tu": "Mxx"
+      },
+      "forces_to_output": ["Pu", "Mu", "Vu", "Tu"],
+      "envelopes": [
+        { "action": "max",     "on": "Pu", "top_n": 1 },
+        { "action": "min",     "on": "Pu", "top_n": 1 },
+        { "action": "max_abs", "on": "Mu", "top_n": 1 }
+      ]
+    },
+
+    {
+      "name": "Pier cap group example",
+      "_comment": "Group/property selectors WITHOUT sum_across_elements emit one block of rows per element. Useful for sweeping a whole component independently.",
+      "location": {
+        "group": "PierCap",
+        "position": "max"
+      },
+      "combo": "C1",
+      "axes": {
+        "Pu": "Fx",
+        "Mu": "Myy",
+        "Vu": "Fz",
+        "Tu": "Mxx"
+      },
+      "forces_to_output": ["Pu", "Mu", "Vu", "Tu"],
+      "envelopes": [
+        { "action": "max",     "on": "Mu", "top_n": 1 },
+        { "action": "min",     "on": "Mu", "top_n": 1 },
+        { "action": "max_abs", "on": "Vu", "top_n": 1 },
+        { "action": "max",     "on": "Pu", "top_n": 1 },
+        { "action": "min",     "on": "Pu", "top_n": 1 }
+      ]
+    }
+  ]
+}
