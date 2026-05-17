@@ -44,12 +44,17 @@ from typing import Any, Callable, Iterable, Optional
 # ---------------------------------------------------------------------------
 
 APP_FORCE_ORDER = ["Pu", "Mu", "Vu", "Tu", "Ps", "Ms"]
+APP_REACTION_ORDER = ["Rx", "Ry", "Rz", "Rxx", "Ryy", "Rzz"]
 META_COLUMNS = ["Job", "Note", "Element", "Position", "Combo", "Permutation"]
 
 # Internal-use only: the force kind -> "force" or "moment", controls unit conv.
 FORCE_KIND = {
     "Pu": "force", "Vu": "force", "Ps": "force",
     "Mu": "moment", "Tu": "moment", "Ms": "moment",
+}
+REACTION_KIND = {
+    "Rx": "force", "Ry": "force", "Rz": "force",
+    "Rxx": "moment", "Ryy": "moment", "Rzz": "moment",
 }
 
 # App sign convention (kept here so it's discoverable):
@@ -59,6 +64,8 @@ FORCE_KIND = {
 # convention; if GSA disagrees with the app, the script flips on read.
 BENDING_FORCES = ("Mu", "Ms")
 AXIAL_FORCES = ("Pu", "Ps")
+REACTION_BENDING = ("Ryy", "Rzz")
+REACTION_AXIAL = ("Rz",)
 
 # GSA local-axis names this script understands.
 GSA_AXES = {"Fx", "Fy", "Fz", "Mxx", "Myy", "Mzz"}
@@ -151,11 +158,12 @@ class SignsCfg:
     #   which matches the app -- no flip needed -> default False.
     #
     # moment_hogging_positive_in_gsa:
-    #   GSA's typical convention for beam Myy/Mzz is hogging-positive,
-    #   which DIFFERS from the app (app uses Mu<0 for hogging) -> flip,
-    #   default True.
+    #   Set True only if your GSA model uses hogging-positive moments
+    #   and you need the output flipped to app convention (Mu<0 = hogging).
+    #   Default False (no flip) — the envelope then operates directly on
+    #   the GSA values, which is the most intuitive for extraction.
     axial_compression_positive_in_gsa: bool = False
-    moment_hogging_positive_in_gsa: bool = True
+    moment_hogging_positive_in_gsa: bool = False
 
 
 @dataclass
@@ -173,6 +181,7 @@ class JobCfg:
     axes: dict[str, str]     # app-name -> GSA axis (e.g. {"Pu": "Fx", "Mu": "Mzz"})
     forces_to_output: list[str]
     envelopes: list[EnvelopeRule]
+    result_type: str = "element_forces"  # "element_forces" or "node_reactions"
 
 
 @dataclass
@@ -273,6 +282,7 @@ def _parse_job(j: dict) -> JobCfg:
         axes=dict(j["axes"]),
         forces_to_output=list(j["forces_to_output"]),
         envelopes=envelopes,
+        result_type=j.get("result_type", "element_forces"),
     )
 
 
@@ -301,6 +311,7 @@ def config_to_dict(cfg: Config) -> dict:
                     {"action": e.action, "on": e.on, "top_n": e.top_n}
                     for e in j.envelopes
                 ],
+                "result_type": j.result_type,
             }
             for j in cfg.jobs
         ],
@@ -328,12 +339,29 @@ def save_config(cfg: Config, path: str) -> None:
 
 def _validate_config(cfg: Config) -> None:
     for j in cfg.jobs:
+        is_reaction = (j.result_type == "node_reactions")
+        allowed_forces = APP_REACTION_ORDER if is_reaction else APP_FORCE_ORDER
+        rtype_label = "Node Reactions" if is_reaction else "Element Forces"
+
         # Forces requested must be supported names.
         for f in j.forces_to_output:
-            if f not in APP_FORCE_ORDER:
+            if f not in allowed_forces:
+                # Check if the name belongs to the other result type.
+                other = APP_FORCE_ORDER if is_reaction else APP_REACTION_ORDER
+                if f in other:
+                    hint = (
+                        f" ('{f}' is a {'element force' if is_reaction else 'reaction'} "
+                        f"name — switch the job's Result Type to "
+                        f"'{'Element Forces' if is_reaction else 'Node Reactions'}' "
+                        f"or choose the correct force names)"
+                    )
+                else:
+                    hint = ""
                 raise ValueError(
-                    f"Job {j.name!r}: forces_to_output contains {f!r}; "
-                    f"allowed names are {APP_FORCE_ORDER}."
+                    f"Job {j.name!r} (Result Type: {rtype_label}): "
+                    f"forces_to_output contains {f!r} which is not valid "
+                    f"for this result type; allowed names are "
+                    f"{allowed_forces}.{hint}"
                 )
             if f not in j.axes:
                 raise ValueError(
@@ -342,9 +370,11 @@ def _validate_config(cfg: Config) -> None:
                 )
         # Axis mappings must point at known GSA axes.
         for app_name, gsa_axis in j.axes.items():
-            if app_name not in APP_FORCE_ORDER:
+            if app_name not in allowed_forces:
                 raise ValueError(
-                    f"Job {j.name!r}: axis mapping for unknown force {app_name!r}."
+                    f"Job {j.name!r} (Result Type: {rtype_label}): "
+                    f"axis mapping for unknown force {app_name!r}; "
+                    f"allowed names are {allowed_forces}."
                 )
             if gsa_axis not in GSA_AXES:
                 raise ValueError(
@@ -359,32 +389,60 @@ def _validate_config(cfg: Config) -> None:
                     f"('max','min','max_abs')."
                 )
             if e.on not in j.forces_to_output:
+                if e.on in allowed_forces:
+                    hint = (
+                        f" — tick the '{e.on}' checkbox in the job editor, "
+                        f"or remove this envelope rule"
+                    )
+                else:
+                    other = APP_FORCE_ORDER if is_reaction else APP_REACTION_ORDER
+                    if e.on in other:
+                        hint = (
+                            f" — '{e.on}' is a "
+                            f"{'element force' if is_reaction else 'reaction'} name "
+                            f"but this job's Result Type is '{rtype_label}'; "
+                            f"switch the Result Type or fix the envelope"
+                        )
+                    else:
+                        hint = ""
                 raise ValueError(
-                    f"Job {j.name!r}: envelope on={e.on!r} not in "
-                    f"forces_to_output {j.forces_to_output}."
+                    f"Job {j.name!r} (Result Type: {rtype_label}): "
+                    f"envelope on={e.on!r} is not in the job's "
+                    f"forces_to_output {j.forces_to_output}.{hint}"
                 )
             if e.top_n < 1:
                 raise ValueError(
                     f"Job {j.name!r}: envelope top_n must be >= 1, got {e.top_n}."
                 )
-        # Location selector exclusivity.
-        sel = [k for k in ("element", "elements", "group", "property") if k in j.location]
-        if len(sel) != 1:
-            raise ValueError(
-                f"Job {j.name!r}: location must contain exactly one of "
-                f"element / elements / group / property (got {sel})."
-            )
-        if "position" not in j.location:
-            raise ValueError(f"Job {j.name!r}: location.position is required.")
-        pos = j.location["position"]
-        if not _is_max_position(pos):
-            try:
-                float(pos)
-            except (TypeError, ValueError):
+        # Location selector validation — different for reactions vs element forces.
+        if is_reaction:
+            sel = [k for k in ("node", "nodes") if k in j.location]
+            if len(sel) != 1:
                 raise ValueError(
-                    f"Job {j.name!r}: location.position must be a number "
-                    f"(0..1) or the string 'max'; got {pos!r}."
+                    f"Job {j.name!r} (Result Type: {rtype_label}): "
+                    f"location must contain exactly one of node / nodes "
+                    f"(got {sel}). Switch to the 'Node Reactions' result "
+                    f"type and set a node ID."
                 )
+        else:
+            sel = [k for k in ("element", "elements", "group", "property") if k in j.location]
+            if len(sel) != 1:
+                raise ValueError(
+                    f"Job {j.name!r} (Result Type: {rtype_label}): "
+                    f"location must contain exactly one of "
+                    f"element / elements / group / property (got {sel})."
+                )
+            if "position" not in j.location:
+                raise ValueError(f"Job {j.name!r}: location.position is required.")
+            pos = j.location["position"]
+            if not _is_max_position(pos):
+                try:
+                    float(pos)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"Job {j.name!r}: location.position must be a number "
+                        f"(0..1) or the string 'max'; got {pos!r}."
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +481,14 @@ def envelope_note(action: str, on: str, rank: int, total: int) -> str:
 # Convert raw GSA permutation force dicts to app-named, app-unit dicts
 # ---------------------------------------------------------------------------
 
+def _conversion_factors(gsa_force_unit: str, gsa_moment_unit: str,
+                        output_units: UnitsCfg) -> tuple[float, float]:
+    """Pre-compute force and moment conversion factors (call once)."""
+    f = force_factor(gsa_force_unit) / force_factor(output_units.output_force)
+    m = moment_factor(gsa_moment_unit) / moment_factor(output_units.output_moment)
+    return f, m
+
+
 def gsa_perm_to_app_row(
     perm: dict,
     axes: dict[str, str],
@@ -431,6 +497,8 @@ def gsa_perm_to_app_row(
     gsa_moment_unit: str,
     output_units: UnitsCfg,
     signs: SignsCfg,
+    *,
+    _factors: Optional[tuple[float, float]] = None,
 ) -> dict:
     """Translate ONE GSA permutation force-dict into output-unit force values.
 
@@ -438,10 +506,16 @@ def gsa_perm_to_app_row(
     Values are in GSA display units.  Returns a dict containing the
     requested app force names (Pu, Mu, ...) converted to the user's chosen
     output units plus "perm_id".
+
+    Pass *_factors* (from ``_conversion_factors()``) to avoid recomputing
+    unit ratios on every call.
     """
     out: dict[str, Any] = {"perm_id": perm["perm_id"]}
-    f_factor = force_factor(gsa_force_unit) / force_factor(output_units.output_force)
-    m_factor = moment_factor(gsa_moment_unit) / moment_factor(output_units.output_moment)
+    if _factors is not None:
+        f_factor, m_factor = _factors
+    else:
+        f_factor = force_factor(gsa_force_unit) / force_factor(output_units.output_force)
+        m_factor = moment_factor(gsa_moment_unit) / moment_factor(output_units.output_moment)
     for app_name in forces_to_output:
         gsa_axis = axes[app_name]
         v = float(perm[gsa_axis])
@@ -453,6 +527,39 @@ def gsa_perm_to_app_row(
         if app_name in AXIAL_FORCES and signs.axial_compression_positive_in_gsa:
             v = -v
         if app_name in BENDING_FORCES and signs.moment_hogging_positive_in_gsa:
+            v = -v
+        out[app_name] = v
+    return out
+
+
+def gsa_perm_to_app_reaction_row(
+    perm: dict,
+    axes: dict[str, str],
+    forces_to_output: list[str],
+    gsa_force_unit: str,
+    gsa_moment_unit: str,
+    output_units: UnitsCfg,
+    signs: SignsCfg,
+) -> dict:
+    """Translate ONE GSA permutation reaction-dict into output-unit values.
+
+    Same logic as gsa_perm_to_app_row but uses REACTION_KIND for the
+    force/moment classification and REACTION_AXIAL / REACTION_BENDING
+    for sign flips.
+    """
+    out: dict[str, Any] = {"perm_id": perm["perm_id"]}
+    f_factor = force_factor(gsa_force_unit) / force_factor(output_units.output_force)
+    m_factor = moment_factor(gsa_moment_unit) / moment_factor(output_units.output_moment)
+    for app_name in forces_to_output:
+        gsa_axis = axes[app_name]
+        v = float(perm[gsa_axis])
+        if REACTION_KIND[app_name] == "force":
+            v *= f_factor
+        else:
+            v *= m_factor
+        if app_name in REACTION_AXIAL and signs.axial_compression_positive_in_gsa:
+            v = -v
+        if app_name in REACTION_BENDING and signs.moment_hogging_positive_in_gsa:
             v = -v
         out[app_name] = v
     return out
@@ -751,7 +858,8 @@ class GsaApiAdapter:
         """Resolve a GSA saved-list name to its element IDs."""
         from GsaAPI import EntityType as ET  # type: ignore
         lists = self._model.Lists()
-        for _lid, lst in lists.items():
+        for lid in lists.Keys:
+            lst = lists[lid]
             if lst.Name == name and lst.Type == ET.Element:
                 ids = self._model.ExpandList(lst)
                 return sorted(int(i) for i in ids)
@@ -761,20 +869,25 @@ class GsaApiAdapter:
         """Return element IDs whose section-property number matches `prop`."""
         elements = self._model.Elements()
         prop = int(prop)
-        return sorted(
-            int(eid) for eid, e in elements.items()
-            if int(e.Property) == prop
-        )
+        result = []
+        for eid in elements.Keys:
+            e = elements[eid]
+            if int(e.Property) == prop:
+                result.append(int(eid))
+        return sorted(result)
 
     # --- batch prefetch ------------------------------------------------
 
-    def prefetch(self, combo: str, elements: list[int]) -> None:
+    def prefetch(self, combo: str, elements: list[int],
+                 progress_cb: Optional[Callable[[int, int], None]] = None,
+                 ) -> None:
         """Batch-fetch forces for `elements` x all permutations of `combo`.
 
         After this call, ``list_permutations``, ``elem_forces_all_positions``,
         and ``elem_forces_at`` all serve from cache with zero latency.
-        This is the core performance advantage: one API call replaces
-        N_elements x N_permutations individual COM round-trips.
+
+        If *progress_cb* is given it is called as
+        ``progress_cb(elem_idx, n_elements)`` after each element is fetched.
         """
         if combo in self._combo_cache:
             cached = self._combo_cache[combo]
@@ -789,28 +902,33 @@ class GsaApiAdapter:
                 f"model results. Has analysis been run in GSA?"
             )
         ccr = combo_results[case_ref]
-        elem_str = " ".join(str(e) for e in elements)
         n_pts = self.POSITION_RESOLUTION + 1
-        # axis=None → element local axes (same as gsapy axis='local')
-        forces = ccr.Element1dForce(elem_str, n_pts, None)
 
+        # Query elements individually — GsaAPI batch Element1dForce
+        # only returns position data for the lowest element ID, and the
+        # underlying Results1D is not thread-safe (AccessViolationException).
         cache: dict[int, list[list[dict]]] = {}
         n_perms = 0
-        for elem_id in forces.Keys:
-            eid = int(elem_id)
-            perm_list = forces[elem_id]
-            n_perms = max(n_perms, len(perm_list))
-            elem_data: list[list[dict]] = []
-            for perm_positions in perm_list:
-                positions: list[dict] = []
-                for d6 in perm_positions:
-                    positions.append({
-                        "Fx": float(d6.X), "Fy": float(d6.Y),
-                        "Fz": float(d6.Z), "Mxx": float(d6.XX),
-                        "Myy": float(d6.YY), "Mzz": float(d6.ZZ),
-                    })
-                elem_data.append(positions)
-            cache[eid] = elem_data
+        n_elems = len(elements)
+        for ei, eid in enumerate(elements):
+            if progress_cb is not None:
+                progress_cb(ei, n_elems)
+            forces = ccr.Element1dForce(str(eid), n_pts, None)
+            for elem_id in forces.Keys:
+                eid_int = int(elem_id)
+                perm_list = forces[elem_id]
+                n_perms = max(n_perms, len(perm_list))
+                elem_data: list[list[dict]] = []
+                for perm_positions in perm_list:
+                    positions: list[dict] = []
+                    for d6 in perm_positions:
+                        positions.append({
+                            "Fx": float(d6.X), "Fy": float(d6.Y),
+                            "Fz": float(d6.Z), "Mxx": float(d6.XX),
+                            "Myy": float(d6.YY), "Mzz": float(d6.ZZ),
+                        })
+                    elem_data.append(positions)
+                cache[eid_int] = elem_data
 
         if combo in self._combo_cache:
             self._combo_cache[combo].update(cache)
@@ -872,6 +990,71 @@ class GsaApiAdapter:
             return combo, int(num) - 1
         return perm, 0
 
+    # --- node reaction batch prefetch & query --------------------------
+
+    def prefetch_reactions(self, combo: str, nodes: list[int]) -> None:
+        """Batch-fetch node reactions for `nodes` x all permutations of `combo`.
+
+        After this call, ``node_reactions`` serves from cache.
+        Signature mirrors ``NodeReactionForce(node_list_str, axis)``
+        which returns Dict[int, ReadOnlyCollection[Double6]].
+        """
+        cache_key = f"_rxn_{combo}"
+        if hasattr(self, "_reaction_cache") and cache_key in self._reaction_cache:
+            cached = self._reaction_cache[cache_key]
+            if all(n in cached for n in nodes):
+                return
+
+        _case_type, case_ref = _parse_case_id(combo)
+        combo_results = self._model.CombinationCaseResults()
+        if case_ref not in combo_results:
+            raise RuntimeError(
+                f"Combination case {combo!r} (ref {case_ref}) not found in "
+                f"model results. Has analysis been run in GSA?"
+            )
+        ccr = combo_results[case_ref]
+        node_str = " ".join(str(n) for n in nodes)
+        # axis=None → global axes (reactions are at supports)
+        reactions = ccr.NodeReactionForce(node_str, None)
+
+        cache: dict[int, list[dict]] = {}
+        n_perms = 0
+        for node_id in reactions.Keys:
+            nid = int(node_id)
+            perm_list = reactions[node_id]
+            n_perms = max(n_perms, len(perm_list))
+            node_data: list[dict] = []
+            for d6 in perm_list:
+                node_data.append({
+                    "Fx": float(d6.X), "Fy": float(d6.Y),
+                    "Fz": float(d6.Z), "Mxx": float(d6.XX),
+                    "Myy": float(d6.YY), "Mzz": float(d6.ZZ),
+                })
+            cache[nid] = node_data
+
+        if not hasattr(self, "_reaction_cache"):
+            self._reaction_cache: dict[str, dict[int, list[dict]]] = {}
+        if cache_key in self._reaction_cache:
+            self._reaction_cache[cache_key].update(cache)
+        else:
+            self._reaction_cache[cache_key] = cache
+        # Update perm count (shared with element forces)
+        self._perm_count_cache[combo] = max(
+            self._perm_count_cache.get(combo, 0), n_perms
+        )
+
+    def node_reactions(self, node: int, perm: str) -> dict:
+        """Return reaction forces at a node for one permutation (from cache)."""
+        combo, perm_idx = self._parse_perm_string(perm)
+        cache_key = f"_rxn_{combo}"
+        cache = getattr(self, "_reaction_cache", {}).get(cache_key)
+        if cache is None or node not in cache:
+            raise RuntimeError(
+                f"Node {node} perm {perm!r} not in reaction cache. "
+                f"Call prefetch_reactions() first."
+            )
+        return dict(cache[node][perm_idx])
+
 
 # ---------------------------------------------------------------------------
 # Factory: prefer GsaAPI, fall back to gsapy
@@ -903,6 +1086,15 @@ def resolve_target_elements(adapter: Any, location: dict) -> list[int]:
     if "property" in location:
         return adapter.elements_with_property(int(location["property"]))
     raise ValueError("location must contain element / elements / group / property")
+
+
+def resolve_target_nodes(location: dict) -> list[int]:
+    """Resolve node IDs from a reaction job's location spec."""
+    if "node" in location:
+        return [int(location["node"])]
+    if "nodes" in location:
+        return [int(n) for n in location["nodes"]]
+    raise ValueError("Reaction job location must contain 'node' or 'nodes'.")
 
 
 # ---------------------------------------------------------------------------
@@ -978,6 +1170,7 @@ def _candidates_for_target(adapter: GsaAdapter, elements: list[int], job: JobCfg
         )
     candidates: list[dict] = []
     n_perms = len(perm_names)
+    factors = _conversion_factors(gsa_force_unit, gsa_moment_unit, output_units)
     if use_max_position:
         for pi, p in enumerate(perm_names):
             if sum_across:
@@ -990,6 +1183,7 @@ def _candidates_for_target(adapter: GsaAdapter, elements: list[int], job: JobCfg
                 app_row = gsa_perm_to_app_row(
                     raw, job.axes, job.forces_to_output,
                     gsa_force_unit, gsa_moment_unit, output_units, signs,
+                    _factors=factors,
                 )
                 app_row["_position"] = pos
                 candidates.append(app_row)
@@ -1006,11 +1200,65 @@ def _candidates_for_target(adapter: GsaAdapter, elements: list[int], job: JobCfg
             app_row = gsa_perm_to_app_row(
                 raw, job.axes, job.forces_to_output,
                 gsa_force_unit, gsa_moment_unit, output_units, signs,
+                _factors=factors,
             )
             app_row["_position"] = pos_f
             candidates.append(app_row)
             if progress_cb is not None:
                 progress_cb(pi, n_perms)
+    return candidates
+
+
+def _format_node_label(location: dict, nodes: list[int]) -> str:
+    """Readable label for a summed node group, used in the Element column."""
+    if len(nodes) <= 4:
+        return f"sum(n{','.join(str(n) for n in nodes)})"
+    return f"sum(n{nodes[0]}..n{nodes[-1]} n={len(nodes)})"
+
+
+def _summed_reactions(adapter: Any, nodes: list[int], perm: str) -> dict:
+    """Sum reaction forces across `nodes` for one permutation."""
+    summed = {a: 0.0 for a in GSA_AXES}
+    for n in nodes:
+        raw = adapter.node_reactions(n, perm)
+        for a in GSA_AXES:
+            summed[a] += raw[a]
+    return summed
+
+
+def _candidates_for_reaction_target(
+    adapter: Any, nodes: list[int], job: JobCfg,
+    gsa_force_unit: str, gsa_moment_unit: str,
+    output_units: UnitsCfg, signs: SignsCfg,
+    sum_across: bool,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> list[dict]:
+    """Build envelope-input rows for a reaction extraction target.
+
+    Simpler than _candidates_for_target: no position scanning (reactions
+    are at nodes, not along elements).
+    """
+    perm_names = adapter.list_permutations(job.combo)
+    if not perm_names:
+        raise RuntimeError(
+            f"Job {job.name!r}: combo {job.combo!r} has no permutations."
+        )
+    candidates: list[dict] = []
+    n_perms = len(perm_names)
+    for pi, p in enumerate(perm_names):
+        if sum_across:
+            raw = _summed_reactions(adapter, nodes, p)
+        else:
+            raw = dict(adapter.node_reactions(nodes[0], p))
+        raw["perm_id"] = p
+        app_row = gsa_perm_to_app_reaction_row(
+            raw, job.axes, job.forces_to_output,
+            gsa_force_unit, gsa_moment_unit, output_units, signs,
+        )
+        app_row["_position"] = 0.0
+        candidates.append(app_row)
+        if progress_cb is not None:
+            progress_cb(pi, n_perms)
     return candidates
 
 
@@ -1025,43 +1273,86 @@ def run_job(adapter: Any, job: JobCfg,
     ``progress_cb(target_idx, n_targets, perm_idx, n_perms)`` after each
     permutation is fetched, allowing the caller to update a progress dialog.
     """
+    if job.result_type == "node_reactions":
+        return _run_reaction_job(adapter, job, gsa_force_unit, gsa_moment_unit,
+                                 output_units, signs, progress_cb)
+
     elements = resolve_target_elements(adapter, job.location)
     if not elements:
         raise RuntimeError(f"Job {job.name!r}: no elements resolved from location.")
-
-    # Batch-prefetch if supported (GsaApiAdapter). This single call replaces
-    # N_elements x N_permutations individual COM round-trips.
-    if hasattr(adapter, "prefetch"):
-        adapter.prefetch(job.combo, elements)
 
     position = job.location["position"]
     use_max_position = _is_max_position(position)
     sum_across = bool(job.location.get("sum_across_elements", False))
 
+    # Batch-prefetch if supported (GsaApiAdapter). Progress callback is
+    # forwarded so the GUI can show per-element fetch progress.
+    if hasattr(adapter, "prefetch"):
+        def _prefetch_progress(ei: int, n: int) -> None:
+            if progress_cb is not None:
+                progress_cb(ei, n, 0, 1)
+        adapter.prefetch(job.combo, elements,
+                         progress_cb=_prefetch_progress)
+
     # Build the list of targets. Each target produces its own table block.
     # Per-element targets keep the int element ID; summed targets use a
     # human-readable label ("sum(...)") so the Element column makes sense.
+    rows: list[dict] = []
+    force_order = APP_FORCE_ORDER
+
     if sum_across:
+        # Sum mode: merge forces across elements into one synthetic target.
         targets: list[tuple[list[int], Any]] = [
             (elements, _format_group_label(job.location, elements))
         ]
+        n_targets = len(targets)
+        for ti, (target_elements, target_label) in enumerate(targets):
+            def _target_progress(pi: int, n_perms: int) -> None:
+                if progress_cb is not None:
+                    progress_cb(ti, n_targets, pi, n_perms)
+            candidates = _candidates_for_target(
+                adapter, target_elements, job,
+                gsa_force_unit, gsa_moment_unit, output_units, signs,
+                position, use_max_position, sum_across,
+                progress_cb=_target_progress,
+            )
+            for rule in job.envelopes:
+                picked = envelope(candidates, rule.action, rule.on, rule.top_n)
+                for rank, rec in enumerate(picked, start=1):
+                    note = envelope_note(rule.action, rule.on, rank, rule.top_n)
+                    if use_max_position:
+                        note += " @ x/L=" + f"{rec['_position']:.2f}"
+                    row = {
+                        "Job": job.name,
+                        "Note": note,
+                        "Element": target_label,
+                        "Position": rec["_position"],
+                        "Combo": job.combo,
+                        "Permutation": rec["perm_id"],
+                    }
+                    for f in force_order:
+                        row[f] = rec.get(f, "")
+                    rows.append(row)
     else:
-        targets = [([e], e) for e in elements]
-
-    rows: list[dict] = []
-    n_targets = len(targets)
-    for ti, (target_elements, target_label) in enumerate(targets):
-        def _target_progress(pi: int, n_perms: int) -> None:
-            if progress_cb is not None:
-                progress_cb(ti, n_targets, pi, n_perms)
-        candidates = _candidates_for_target(
-            adapter, target_elements, job,
-            gsa_force_unit, gsa_moment_unit, output_units, signs,
-            position, use_max_position, sum_across,
-            progress_cb=_target_progress,
-        )
+        # Global envelope: pool candidates from all elements so the
+        # envelope picks the governing element across the whole group.
+        all_candidates: list[dict] = []
+        n_elems = len(elements)
+        for ei, e in enumerate(elements):
+            # Lightweight progress: update GUI every ~200 elements
+            # so the app doesn't appear frozen during candidate building.
+            if progress_cb is not None and ei % 200 == 0:
+                progress_cb(ei, n_elems, 0, 1)
+            cands = _candidates_for_target(
+                adapter, [e], job,
+                gsa_force_unit, gsa_moment_unit, output_units, signs,
+                position, use_max_position, False,
+            )
+            for c in cands:
+                c["_element"] = e
+            all_candidates.extend(cands)
         for rule in job.envelopes:
-            picked = envelope(candidates, rule.action, rule.on, rule.top_n)
+            picked = envelope(all_candidates, rule.action, rule.on, rule.top_n)
             for rank, rec in enumerate(picked, start=1):
                 note = envelope_note(rule.action, rule.on, rank, rule.top_n)
                 if use_max_position:
@@ -1069,13 +1360,73 @@ def run_job(adapter: Any, job: JobCfg,
                 row = {
                     "Job": job.name,
                     "Note": note,
-                    "Element": target_label,
+                    "Element": rec["_element"],
                     "Position": rec["_position"],
                     "Combo": job.combo,
                     "Permutation": rec["perm_id"],
                 }
-                for f in APP_FORCE_ORDER:
-                    row[f] = rec.get(f, "")  # blank if not requested
+                for f in force_order:
+                    row[f] = rec.get(f, "")
+                rows.append(row)
+    return rows
+
+
+def _run_reaction_job(
+    adapter: Any, job: JobCfg,
+    gsa_force_unit: str, gsa_moment_unit: str,
+    output_units: UnitsCfg, signs: SignsCfg,
+    progress_cb: Optional[Callable[[int, int, int, int], None]] = None,
+) -> list[dict]:
+    """Run a node-reaction extraction job."""
+    if not hasattr(adapter, "node_reactions"):
+        raise RuntimeError(
+            f"Job {job.name!r}: node reactions require the GsaAPI backend. "
+            f"The current adapter ({type(adapter).__name__}) does not support "
+            f"node reactions."
+        )
+
+    nodes = resolve_target_nodes(job.location)
+    if not nodes:
+        raise RuntimeError(f"Job {job.name!r}: no nodes resolved from location.")
+
+    if hasattr(adapter, "prefetch_reactions"):
+        adapter.prefetch_reactions(job.combo, nodes)
+
+    sum_across = bool(job.location.get("sum_across_nodes", False))
+
+    if sum_across:
+        targets: list[tuple[list[int], Any]] = [
+            (nodes, _format_node_label(job.location, nodes))
+        ]
+    else:
+        targets = [([n], n) for n in nodes]
+
+    rows: list[dict] = []
+    n_targets = len(targets)
+    for ti, (target_nodes, target_label) in enumerate(targets):
+        def _target_progress(pi: int, n_perms: int) -> None:
+            if progress_cb is not None:
+                progress_cb(ti, n_targets, pi, n_perms)
+        candidates = _candidates_for_reaction_target(
+            adapter, target_nodes, job,
+            gsa_force_unit, gsa_moment_unit, output_units, signs,
+            sum_across,
+            progress_cb=_target_progress,
+        )
+        for rule in job.envelopes:
+            picked = envelope(candidates, rule.action, rule.on, rule.top_n)
+            for rank, rec in enumerate(picked, start=1):
+                note = envelope_note(rule.action, rule.on, rank, rule.top_n)
+                row = {
+                    "Job": job.name,
+                    "Note": note,
+                    "Element": target_label,
+                    "Position": 0.0,
+                    "Combo": job.combo,
+                    "Permutation": rec["perm_id"],
+                }
+                for f in APP_REACTION_ORDER:
+                    row[f] = rec.get(f, "")
                 rows.append(row)
     return rows
 
@@ -1139,13 +1490,14 @@ def write_tsv(rows: list[dict], columns: list[str], path: str) -> None:
 
 
 def unified_columns(jobs: list[JobCfg]) -> list[str]:
-    """Build the column list: meta columns + APP_FORCE_ORDER (only those
+    """Build the column list: meta columns + force/reaction columns (only those
     that any job actually outputs)."""
     used: set[str] = set()
     for j in jobs:
         used.update(j.forces_to_output)
     forces = [f for f in APP_FORCE_ORDER if f in used]
-    return META_COLUMNS + forces
+    reactions = [f for f in APP_REACTION_ORDER if f in used]
+    return META_COLUMNS + forces + reactions
 
 
 # ---------------------------------------------------------------------------

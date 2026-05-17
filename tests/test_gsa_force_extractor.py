@@ -205,23 +205,20 @@ def test_moment_unit_separators_all_supported():
 
 
 def test_gsa_perm_to_app_row_default_signs_match_typical_gsa():
-    """Defaults: GSA Fx tension-positive (matches app -> no axial flip);
-    GSA Myy/Mzz hogging-positive (differs from app -> moment flip)."""
+    """Defaults: no sign flips — values pass through with unit conversion only."""
     perm = {"perm_id": "C1p1", "Fx": -100.0, "Fy": 50.0, "Fz": 30.0,
             "Mxx": 5.0, "Myy": 200.0, "Mzz": 0.0}
     output_units = gfe.UnitsCfg()  # kip / kip-in defaults
-    signs = gfe.SignsCfg()  # all defaults
+    signs = gfe.SignsCfg()  # all defaults (no flips)
     axes = {"Pu": "Fx", "Mu": "Myy", "Vu": "Fz", "Tu": "Mxx"}
     row = gfe.gsa_perm_to_app_row(
         perm, axes, ["Pu", "Mu", "Vu", "Tu"],
         "kN", "kN.m", output_units, signs,
     )
-    # Pu: GSA Fx = -100 kN (compression in GSA) -> app Pu = -100 kip*conv
-    # (compression in app, no flip).
+    # Pu: GSA Fx = -100 kN -> app Pu = -100 kip*conv (no flip).
     assert row["Pu"] == pytest.approx(-100.0 * 0.224809, rel=1e-4)
-    # Mu: GSA Myy = +200 kN.m (hogging in GSA) -> app Mu negative (hogging
-    # in app), flip applied.
-    assert row["Mu"] == pytest.approx(-200.0 * 8.85075, rel=1e-4)
+    # Mu: GSA Myy = +200 kN.m -> app Mu positive (no flip, unit conv only).
+    assert row["Mu"] == pytest.approx(200.0 * 8.85075, rel=1e-4)
     # Vu: not affected by either flip.
     assert row["Vu"] == pytest.approx(30.0 * 0.224809, rel=1e-4)
     # Tu: torsion is NOT a bending moment, so no flip.
@@ -612,7 +609,9 @@ def test_load_config_rejects_bad_position(tmp_path):
         gfe.load_config(_write_json(tmp_path, cfg))
 
 
-def test_run_job_group_selector_emits_one_block_per_element():
+def test_run_job_group_selector_global_envelope():
+    """Group selector applies envelope globally across all elements,
+    returning the governing element — not one row per element."""
     # Same forces dict reused for elements 10 and 11.
     base = _build_combo_with_known_extremes()["C1"]
     combos = {"C1": {}}
@@ -634,11 +633,82 @@ def test_run_job_group_selector_emits_one_block_per_element():
         envelopes=[gfe.EnvelopeRule(action="max", on="Mu", top_n=1)],
     )
     rows = gfe.run_job(adapter, job, "kN", "kN.m", output_units, signs)
-    # One row per element.
-    assert sorted(r["Element"] for r in rows) == [10, 11]
+    # Global envelope: one row (governing element), not one per element.
+    assert len(rows) == 1
+    assert rows[0]["Element"] in (10, 11)
 
 
-# ---------------------------------------------------------------------------
+def test_run_job_group_global_envelope_picks_governing_element():
+    """When two elements have different forces, the global envelope picks
+    the element that actually governs for each envelope rule."""
+    combos = {
+        "C1": {
+            # Element 10: Myy peaks at 500, Fx peaks at -200
+            (10, 0.5, "C1p1"): _f(Fx=-100, Myy=500),
+            (10, 0.5, "C1p2"): _f(Fx=-200, Myy=300),
+            # Element 20: Myy peaks at 900, Fx peaks at -50
+            (20, 0.5, "C1p1"): _f(Fx=-50, Myy=900),
+            (20, 0.5, "C1p2"): _f(Fx=-30, Myy=700),
+        }
+    }
+    model = MockGsaModel(combos=combos, groups={"BeamGrp": [10, 20]})
+    adapter = gfe.GsaAdapter(model)
+    output_units = gfe.UnitsCfg()
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    job = gfe.JobCfg(
+        name="Global env",
+        location={"group": "BeamGrp", "position": 0.5},
+        combo="C1",
+        axes={"Pu": "Fx", "Mu": "Myy"},
+        forces_to_output=["Pu", "Mu"],
+        envelopes=[
+            gfe.EnvelopeRule("max", "Mu", 1),
+            gfe.EnvelopeRule("min", "Pu", 1),
+        ],
+    )
+    rows = gfe.run_job(adapter, job, "kN", "kN.m", output_units, signs)
+    assert len(rows) == 2
+    max_mu = next(r for r in rows if r["Note"].startswith("max Mu"))
+    min_pu = next(r for r in rows if r["Note"].startswith("min Pu"))
+    # Max Mu: element 20 / C1p1 has Myy=900 — governs globally.
+    assert max_mu["Element"] == 20
+    assert max_mu["Permutation"] == "C1p1"
+    # Min Pu: element 10 / C1p2 has Fx=-200 — most negative, governs.
+    assert min_pu["Element"] == 10
+    assert min_pu["Permutation"] == "C1p2"
+
+
+def test_run_job_group_max_position_global_envelope():
+    """position='max' + group: global scan across all elements and positions."""
+    combos = {
+        "C1": {
+            (10, 0.0,  "C1p1"): _f(Myy=100),
+            (10, 0.5,  "C1p1"): _f(Myy=300),
+            (10, 1.0,  "C1p1"): _f(Myy=200),
+            (20, 0.0,  "C1p1"): _f(Myy=50),
+            (20, 0.5,  "C1p1"): _f(Myy=800),
+            (20, 1.0,  "C1p1"): _f(Myy=400),
+        }
+    }
+    model = MockGsaModel(combos=combos, groups={"Grp": [10, 20]})
+    adapter = gfe.GsaAdapter(model)
+    output_units = gfe.UnitsCfg()
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    job = gfe.JobCfg(
+        name="Max pos group",
+        location={"group": "Grp", "position": "max"},
+        combo="C1",
+        axes={"Mu": "Myy"},
+        forces_to_output=["Mu"],
+        envelopes=[gfe.EnvelopeRule("max", "Mu", 1)],
+    )
+    rows = gfe.run_job(adapter, job, "kN", "kN.m", output_units, signs)
+    assert len(rows) == 1
+    # Element 20 at x/L=0.5 has Myy=800, which is the global max.
+    assert rows[0]["Element"] == 20
+    assert rows[0]["Position"] == pytest.approx(0.5, abs=0.01)
 # Column selection and unified CSV header
 # ---------------------------------------------------------------------------
 
@@ -898,3 +968,320 @@ def test_output_unit_identity_kip_to_kip():
     row = gfe.gsa_perm_to_app_row(perm, {"Pu": "Fx"}, ["Pu"],
                                    "kip", "kip-in", output_units, signs)
     assert row["Pu"] == 42.0
+
+
+# ---------------------------------------------------------------------------
+# Node reaction tests
+# ---------------------------------------------------------------------------
+
+class MockReactionAdapter:
+    """Minimal mock that implements the GsaApiAdapter interface for reactions.
+
+    reactions: {combo: {(node, perm_str): {Fx, Fy, Fz, Mxx, Myy, Mzz}}}
+    """
+
+    def __init__(self, reactions: dict, perm_count: dict | None = None):
+        self._reactions = reactions
+        self._perm_count = perm_count or {}
+
+    def discover_units(self):
+        return ("N", "N.m")
+
+    def list_permutations(self, combo: str) -> list[str]:
+        n = self._perm_count.get(combo, 0)
+        if n <= 0:
+            return [combo]
+        letter = combo[0]
+        ref = combo[1:]
+        return [f"{letter}{ref}p{i}" for i in range(1, n + 1)]
+
+    def prefetch_reactions(self, combo: str, nodes: list[int]) -> None:
+        pass  # no-op; mock data is pre-built
+
+    def node_reactions(self, node: int, perm: str) -> dict:
+        # Determine the combo from the perm string
+        if "p" in perm:
+            combo = perm.rpartition("p")[0]
+        else:
+            combo = perm
+        combo_data = self._reactions.get(combo)
+        if combo_data is None:
+            raise KeyError(f"No combo {combo!r}")
+        key = (node, perm)
+        if key not in combo_data:
+            raise KeyError(f"No reactions for node={node} perm={perm!r}")
+        return dict(combo_data[key])
+
+
+def _rxn_job(name="rxn_job", nodes=None, forces=None, envelopes=None,
+             combo="C1", axes=None, sum_across=False):
+    """Helper: build a reaction JobCfg."""
+    if nodes is None:
+        nodes = [10]
+    if forces is None:
+        forces = ["Rx", "Ry", "Rz"]
+    if axes is None:
+        axes = {"Rx": "Fx", "Ry": "Fy", "Rz": "Fz",
+                "Rxx": "Mxx", "Ryy": "Myy", "Rzz": "Mzz"}
+    if envelopes is None:
+        envelopes = [gfe.EnvelopeRule("max", forces[0], 1)]
+    loc: dict = {"nodes" if len(nodes) > 1 else "node": nodes if len(nodes) > 1 else nodes[0]}
+    if sum_across:
+        loc["sum_across_nodes"] = True
+    return gfe.JobCfg(
+        name=name,
+        location=loc,
+        combo=combo,
+        axes={f: axes[f] for f in forces},
+        forces_to_output=forces,
+        envelopes=envelopes,
+        result_type="node_reactions",
+    )
+
+
+def test_run_reaction_job_single_node():
+    """Basic single-node reaction extraction with max envelope."""
+    reactions = {
+        "C1": {
+            (10, "C1p1"): {"Fx": 100.0, "Fy": 200.0, "Fz": 300.0,
+                           "Mxx": 10.0, "Myy": 20.0, "Mzz": 30.0},
+            (10, "C1p2"): {"Fx": 150.0, "Fy": 250.0, "Fz": 500.0,
+                           "Mxx": 15.0, "Myy": 25.0, "Mzz": 35.0},
+        },
+    }
+    adapter = MockReactionAdapter(reactions, perm_count={"C1": 2})
+    job = _rxn_job(nodes=[10], forces=["Rx", "Rz"],
+                   envelopes=[gfe.EnvelopeRule("max", "Rz", 1)])
+    # GsaAPI returns SI (N, N.m). Use identity output units for easy checking.
+    output_units = gfe.UnitsCfg(output_force="N", output_moment="N.m")
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    rows = gfe.run_job(adapter, job, "N", "N.m", output_units, signs)
+    assert len(rows) == 1
+    assert rows[0]["Rz"] == pytest.approx(500.0)
+    assert rows[0]["Rx"] == pytest.approx(150.0)  # coexistent
+    assert rows[0]["Element"] == 10
+    assert rows[0]["Permutation"] == "C1p2"
+
+
+def test_run_reaction_job_envelope_min():
+    """Min envelope picks the most-negative reaction."""
+    reactions = {
+        "C1": {
+            (5, "C1p1"): {"Fx": -100.0, "Fy": 0.0, "Fz": -300.0,
+                          "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0},
+            (5, "C1p2"): {"Fx": 50.0, "Fy": 0.0, "Fz": 200.0,
+                          "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0},
+        },
+    }
+    adapter = MockReactionAdapter(reactions, perm_count={"C1": 2})
+    job = _rxn_job(nodes=[5], forces=["Rx", "Rz"],
+                   envelopes=[gfe.EnvelopeRule("min", "Rz", 1)])
+    output_units = gfe.UnitsCfg(output_force="N", output_moment="N.m")
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    rows = gfe.run_job(adapter, job, "N", "N.m", output_units, signs)
+    assert len(rows) == 1
+    assert rows[0]["Rz"] == pytest.approx(-300.0)
+    assert rows[0]["Rx"] == pytest.approx(-100.0)
+
+
+def test_run_reaction_job_sum_across_nodes():
+    """Sum reactions across two nodes."""
+    reactions = {
+        "C1": {
+            (10, "C1p1"): {"Fx": 100.0, "Fy": 0.0, "Fz": 300.0,
+                           "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0},
+            (11, "C1p1"): {"Fx": 50.0, "Fy": 0.0, "Fz": 200.0,
+                           "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0},
+        },
+    }
+    adapter = MockReactionAdapter(reactions, perm_count={"C1": 1})
+    job = _rxn_job(nodes=[10, 11], forces=["Rx", "Rz"],
+                   envelopes=[gfe.EnvelopeRule("max", "Rz", 1)],
+                   sum_across=True)
+    output_units = gfe.UnitsCfg(output_force="N", output_moment="N.m")
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    rows = gfe.run_job(adapter, job, "N", "N.m", output_units, signs)
+    assert len(rows) == 1
+    # Summed: Fx=150, Fz=500
+    assert rows[0]["Rx"] == pytest.approx(150.0)
+    assert rows[0]["Rz"] == pytest.approx(500.0)
+    assert "sum(" in str(rows[0]["Element"])
+
+
+def test_run_reaction_job_multiple_nodes_separate():
+    """Multiple nodes without sum_across produce one block per node."""
+    reactions = {
+        "C1": {
+            (10, "C1p1"): {"Fx": 100.0, "Fy": 0.0, "Fz": 300.0,
+                           "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0},
+            (11, "C1p1"): {"Fx": 50.0, "Fy": 0.0, "Fz": 200.0,
+                           "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0},
+        },
+    }
+    adapter = MockReactionAdapter(reactions, perm_count={"C1": 1})
+    job = _rxn_job(nodes=[10, 11], forces=["Rz"],
+                   envelopes=[gfe.EnvelopeRule("max", "Rz", 1)])
+    output_units = gfe.UnitsCfg(output_force="N", output_moment="N.m")
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    rows = gfe.run_job(adapter, job, "N", "N.m", output_units, signs)
+    assert len(rows) == 2
+    assert rows[0]["Element"] == 10
+    assert rows[0]["Rz"] == pytest.approx(300.0)
+    assert rows[1]["Element"] == 11
+    assert rows[1]["Rz"] == pytest.approx(200.0)
+
+
+def test_reaction_unit_conversion_n_to_kip():
+    """Reaction values converted from N to kip."""
+    perm = {"perm_id": "C1p1", "Fx": 4448.2216, "Fy": 0.0, "Fz": 0.0,
+            "Mxx": 0.0, "Myy": 0.0, "Mzz": 0.0}
+    output_units = gfe.UnitsCfg(output_force="kip", output_moment="kip-in")
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    row = gfe.gsa_perm_to_app_reaction_row(
+        perm, {"Rx": "Fx"}, ["Rx"],
+        "N", "N.m", output_units, signs,
+    )
+    assert row["Rx"] == pytest.approx(1.0, rel=1e-3)
+
+
+def test_reaction_moment_conversion_nm_to_kip_in():
+    """Reaction moment values converted from N.m to kip-in."""
+    perm = {"perm_id": "C1p1", "Fx": 0.0, "Fy": 0.0, "Fz": 0.0,
+            "Mxx": 0.0, "Myy": 1000.0, "Mzz": 0.0}
+    output_units = gfe.UnitsCfg(output_force="kip", output_moment="kip-in")
+    signs = gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                        moment_hogging_positive_in_gsa=False)
+    row = gfe.gsa_perm_to_app_reaction_row(
+        perm, {"Ryy": "Myy"}, ["Ryy"],
+        "N", "N.m", output_units, signs,
+    )
+    # 1000 N.m = 1 kN.m = 8.85075 kip-in
+    assert row["Ryy"] == pytest.approx(8.85075, rel=1e-3)
+
+
+def test_validate_config_rejects_element_location_for_reactions():
+    """Reaction jobs must use node/nodes, not element/elements/group/property."""
+    job = gfe.JobCfg(
+        name="bad",
+        location={"element": 1, "position": 0.5},
+        combo="C1",
+        axes={"Rx": "Fx"},
+        forces_to_output=["Rx"],
+        envelopes=[gfe.EnvelopeRule("max", "Rx", 1)],
+        result_type="node_reactions",
+    )
+    cfg = gfe.Config(
+        gsa_file="test.gwb", output_csv=None, output_tsv=None,
+        units=gfe.UnitsCfg(), signs=gfe.SignsCfg(), jobs=[job],
+    )
+    with pytest.raises(ValueError, match="node / nodes"):
+        gfe._validate_config(cfg)
+
+
+def test_validate_config_rejects_force_names_for_reactions():
+    """Reaction jobs must use Rx/Ry/Rz/Rxx/Ryy/Rzz, not Pu/Mu etc."""
+    job = gfe.JobCfg(
+        name="bad",
+        location={"node": 1},
+        combo="C1",
+        axes={"Pu": "Fx"},
+        forces_to_output=["Pu"],
+        envelopes=[gfe.EnvelopeRule("max", "Pu", 1)],
+        result_type="node_reactions",
+    )
+    cfg = gfe.Config(
+        gsa_file="test.gwb", output_csv=None, output_tsv=None,
+        units=gfe.UnitsCfg(), signs=gfe.SignsCfg(), jobs=[job],
+    )
+    with pytest.raises(ValueError, match="Pu"):
+        gfe._validate_config(cfg)
+
+
+def test_validate_config_accepts_valid_reaction_job():
+    """A well-formed reaction job passes validation."""
+    job = gfe.JobCfg(
+        name="ok",
+        location={"node": 1},
+        combo="C1",
+        axes={"Rx": "Fx", "Rz": "Fz"},
+        forces_to_output=["Rx", "Rz"],
+        envelopes=[gfe.EnvelopeRule("max", "Rz", 1)],
+        result_type="node_reactions",
+    )
+    cfg = gfe.Config(
+        gsa_file="test.gwb", output_csv=None, output_tsv=None,
+        units=gfe.UnitsCfg(), signs=gfe.SignsCfg(), jobs=[job],
+    )
+    gfe._validate_config(cfg)  # should not raise
+
+
+def test_config_round_trip_with_reaction_job(tmp_path):
+    """Save and reload a config with a reaction job — result_type preserved."""
+    job = gfe.JobCfg(
+        name="rxn_test",
+        location={"nodes": [5, 6, 7]},
+        combo="C2",
+        axes={"Rx": "Fx", "Ry": "Fy", "Rz": "Fz"},
+        forces_to_output=["Rx", "Ry", "Rz"],
+        envelopes=[gfe.EnvelopeRule("max", "Rz", 1)],
+        result_type="node_reactions",
+    )
+    cfg = gfe.Config(
+        gsa_file="model.gwb", output_csv="out.csv", output_tsv=None,
+        units=gfe.UnitsCfg(), signs=gfe.SignsCfg(), jobs=[job],
+    )
+    path = tmp_path / "rxn_cfg.json"
+    gfe.save_config(cfg, str(path))
+    loaded = gfe.load_config(str(path))
+    assert loaded.jobs[0].result_type == "node_reactions"
+    assert loaded.jobs[0].location == {"nodes": [5, 6, 7]}
+    assert loaded.jobs[0].forces_to_output == ["Rx", "Ry", "Rz"]
+
+
+def test_unified_columns_includes_reactions():
+    """unified_columns includes reaction names when a reaction job is present."""
+    j_elem = gfe.JobCfg(
+        name="elem", location={"element": 1, "position": 0.5}, combo="C1",
+        axes={"Pu": "Fx", "Mu": "Myy"}, forces_to_output=["Pu", "Mu"],
+        envelopes=[gfe.EnvelopeRule("max", "Mu", 1)],
+    )
+    j_rxn = gfe.JobCfg(
+        name="rxn", location={"node": 1}, combo="C1",
+        axes={"Rx": "Fx", "Rz": "Fz"}, forces_to_output=["Rx", "Rz"],
+        envelopes=[gfe.EnvelopeRule("max", "Rz", 1)],
+        result_type="node_reactions",
+    )
+    cols = gfe.unified_columns([j_elem, j_rxn])
+    assert "Pu" in cols
+    assert "Mu" in cols
+    assert "Rx" in cols
+    assert "Rz" in cols
+    # Reactions come after element forces
+    assert cols.index("Pu") < cols.index("Rx")
+
+
+def test_resolve_target_nodes_single():
+    assert gfe.resolve_target_nodes({"node": 42}) == [42]
+
+
+def test_resolve_target_nodes_multi():
+    assert gfe.resolve_target_nodes({"nodes": [1, 2, 3]}) == [1, 2, 3]
+
+
+def test_resolve_target_nodes_rejects_element():
+    with pytest.raises(ValueError, match="node"):
+        gfe.resolve_target_nodes({"element": 1})
+
+
+def test_run_reaction_job_rejects_gsapy_adapter():
+    """Reaction jobs require GsaAPI — gsapy adapter should be rejected."""
+    mock_model = MockGsaModel(combos={"C1": {}})
+    adapter = gfe.GsaAdapter(mock_model)
+    job = _rxn_job(nodes=[10])
+    with pytest.raises(RuntimeError, match="GsaAPI"):
+        gfe.run_job(adapter, job, "N", "N.m", gfe.UnitsCfg(), gfe.SignsCfg())

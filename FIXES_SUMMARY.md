@@ -261,3 +261,54 @@ python test_none_shear.py
 6. [ ] Edge case testing
 
 **Status**: Ready for user testing. App (app.py) is running in background terminal.
+
+---
+
+## GSA Force Extractor — bug-fixes and performance overhaul (2026-05-17)
+
+Standalone tool files: `gsa_force_extractor.py`, `gsa_extractor_gui.py`, `tests/test_gsa_force_extractor.py`.  
+These are NOT app-code (`calc_engine.py` etc.) — different safety rules apply.
+
+### Bugs fixed
+
+| # | Bug | Root Cause | Fix |
+|---|-----|-----------|-----|
+| 1 | `elements_in_group()` / `elements_with_property()` returned empty | pythonnet 3 `.NET Dictionary` does not support `.items()` | Changed to `.Keys` + index iteration pattern |
+| 2 | Group extraction returned per-element envelope instead of global envelope | `run_job` was enveloping within each element separately | Changed to pool ALL candidates across ALL group elements, then envelope globally (tag each candidate with `c["_element"] = e`) |
+| 3 | Default sign convention flipped moments incorrectly | `SignsCfg.moment_hogging_positive_in_gsa` defaulted to `True` | Changed default to `False` (no flip by default) |
+| 4 | `Element1dForce` batch query returned empty position data for most elements | GsaAPI `Results1D` has shared internal state — batch call only populates positions for the lowest element ID | Changed `prefetch()` to query elements **individually** instead of batch |
+| 5 | Crash when changing to certain combos (`UnboundLocalError: sum_across`) | `sum_across` was computed after the prefetch call that already needed it | Moved `position`, `use_max_position`, `sum_across` computation before prefetch |
+
+### Performance optimizations
+
+| # | Optimization | Impact |
+|---|-------------|--------|
+| 1 | Single `CombinationCaseResults()` call | Was calling it per-element (1515×); now once for all elements |
+| 2 | Precomputed conversion factors (`_conversion_factors()`) | Was calling `force_factor()` + `moment_factor()` 128,775 times (1515 elements × 5 positions × 17 perms); now computed once and passed via `_factors` kwarg |
+| 3 | Eliminated per-permutation GUI progress callbacks during candidate building | Was doing ~6000+ `self.update()` calls; now sparse updates every 200 elements (~7 calls) |
+| 4 | Threading abandoned | GsaAPI `Results1D` is NOT thread-safe — concurrent calls cause `System.AccessViolationException`. Individual sequential queries are the only safe approach. |
+
+### GUI improvements (`gsa_extractor_gui.py`)
+
+- **Progress bar**: Fills 0→100% during element prefetch phase (was stuck or jumped erratically)
+- **Cancel button**: Now raises `_ExtractionCancelled` exception checked during both prefetch and candidate building phases — stops extraction within ~200 elements
+- **Status messages**: Shows "Fetching element X/N" during prefetch, then "Processing element X/N…" during candidate building (eliminates the "stuck at 100%" appearance)
+- **`_ExtractionCancelled`** (new exception class): Clean cancellation without confusing error dialogs
+
+### Key architecture details for future sessions
+
+- `prefetch()` (~line 865): Queries elements **individually** with single `CombinationCaseResults()`. Accepts optional `progress_cb(elem_idx, n_elements)`.
+- `_conversion_factors()` (~line 484): Returns `{"f": f_factor, "m": m_factor}` dict.
+- `gsa_perm_to_app_row()` (~line 497): Accepts optional `_factors` kwarg to skip redundant unit lookups.
+- `_candidates_for_target()` (~line 1147): Precomputes factors and passes them through.
+- `run_job()` non-sum branch (~line 1249): Iterates elements, builds candidates, sparse progress callback every 200 elements.
+- `BatchProgressDialog.set_perm_progress()`: Checks `self._prog["value"] >= 99` to distinguish prefetch vs processing phase.
+
+### Test status
+
+63 tests in `tests/test_gsa_force_extractor.py` — ALL PASSING.  
+End-to-end timing: ~3.2s for 1515-element group, combo C1 (17 permutations).
+
+### Diagnostic scripts (untracked, can be deleted)
+
+`diag_group.py`, `diag_verify.py`, `diag_batch.py`, `diag_perf.py`, `diag_fullscale.py`, `diag_thread.py`, `diag_timing.py`, `diag_isolate.py`, `debug_gsaapi.py` — temporary investigation scripts created during this session. Not committed.

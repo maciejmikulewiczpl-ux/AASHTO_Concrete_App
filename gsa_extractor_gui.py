@@ -41,6 +41,15 @@ DEFAULT_ENVELOPES = [
     gfe.EnvelopeRule("max", "Pu", 1),
     gfe.EnvelopeRule("min", "Pu", 1),
 ]
+DEFAULT_REACTION_AXES = {
+    "Rx": "Fx", "Ry": "Fy", "Rz": "Fz",
+    "Rxx": "Mxx", "Ryy": "Myy", "Rzz": "Mzz",
+}
+DEFAULT_REACTION_FORCES = ["Rx", "Ry", "Rz"]
+DEFAULT_REACTION_ENVELOPES = [
+    gfe.EnvelopeRule("max", "Rz", 1),
+    gfe.EnvelopeRule("min", "Rz", 1),
+]
 KNOWN_FORCE_UNITS = ["kN", "N", "kip", "lbf"]
 KNOWN_MOMENT_UNITS = ["kN.m", "N.m", "kip-in", "kip-ft", "lbf-ft"]
 
@@ -67,6 +76,18 @@ def default_job(name: str) -> gfe.JobCfg:
     )
 
 
+def default_reaction_job(name: str) -> gfe.JobCfg:
+    return gfe.JobCfg(
+        name=name,
+        location={"node": 1},
+        combo="C1",
+        axes=dict(DEFAULT_REACTION_AXES),
+        forces_to_output=list(DEFAULT_REACTION_FORCES),
+        envelopes=[replace(e) for e in DEFAULT_REACTION_ENVELOPES],
+        result_type="node_reactions",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-job editor frame
 # ---------------------------------------------------------------------------
@@ -77,6 +98,7 @@ class JobEditor(ttk.Frame):
     """
 
     LOCATION_KINDS = ("element", "elements", "group", "property")
+    REACTION_LOCATION_KINDS = ("node", "nodes")
 
     def __init__(self, master, on_change=None):
         super().__init__(master)
@@ -85,6 +107,19 @@ class JobEditor(ttk.Frame):
         self._build()
 
     def _build(self):
+        # --- Result type selector ---
+        rtype_frame = ttk.LabelFrame(self, text="Result type")
+        rtype_frame.pack(fill="x", padx=6, pady=4)
+        self.result_type_var = tk.StringVar(value="element_forces")
+        ttk.Radiobutton(
+            rtype_frame, text="Element Forces", variable=self.result_type_var,
+            value="element_forces", command=self._on_result_type_change,
+        ).pack(side="left", padx=8, pady=2)
+        ttk.Radiobutton(
+            rtype_frame, text="Node Reactions", variable=self.result_type_var,
+            value="node_reactions", command=self._on_result_type_change,
+        ).pack(side="left", padx=8, pady=2)
+
         # --- Name + combo + location ---
         top = ttk.LabelFrame(self, text="Identity & target")
         top.pack(fill="x", padx=6, pady=4)
@@ -99,71 +134,141 @@ class JobEditor(ttk.Frame):
         self.combo_var = tk.StringVar()
         ttk.Entry(top, textvariable=self.combo_var, width=12).grid(row=1, column=1, sticky="w", padx=4, pady=2)
 
-        ttk.Label(top, text="Position (0..1 or 'max'):").grid(row=1, column=2, sticky="e", padx=4, pady=2)
+        self._position_label = ttk.Label(top, text="Position (0..1 or 'max'):")
+        self._position_label.grid(row=1, column=2, sticky="e", padx=4, pady=2)
         self.position_var = tk.StringVar(value="max")
-        ttk.Entry(top, textvariable=self.position_var, width=8).grid(row=1, column=3, sticky="w", padx=4, pady=2)
+        self._position_entry = ttk.Entry(top, textvariable=self.position_var, width=8)
+        self._position_entry.grid(row=1, column=3, sticky="w", padx=4, pady=2)
 
-        # Location selector
-        loc_frame = ttk.LabelFrame(self, text="Location selector (pick one)")
-        loc_frame.pack(fill="x", padx=6, pady=4)
+        # Location selector — element forces
+        self._loc_frame_elem = ttk.LabelFrame(self, text="Location selector (pick one)")
+        self._loc_frame_elem.pack(fill="x", padx=6, pady=4)
         self.loc_kind_var = tk.StringVar(value="element")
         for i, kind in enumerate(self.LOCATION_KINDS):
             ttk.Radiobutton(
-                loc_frame, text=kind, variable=self.loc_kind_var,
+                self._loc_frame_elem, text=kind, variable=self.loc_kind_var,
                 value=kind, command=self._update_loc_hint,
             ).grid(row=0, column=i, sticky="w", padx=6, pady=2)
         self.loc_value_var = tk.StringVar()
-        ttk.Entry(loc_frame, textvariable=self.loc_value_var).grid(
+        ttk.Entry(self._loc_frame_elem, textvariable=self.loc_value_var).grid(
             row=1, column=0, columnspan=4, sticky="we", padx=4, pady=2
         )
-        self.loc_hint = ttk.Label(loc_frame, text="", foreground="#555")
+        self.loc_hint = ttk.Label(self._loc_frame_elem, text="", foreground="#555")
         self.loc_hint.grid(row=2, column=0, columnspan=4, sticky="w", padx=4)
         self.sum_across_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            loc_frame,
+        self._sum_elem_cb = ttk.Checkbutton(
+            self._loc_frame_elem,
             text=("Sum forces across elements (treat selection as a group; "
                   "outputs one summed row per envelope)"),
             variable=self.sum_across_var,
-        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=4, pady=(2, 4))
-        loc_frame.columnconfigure(3, weight=1)
+        )
+        self._sum_elem_cb.grid(row=3, column=0, columnspan=4, sticky="w", padx=4, pady=(2, 4))
+        self._loc_frame_elem.columnconfigure(3, weight=1)
 
-        # --- Forces & axis mapping ---
-        forces_frame = ttk.LabelFrame(self, text="Forces to extract & axis mapping")
-        forces_frame.pack(fill="x", padx=6, pady=4)
+        # Location selector — node reactions
+        self._loc_frame_node = ttk.LabelFrame(self, text="Node selector (pick one)")
+        self.rxn_loc_kind_var = tk.StringVar(value="node")
+        for i, kind in enumerate(self.REACTION_LOCATION_KINDS):
+            ttk.Radiobutton(
+                self._loc_frame_node, text=kind, variable=self.rxn_loc_kind_var,
+                value=kind, command=self._update_rxn_loc_hint,
+            ).grid(row=0, column=i, sticky="w", padx=6, pady=2)
+        self.rxn_loc_value_var = tk.StringVar()
+        ttk.Entry(self._loc_frame_node, textvariable=self.rxn_loc_value_var).grid(
+            row=1, column=0, columnspan=2, sticky="we", padx=4, pady=2
+        )
+        self.rxn_loc_hint = ttk.Label(self._loc_frame_node, text="", foreground="#555")
+        self.rxn_loc_hint.grid(row=2, column=0, columnspan=2, sticky="w", padx=4)
+        self.sum_across_nodes_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            self._loc_frame_node,
+            text="Sum reactions across nodes",
+            variable=self.sum_across_nodes_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=(2, 4))
+        self._loc_frame_node.columnconfigure(1, weight=1)
+        # Initially hidden
+        self._loc_frame_node.pack_forget()
+
+        # --- Element Forces checkboxes & axis mapping ---
+        self._forces_frame = ttk.LabelFrame(self, text="Forces to extract & axis mapping")
+        self._forces_frame.pack(fill="x", padx=6, pady=4)
         self.force_check_vars: dict[str, tk.BooleanVar] = {}
         self.force_axis_vars: dict[str, tk.StringVar] = {}
-        ttk.Label(forces_frame, text="App force").grid(row=0, column=0, padx=4)
-        ttk.Label(forces_frame, text="Map to GSA axis").grid(row=0, column=1, padx=4)
+        ttk.Label(self._forces_frame, text="App force").grid(row=0, column=0, padx=4)
+        ttk.Label(self._forces_frame, text="Map to GSA axis").grid(row=0, column=1, padx=4)
         for i, f in enumerate(gfe.APP_FORCE_ORDER, start=1):
             v = tk.BooleanVar(value=False)
             self.force_check_vars[f] = v
-            ttk.Checkbutton(forces_frame, text=f, variable=v,
+            ttk.Checkbutton(self._forces_frame, text=f, variable=v,
                             command=self._on_change).grid(row=i, column=0, sticky="w", padx=4)
             axis_var = tk.StringVar(value=DEFAULT_AXES_4.get(f, "Fx"))
             self.force_axis_vars[f] = axis_var
             cb = ttk.Combobox(
-                forces_frame, textvariable=axis_var,
+                self._forces_frame, textvariable=axis_var,
                 values=sorted(gfe.GSA_AXES), width=6, state="readonly",
             )
             cb.grid(row=i, column=1, sticky="w", padx=4)
 
+        # --- Reaction checkboxes & axis mapping ---
+        self._reactions_frame = ttk.LabelFrame(self, text="Reactions to extract & axis mapping")
+        self.rxn_check_vars: dict[str, tk.BooleanVar] = {}
+        self.rxn_axis_vars: dict[str, tk.StringVar] = {}
+        ttk.Label(self._reactions_frame, text="Reaction").grid(row=0, column=0, padx=4)
+        ttk.Label(self._reactions_frame, text="Map to GSA axis").grid(row=0, column=1, padx=4)
+        for i, f in enumerate(gfe.APP_REACTION_ORDER, start=1):
+            v = tk.BooleanVar(value=False)
+            self.rxn_check_vars[f] = v
+            ttk.Checkbutton(self._reactions_frame, text=f, variable=v,
+                            command=self._on_change).grid(row=i, column=0, sticky="w", padx=4)
+            axis_var = tk.StringVar(value=DEFAULT_REACTION_AXES.get(f, "Fx"))
+            self.rxn_axis_vars[f] = axis_var
+            cb = ttk.Combobox(
+                self._reactions_frame, textvariable=axis_var,
+                values=sorted(gfe.GSA_AXES), width=6, state="readonly",
+            )
+            cb.grid(row=i, column=1, sticky="w", padx=4)
+        # Initially hidden
+        self._reactions_frame.pack_forget()
+
         # --- Envelopes table ---
-        env_frame = ttk.LabelFrame(self, text="Envelopes (one row per design action)")
-        env_frame.pack(fill="both", expand=True, padx=6, pady=4)
+        self._env_frame = ttk.LabelFrame(self, text="Envelopes (one row per design action)")
+        self._env_frame.pack(fill="both", expand=True, padx=6, pady=4)
 
         cols = ("action", "on", "top_n")
-        self.env_tree = ttk.Treeview(env_frame, columns=cols, show="headings", height=6)
+        self.env_tree = ttk.Treeview(self._env_frame, columns=cols, show="headings", height=6)
         for c, w in zip(cols, (90, 90, 70)):
             self.env_tree.heading(c, text=c)
             self.env_tree.column(c, width=w, anchor="center")
         self.env_tree.pack(side="left", fill="both", expand=True, padx=4, pady=4)
 
-        env_btns = ttk.Frame(env_frame)
+        env_btns = ttk.Frame(self._env_frame)
         env_btns.pack(side="right", fill="y", padx=4, pady=4)
         ttk.Button(env_btns, text="Add",    command=self._env_add).pack(fill="x", pady=2)
         ttk.Button(env_btns, text="Edit",   command=self._env_edit).pack(fill="x", pady=2)
         ttk.Button(env_btns, text="Delete", command=self._env_delete).pack(fill="x", pady=2)
         self.env_tree.bind("<Double-1>", lambda e: self._env_edit())
+
+    def _on_result_type_change(self):
+        """Toggle visibility of element-force vs node-reaction widgets."""
+        is_reaction = self.result_type_var.get() == "node_reactions"
+        if is_reaction:
+            self._position_label.grid_remove()
+            self._position_entry.grid_remove()
+            self._loc_frame_elem.pack_forget()
+            self._forces_frame.pack_forget()
+            self._loc_frame_node.pack(fill="x", padx=6, pady=4,
+                                      before=self._env_frame)
+            self._reactions_frame.pack(fill="x", padx=6, pady=4,
+                                       before=self._env_frame)
+        else:
+            self._position_label.grid()
+            self._position_entry.grid()
+            self._loc_frame_node.pack_forget()
+            self._reactions_frame.pack_forget()
+            self._loc_frame_elem.pack(fill="x", padx=6, pady=4,
+                                       before=self._env_frame)
+            self._forces_frame.pack(fill="x", padx=6, pady=4,
+                                     before=self._env_frame)
 
     def _update_loc_hint(self):
         kind = self.loc_kind_var.get()
@@ -174,6 +279,14 @@ class JobEditor(ttk.Frame):
             "property": "Section property number, e.g. 5",
         }
         self.loc_hint.config(text=hints[kind])
+
+    def _update_rxn_loc_hint(self):
+        kind = self.rxn_loc_kind_var.get()
+        hints = {
+            "node":  "Single integer node ID, e.g. 42",
+            "nodes": "Comma-separated node IDs, e.g. 5, 6, 7",
+        }
+        self.rxn_loc_hint.config(text=hints[kind])
 
     # -- Envelope dialog ------------------------------------------------
 
@@ -197,6 +310,8 @@ class JobEditor(ttk.Frame):
             self.env_tree.delete(sel)
 
     def _checked_forces(self) -> list[str]:
+        if self.result_type_var.get() == "node_reactions":
+            return [f for f in gfe.APP_REACTION_ORDER if self.rxn_check_vars[f].get()]
         return [f for f in gfe.APP_FORCE_ORDER if self.force_check_vars[f].get()]
 
     # -- Bind / commit --------------------------------------------------
@@ -205,35 +320,61 @@ class JobEditor(ttk.Frame):
         self.job = job
         self.name_var.set(job.name)
         self.combo_var.set(job.combo)
-        self.position_var.set(str(job.location.get("position", 0.5)))
+        self.result_type_var.set(job.result_type)
 
-        # Location selector
-        for kind in self.LOCATION_KINDS:
-            if kind in job.location:
-                self.loc_kind_var.set(kind)
-                val = job.location[kind]
-                if kind == "elements" and isinstance(val, list):
-                    self.loc_value_var.set(", ".join(str(x) for x in val))
-                else:
-                    self.loc_value_var.set(str(val))
-                break
+        if job.result_type == "node_reactions":
+            # Node reaction job
+            self.position_var.set("0")
+            # Node location
+            for kind in self.REACTION_LOCATION_KINDS:
+                if kind in job.location:
+                    self.rxn_loc_kind_var.set(kind)
+                    val = job.location[kind]
+                    if kind == "nodes" and isinstance(val, list):
+                        self.rxn_loc_value_var.set(", ".join(str(x) for x in val))
+                    else:
+                        self.rxn_loc_value_var.set(str(val))
+                    break
+            else:
+                self.rxn_loc_kind_var.set("node")
+                self.rxn_loc_value_var.set("")
+            self._update_rxn_loc_hint()
+            self.sum_across_nodes_var.set(bool(job.location.get("sum_across_nodes", False)))
+            # Reaction forces & axes
+            for f in gfe.APP_REACTION_ORDER:
+                self.rxn_check_vars[f].set(f in job.forces_to_output)
+                if f in job.axes:
+                    self.rxn_axis_vars[f].set(job.axes[f])
         else:
-            self.loc_kind_var.set("element")
-            self.loc_value_var.set("")
-        self._update_loc_hint()
-        self.sum_across_var.set(bool(job.location.get("sum_across_elements", False)))
-
-        # Forces & axes
-        for f in gfe.APP_FORCE_ORDER:
-            self.force_check_vars[f].set(f in job.forces_to_output)
-            if f in job.axes:
-                self.force_axis_vars[f].set(job.axes[f])
+            # Element forces job
+            self.position_var.set(str(job.location.get("position", 0.5)))
+            for kind in self.LOCATION_KINDS:
+                if kind in job.location:
+                    self.loc_kind_var.set(kind)
+                    val = job.location[kind]
+                    if kind == "elements" and isinstance(val, list):
+                        self.loc_value_var.set(", ".join(str(x) for x in val))
+                    else:
+                        self.loc_value_var.set(str(val))
+                    break
+            else:
+                self.loc_kind_var.set("element")
+                self.loc_value_var.set("")
+            self._update_loc_hint()
+            self.sum_across_var.set(bool(job.location.get("sum_across_elements", False)))
+            # Element forces & axes
+            for f in gfe.APP_FORCE_ORDER:
+                self.force_check_vars[f].set(f in job.forces_to_output)
+                if f in job.axes:
+                    self.force_axis_vars[f].set(job.axes[f])
 
         # Envelopes
         for item in self.env_tree.get_children():
             self.env_tree.delete(item)
         for e in job.envelopes:
             self.env_tree.insert("", "end", values=(e.action, e.on, e.top_n))
+
+        self._on_result_type_change()
 
     def commit(self) -> gfe.JobCfg:
         """Read every form field back into a fresh JobCfg.
@@ -242,37 +383,58 @@ class JobEditor(ttk.Frame):
         """
         if self.job is None:
             raise RuntimeError("commit() called with no bound job")
+
+        is_reaction = self.result_type_var.get() == "node_reactions"
         forces = self._checked_forces()
         if not forces:
-            raise ValueError("Select at least one force to extract.")
-        axes = {f: self.force_axis_vars[f].get() for f in forces}
+            raise ValueError("Select at least one force/reaction to extract.")
 
-        # Location
-        kind = self.loc_kind_var.get()
-        raw = self.loc_value_var.get().strip()
-        if not raw:
-            raise ValueError(f"Location {kind!r} value is empty.")
-        if kind == "element":
-            loc_value = int(raw)
-        elif kind == "elements":
-            loc_value = [int(x.strip()) for x in raw.split(",") if x.strip()]
-            if not loc_value:
-                raise ValueError("'elements' must be a non-empty comma-separated list.")
-        elif kind == "property":
-            loc_value = int(raw)
-        else:  # group
-            loc_value = raw
-
-        pos_text = self.position_var.get().strip()
-        if pos_text.lower() == "max":
-            position = "max"
+        if is_reaction:
+            axes = {f: self.rxn_axis_vars[f].get() for f in forces}
+            # Node location
+            kind = self.rxn_loc_kind_var.get()
+            raw = self.rxn_loc_value_var.get().strip()
+            if not raw:
+                raise ValueError(f"Location {kind!r} value is empty.")
+            if kind == "node":
+                loc_value = int(raw)
+            else:  # nodes
+                loc_value = [int(x.strip()) for x in raw.split(",") if x.strip()]
+                if not loc_value:
+                    raise ValueError("'nodes' must be a non-empty comma-separated list.")
+            location: dict = {kind: loc_value}
+            if self.sum_across_nodes_var.get():
+                location["sum_across_nodes"] = True
         else:
-            try:
-                position = float(pos_text)
-            except ValueError:
-                raise ValueError(
-                    "Position must be a number (e.g. 0.5) or 'max'."
-                )
+            axes = {f: self.force_axis_vars[f].get() for f in forces}
+            # Element location
+            kind = self.loc_kind_var.get()
+            raw = self.loc_value_var.get().strip()
+            if not raw:
+                raise ValueError(f"Location {kind!r} value is empty.")
+            if kind == "element":
+                loc_value = int(raw)
+            elif kind == "elements":
+                loc_value = [int(x.strip()) for x in raw.split(",") if x.strip()]
+                if not loc_value:
+                    raise ValueError("'elements' must be a non-empty comma-separated list.")
+            elif kind == "property":
+                loc_value = int(raw)
+            else:  # group
+                loc_value = raw
+            pos_text = self.position_var.get().strip()
+            if pos_text.lower() == "max":
+                position = "max"
+            else:
+                try:
+                    position = float(pos_text)
+                except ValueError:
+                    raise ValueError(
+                        "Position must be a number (e.g. 0.5) or 'max'."
+                    )
+            location = {kind: loc_value, "position": position}
+            if self.sum_across_var.get():
+                location["sum_across_elements"] = True
 
         # Envelopes from the tree
         envelopes: list[gfe.EnvelopeRule] = []
@@ -282,9 +444,6 @@ class JobEditor(ttk.Frame):
         if not envelopes:
             raise ValueError("Add at least one envelope rule.")
 
-        location = {kind: loc_value, "position": position}
-        if self.sum_across_var.get():
-            location["sum_across_elements"] = True
         new_job = gfe.JobCfg(
             name=self.name_var.get().strip() or "Unnamed job",
             location=location,
@@ -292,8 +451,13 @@ class JobEditor(ttk.Frame):
             axes=axes,
             forces_to_output=forces,
             envelopes=envelopes,
+            result_type=self.result_type_var.get(),
         )
         return new_job
+
+
+class _ExtractionCancelled(Exception):
+    """Raised when the user cancels an in-progress extraction."""
 
 
 class BatchProgressDialog(tk.Toplevel):
@@ -317,7 +481,7 @@ class BatchProgressDialog(tk.Toplevel):
         ttk.Label(self, textvariable=self._detail_var,
                   foreground="#555", wraplength=380).pack(padx=20, pady=(0, 4))
 
-        self._prog = ttk.Progressbar(self, length=360, maximum=total_jobs)
+        self._prog = ttk.Progressbar(self, length=360, maximum=100)
         self._prog.pack(padx=20, pady=2)
 
         self._time_var = tk.StringVar(value="")
@@ -333,37 +497,45 @@ class BatchProgressDialog(tk.Toplevel):
     def set_job(self, index: int, name: str, total: int):
         self._job_var.set(f"Job {index + 1} of {total}: {name}")
         self._detail_var.set("")
-        self._prog["value"] = index
-        self._update_time(index, total)
         self.update()
 
     def set_perm_progress(self, target_idx: int, n_targets: int,
                           perm_idx: int, n_perms: int):
-        """Called per-permutation from run_job's progress callback."""
+        """Called per-permutation from run_job's progress callback.
+
+        Raises _ExtractionCancelled if the user pressed Cancel.
+        """
         if n_targets > 1:
-            self._detail_var.set(
-                f"  Element {target_idx + 1}/{n_targets} — "
-                f"permutation {perm_idx + 1}/{n_perms}")
+            if self._prog["value"] >= 99:
+                # Prefetch done — now in candidate building phase
+                self._detail_var.set(
+                    f"  Processing element {target_idx + 1}/{n_targets}…")
+            else:
+                self._detail_var.set(
+                    f"  Fetching element {target_idx + 1}/{n_targets}")
+            pct = target_idx / n_targets * 100
         else:
             self._detail_var.set(
                 f"  Permutation {perm_idx + 1}/{n_perms}")
-        # Only update the UI every few perms to avoid overhead
-        if perm_idx % 5 == 0 or perm_idx == n_perms - 1:
-            self.update()
+            pct = (perm_idx + 1) / max(n_perms, 1) * 100
+        self._prog["value"] = pct
+        self._update_time(pct)
+        self.update()
+        if self.cancelled:
+            raise _ExtractionCancelled()
 
     def finish(self):
         elapsed = time.monotonic() - self._start_time
-        self._prog["value"] = self._prog["maximum"]
+        self._prog["value"] = 100
         self._detail_var.set(f"Done in {elapsed:.1f}s")
         self.update()
         self.grab_release()
         self.destroy()
 
-    def _update_time(self, done: int, total: int):
+    def _update_time(self, pct: float):
         elapsed = time.monotonic() - self._start_time
-        if done > 0:
-            rate = elapsed / done
-            remaining = rate * (total - done)
+        if pct > 0:
+            remaining = elapsed / pct * (100 - pct)
             self._time_var.set(
                 f"Elapsed {elapsed:.0f}s — est. {remaining:.0f}s remaining")
         else:
@@ -1000,20 +1172,9 @@ class App(tk.Tk):
         self._read_setup_into_cfg()
         self._commit_current_silent()
 
-        try:
-            gfe._validate_config(self.cfg)
-        except Exception as e:
-            messagebox.showerror("Config invalid", str(e), parent=self)
-            return
         if not self.cfg.gsa_file:
             messagebox.showinfo("GSA file missing",
                                 "Set the GSA file path on the Setup tab.", parent=self)
-            return
-
-        try:
-            adapter = gfe.open_gsa_model(self.cfg.gsa_file)
-        except Exception as e:
-            messagebox.showerror("GSA file error", str(e), parent=self)
             return
 
         # Only run jobs that are batch-enabled
@@ -1024,7 +1185,28 @@ class App(tk.Tk):
         if not batch_jobs:
             messagebox.showinfo("No jobs selected",
                                 "Enable at least one job for batch "
-                                "(double-click in the Jobs list).", parent=self)
+                                "(tick the checkboxes in the Jobs list).", parent=self)
+            return
+
+        # Validate only the selected jobs, not the entire config.
+        batch_cfg = gfe.Config(
+            gsa_file=self.cfg.gsa_file,
+            output_csv=self.cfg.output_csv,
+            output_tsv=self.cfg.output_tsv,
+            units=self.cfg.units,
+            signs=self.cfg.signs,
+            jobs=batch_jobs,
+        )
+        try:
+            gfe._validate_config(batch_cfg)
+        except Exception as e:
+            messagebox.showerror("Config invalid", str(e), parent=self)
+            return
+
+        try:
+            adapter = gfe.open_gsa_model(self.cfg.gsa_file)
+        except Exception as e:
+            messagebox.showerror("GSA file error", str(e), parent=self)
             return
 
         cols = gfe.unified_columns(batch_jobs)
@@ -1038,8 +1220,9 @@ class App(tk.Tk):
             gsa_f, gsa_m = detected
 
         prog = BatchProgressDialog(self, len(batch_jobs))
+        cancelled = False
         for i, job in enumerate(batch_jobs):
-            if prog.cancelled:
+            if cancelled:
                 break
             prog.set_job(i, job.name, len(batch_jobs))
             try:
@@ -1050,11 +1233,13 @@ class App(tk.Tk):
                         prog.set_perm_progress(ti, nt, pi, np),
                 )
                 all_rows.extend(rows)
+            except _ExtractionCancelled:
+                cancelled = True
             except Exception as e:
                 errors.append(f"{job.name}: {e}")
         prog.finish()
 
-        if prog.cancelled and not all_rows:
+        if cancelled and not all_rows:
             return
 
         if errors:
