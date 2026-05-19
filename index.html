@@ -76,6 +76,10 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background
 .form-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .form-row label { min-width: 210px; font-size: 0.84rem; color: var(--text); font-weight: 500; }
 .form-row label.ovr-label { min-width: 0; }
+/* Inline mode selector (Count/Spacing) used in the Flexural Reinforcement
+   rows — needs enough width to show "Number of bottom bars" without the
+   text being clipped by the browser default <select> width. */
+.bar-mode-sel { width: 100%; max-width: 200px; font-size: 0.84rem; font-weight: 500; color: var(--text); }
 .form-row input:not([type="checkbox"]), .form-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.84rem; width: 100px; }
 .form-row select.wide { flex: 1; min-width: 100px; max-width: 280px; }
 .form-row input:not([type="checkbox"]):focus, .form-row select:focus { outline: none; border-color: var(--primary-light); box-shadow: 0 0 0 2px rgba(41,128,185,0.15); }
@@ -505,7 +509,7 @@ canvas { width: 100% !important; height: 100% !important; }
             <option value="14">#14</option><option value="18">#18</option>
           </select>
         </div>
-        <div class="form-row"><label>Number of top bars</label><input type="number" id="n_bars_top" value="5" min="0"></div>
+        <div class="form-row"><label><select id="bar_mode_top" class="bar-mode-sel" onchange="onBarModeChange('top')"><option value="count" selected>Number of top bars</option><option value="spacing">Top bar spacing</option></select></label><input type="number" id="n_bars_top" value="5" min="0" step="any" oninput="updateDerivedBars('top')"><span class="unit" id="n_bars_top_unit">bars</span><span class="note" id="n_bars_top_derived" style="display:none;margin-left:6px"></span></div>
         <div class="form-row"><label></label><span style="width:100px"></span><span class="unit"></span><span class="ovr-col-header">Override</span></div>
         <div class="form-row"><label>d<sub>top</sub> <small>(from top face)</small></label><input type="number" id="d_top_override" value="" step="any" readonly class="auto-calc"><span class="unit">in</span><label class="ovr-label"><input type="checkbox" id="d_top_ovr" class="ovr-cb"></label><span class="note" id="dTopNote">= cover + d<sub>b</sub>/2</span></div>
         <div class="form-row"><button class="demand-btn" style="padding:3px 10px;font-size:0.75rem" onclick="openMultiRow('top')">Multiple Rows...</button><span id="mr_badge_top"></span></div>
@@ -517,7 +521,7 @@ canvas { width: 100% !important; height: 100% !important; }
             <option value="14">#14</option><option value="18">#18</option>
           </select>
         </div>
-        <div class="form-row"><label>Number of bottom bars</label><input type="number" id="n_bars_bot" value="5" min="1"></div>
+        <div class="form-row"><label><select id="bar_mode_bot" class="bar-mode-sel" onchange="onBarModeChange('bot')"><option value="count" selected>Number of bottom bars</option><option value="spacing">Bottom bar spacing</option></select></label><input type="number" id="n_bars_bot" value="5" min="0" step="any" oninput="updateDerivedBars('bot')"><span class="unit" id="n_bars_bot_unit">bars</span><span class="note" id="n_bars_bot_derived" style="display:none;margin-left:6px"></span></div>
         <div class="form-row"><label>d<sub>bot</sub> <small>(from top face)</small></label><input type="number" id="d_bot_override" value="" step="any" readonly class="auto-calc"><span class="unit">in</span><label class="ovr-label"><input type="checkbox" id="d_bot_ovr" class="ovr-cb"></label><span class="note" id="dBotNote">= h &minus; cover &minus; d<sub>b</sub>/2</span></div>
         <div class="form-row"><button class="demand-btn" style="padding:3px 10px;font-size:0.75rem" onclick="openMultiRow('bot')">Multiple Rows...</button><span id="mr_badge_bot"></span></div>
       </div>
@@ -1027,9 +1031,21 @@ function saveCurrentSectionState(){
     secType: document.getElementById('sectionType').value,
     b: V('b_flange'), h: V('h_total'), bw_input: V('b_web'), hf_top: V('hf_top'), hf_bot: V('hf_bot'), cover: V('cover'),
     barN_top: parseInt(document.getElementById('top_bar').value),
-    nBars_top: V('n_bars_top'),
+    // n_bars_top: when in 'spacing' mode, the field holds the raw spacing
+    // in inches; we derive and persist the integer bar count so older
+    // builds (which don't know about modes) still open the file correctly.
+    // The raw spacing is kept in spacing_top so toggling back is lossless.
+    nBars_top: (document.getElementById('bar_mode_top')&&document.getElementById('bar_mode_top').value==='spacing')
+      ? barsFromSpacing(V('n_bars_top'), dForWidthLookup('top'))
+      : V('n_bars_top'),
+    mode_top: document.getElementById('bar_mode_top')?document.getElementById('bar_mode_top').value:'count',
+    spacing_top: (document.getElementById('bar_mode_top')&&document.getElementById('bar_mode_top').value==='spacing')?V('n_bars_top'):null,
     barN_bot: parseInt(document.getElementById('bot_bar').value),
-    nBars_bot: V('n_bars_bot'),
+    nBars_bot: (document.getElementById('bar_mode_bot')&&document.getElementById('bar_mode_bot').value==='spacing')
+      ? barsFromSpacing(V('n_bars_bot'), dForWidthLookup('bot'))
+      : V('n_bars_bot'),
+    mode_bot: document.getElementById('bar_mode_bot')?document.getElementById('bar_mode_bot').value:'count',
+    spacing_bot: (document.getElementById('bar_mode_bot')&&document.getElementById('bar_mode_bot').value==='spacing')?V('n_bars_bot'):null,
     // Override checkboxes + their values
     d_top_ovr: document.getElementById('d_top_ovr').checked,
     d_bot_ovr: document.getElementById('d_bot_ovr').checked,
@@ -1122,11 +1138,23 @@ function loadSectionState(name){
   setV('b_flange',inp.b); setV('h_total',inp.h); setV('b_web',inp.bw_input);
   setV('hf_top',inp.hf_top); setV('hf_bot',inp.hf_bot); setV('cover',inp.cover);
 
-  // Rebar
+  // Rebar — bar size + mode (count/spacing) + value.
+  // Old saves have no mode_* / spacing_* keys; default to 'count' so the
+  // existing nBars_top integer continues to populate the field exactly as
+  // before. New saves in spacing mode write the raw spacing to spacing_top
+  // and the derived integer count to nBars_top.
   document.getElementById('top_bar').value = inp.barN_top||7;
-  setV('n_bars_top',inp.nBars_top);
+  const _mtop=inp.mode_top||'count';
+  const _mtopSel=document.getElementById('bar_mode_top');
+  if(_mtopSel) _mtopSel.value=_mtop;
+  setV('n_bars_top', _mtop==='spacing'?inp.spacing_top:inp.nBars_top);
+  if(typeof onBarModeChange==='function') onBarModeChange('top');
   document.getElementById('bot_bar').value = inp.barN_bot||7;
-  setV('n_bars_bot',inp.nBars_bot);
+  const _mbot=inp.mode_bot||'count';
+  const _mbotSel=document.getElementById('bar_mode_bot');
+  if(_mbotSel) _mbotSel.value=_mbot;
+  setV('n_bars_bot', _mbot==='spacing'?inp.spacing_bot:inp.nBars_bot);
+  if(typeof onBarModeChange==='function') onBarModeChange('bot');
 
   // Override checkboxes and values
   document.getElementById('Ec_ovr').checked = !!inp.Ec_ovr;
@@ -1544,9 +1572,9 @@ function drawCrossSection(){
     const mr=resolveMRRows(side); let n=0;
     if(mr){mr.forEach(r=>{if(r.nBars>=2){const s_min=Math.max(1.5*r.bar.d,1.5*_ag2,1.5);const clr=_barInnerW2(r.bar.d,r.d)/(r.nBars-1)-r.bar.d;if(clr<s_min-0.001)n++;}});}
     else{
-      const _nBot=parseInt(document.getElementById(side==='bot'?'n_bars_bot':'n_bars_top').value)||0;
       const _barN=parseInt(document.getElementById(side==='bot'?'bot_bar':'top_bar').value)||7;
       const _d=side==='bot'?(_h2-_cover2-(BARS[_barN]?BARS[_barN].d:0.875)/2):(_cover2+(BARS[_barN]?BARS[_barN].d:0.875)/2);
+      const _nBot=nBarsResolved(side, _d);
       if(_nBot>=2){const db=BARS[_barN]?BARS[_barN].d:0.875;const s_min=Math.max(1.5*db,1.5*_ag2,1.5);const clr=_barInnerW2(db,_d)/(_nBot-1)-db;if(clr<s_min-0.001)n++;}
     }
     return n;
@@ -1570,15 +1598,18 @@ function drawCrossSection(){
   const shBar_cs=(shN_cs===0)?null:(BARS[shN_cs]||BARS[4]);
   const db_stir=(shBar_cs)?shBar_cs.d:0;
   const nLegs_cs=Math.max(2,parseInt(document.getElementById('shear_legs').value)||2);
+  // Reorder: compute d_*_cs BEFORE nBars_*_cs so spacing mode can resolve
+  // the integer bar count from the current layer depth (uses widthAtDepth).
   const barN_bot_cs=parseInt(document.getElementById('bot_bar').value)||7;
   const bar_bot_cs=BARS[barN_bot_cs]||BARS[7];
-  const nBars_bot_cs=parseInt(document.getElementById('n_bars_bot').value)||1;
-  const barN_top_cs=parseInt(document.getElementById('top_bar').value)||0;
-  const bar_top_cs=BARS[barN_top_cs]||null;
-  const nBars_top_cs=parseInt(document.getElementById('n_bars_top').value)||0;
   const dBotOvr=document.getElementById('d_bot_ovr').checked;
   const d_bot_cs=dBotOvr?(parseFloat(document.getElementById('d_bot_override').value)||h-cover-db_stir-bar_bot_cs.d/2):(h-cover-db_stir-bar_bot_cs.d/2);
-  const d_top_cs=(bar_top_cs&&nBars_top_cs>0)?(document.getElementById('d_top_ovr').checked?parseFloat(document.getElementById('d_top_override').value):cover+db_stir+bar_top_cs.d/2):cover;
+  const nBars_bot_cs=Math.max(nBarsResolved('bot', d_bot_cs), 1);
+  const barN_top_cs=parseInt(document.getElementById('top_bar').value)||0;
+  const bar_top_cs=BARS[barN_top_cs]||null;
+  const _d_top_provisional=bar_top_cs?(document.getElementById('d_top_ovr').checked?parseFloat(document.getElementById('d_top_override').value):cover+db_stir+bar_top_cs.d/2):cover;
+  const nBars_top_cs=bar_top_cs?nBarsResolved('top', _d_top_provisional):0;
+  const d_top_cs=(bar_top_cs&&nBars_top_cs>0)?_d_top_provisional:cover;
   const nStrands=parseInt(document.getElementById('n_strands').value)||0;
   const dp=parseFloat(document.getElementById('dp_input').value)||0;
   const ductDia=parseFloat(document.getElementById('duct_dia').value)||0;
@@ -1685,12 +1716,14 @@ function drawCrossSection(){
     const x1cc = sx(bxArr[0]), x2cc = sx(bxArr[1]);
     const x1cl = sx(bxArr[0] + db_bar/2), x2cl = sx(bxArr[1] - db_bar/2);
     const barRpx = visBarR(db_bar);
-    const yCC = isBot ? byy - barRpx - 14 : byy + barRpx + 14;
-    const yCL = isBot ? byy - barRpx - 27 : byy + barRpx + 27;
+    const yCC = isBot ? byy - barRpx - 13 : byy + barRpx + 13;
+    const yCL = isBot ? byy - barRpx - 26 : byy + barRpx + 26;
     const col = isBot ? '#2c3e50' : '#8e44ad';
     ctx.save();
     ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 0.8;
-    ctx.font = '10px "Segoe UI", sans-serif';
+    // Smaller font so 's = ...' and 'cl = ...' don't visually collide
+    // when the two labels stack vertically (13 px apart).
+    ctx.font = '8px "Segoe UI", sans-serif';
     ctx.beginPath();
     ctx.moveTo(x1cc,yCC-4);ctx.lineTo(x1cc,yCC+4);ctx.moveTo(x1cc,yCC);ctx.lineTo(x2cc,yCC);ctx.moveTo(x2cc,yCC-4);ctx.lineTo(x2cc,yCC+4);
     ctx.stroke();
@@ -3878,18 +3911,25 @@ function gatherInputs(){
   const s_at_add = at_add_bar_N > 0 ? VE('at_add_s') : 0;
   // Top bars
   const barN_top=parseInt(document.getElementById('top_bar').value);
-  const nBars_top=V('n_bars_top');
   const bar_top=BARS[barN_top]||null;
   const dTopEl=document.getElementById('d_top_override');
   let d_top; if(document.getElementById('d_top_ovr').checked){ d_top=VE('d_top_override'); dTopEl.readOnly=false; dTopEl.classList.remove('auto-calc'); }
   else { d_top=(bar_top?cover+db_stir+bar_top.d/2:cover); dTopEl.value=fromEngine(d_top,'length').toFixed(4); dTopEl.readOnly=true; dTopEl.classList.add('auto-calc'); }
+  // n_bars_top: in 'count' mode the field holds the integer count; in 'spacing'
+  // mode it holds a spacing in inches and the engine-side integer count is
+  // derived from the available clear width at this layer's depth.
+  const _modeTopEl=document.getElementById('bar_mode_top');
+  const _modeTop=_modeTopEl?_modeTopEl.value:'count';
+  const nBars_top=(_modeTop==='spacing')?barsFromSpacing(V('n_bars_top'),d_top):V('n_bars_top');
   // Bottom bars
   const barN_bot=parseInt(document.getElementById('bot_bar').value);
-  const nBars_bot=V('n_bars_bot');
   const bar_bot=BARS[barN_bot]||BARS[7];
   const dBotEl=document.getElementById('d_bot_override');
   let d_bot; if(document.getElementById('d_bot_ovr').checked){ d_bot=VE('d_bot_override'); dBotEl.readOnly=false; dBotEl.classList.remove('auto-calc'); }
   else { d_bot=h-cover-db_stir-bar_bot.d/2; dBotEl.value=fromEngine(d_bot,'length').toFixed(4); dBotEl.readOnly=true; dBotEl.classList.add('auto-calc'); }
+  const _modeBotEl=document.getElementById('bar_mode_bot');
+  const _modeBot=_modeBotEl?_modeBotEl.value:'count';
+  const nBars_bot=(_modeBot==='spacing')?barsFromSpacing(V('n_bars_bot'),d_bot):V('n_bars_bot');
   const nStrands=V('n_strands'), strand_area=VE('strand_area'), ductDia=VE('duct_dia');
   // dp and fpe: when mode=layout, use value from PT-populated demand row; when manual, use input directly
   const dp=VE('dp_input'), fpe=V('fpe_input')||0;
@@ -6723,6 +6763,113 @@ function removeMRRow(n){
   if(el) el.remove();
   updateMRSummary();
 }
+
+// --- Spacing-mode helpers (used ONLY by the simple top/bottom rebar
+// inputs, never by the multi-row modal which keeps its own b_flange-based
+// clearW so existing projects' engine output is bit-identical). ---
+//
+// widthAtDepth: section width (in engine units, inches) at vertical position
+// d (also inches, from top face). Rectangular → b_flange. T/I → b_flange if
+// d is inside a flange, else b_web. Reads via VE() so the user's chosen
+// display units (in/ft) are normalised to inches.
+function widthAtDepth(d){
+  const sec=document.getElementById('sectionType').value;
+  const b=VE('b_flange');
+  if(sec!=='T-SECTION') return b;
+  const bw=VE('b_web')||b;
+  const hf_top=VE('hf_top');
+  const hf_bot=VE('hf_bot');
+  const h=VE('h_total');
+  if(d<hf_top) return b;
+  if(d>h-hf_bot) return b;
+  return bw;
+}
+function clearWidthAt(d){
+  const w=widthAtDepth(d);
+  const cover=VE('cover');
+  const shN=parseInt(document.getElementById('shear_bar').value)||4;
+  const db_stir=(BARS[shN]||BARS[4]).d;
+  return Math.max(w-2*cover-2*db_stir,0);
+}
+// `spacing` is always in inches (engine units) — the spacing input field is
+// labelled "in" regardless of the global display-units switcher, matching
+// the existing multi-row modal's behaviour.
+function barsFromSpacing(spacing,d){
+  const clearW=clearWidthAt(d);
+  return spacing>0?Math.max(Math.floor(clearW/spacing)+1,1):1;
+}
+
+// Depth d (engine units, inches) at which the top/bottom layer sits, used
+// for widthAtDepth() lookup. Mirrors the d_top / d_bot logic in
+// gatherInputs (line 3884-3892) and buildInputsFromState (line 2703).
+function dForWidthLookup(side){
+  const cover=VE('cover');
+  const shN=parseInt(document.getElementById('shear_bar').value)||4;
+  const db_stir=(BARS[shN]||BARS[4]).d;
+  if(side==='top'){
+    if(document.getElementById('d_top_ovr').checked){
+      const v=VE('d_top_override');
+      if(!isNaN(v)&&v>0) return v;
+    }
+    const barN=parseInt(document.getElementById('top_bar').value)||0;
+    const bar=BARS[barN]||null;
+    return bar?cover+db_stir+bar.d/2:cover;
+  }
+  const h=VE('h_total');
+  if(document.getElementById('d_bot_ovr').checked){
+    const v=VE('d_bot_override');
+    if(!isNaN(v)&&v>0) return v;
+  }
+  const barN=parseInt(document.getElementById('bot_bar').value)||7;
+  const bar=BARS[barN]||BARS[7];
+  return h-cover-db_stir-bar.d/2;
+}
+
+// Resolved integer bar count for a side (top|bot) given the layer depth
+// d (engine units, inches). Honours the Count/Spacing mode. Used by
+// gatherInputs and drawCrossSection so the diagram and the engine agree.
+function nBarsResolved(side, d){
+  const sel=document.getElementById('bar_mode_'+side);
+  const mode=sel?sel.value:'count';
+  const v=parseFloat(document.getElementById('n_bars_'+side).value)||0;
+  if(mode==='spacing') return barsFromSpacing(v, d);
+  return Math.max(Math.round(v), 0);
+}
+
+// Toggle a top/bot rebar row between count and spacing modes.
+function onBarModeChange(side){
+  const sel=document.getElementById('bar_mode_'+side);
+  const unit=document.getElementById('n_bars_'+side+'_unit');
+  const note=document.getElementById('n_bars_'+side+'_derived');
+  const isSpacing=(sel.value==='spacing');
+  unit.textContent=isSpacing?'in':'bars';
+  note.style.display=isSpacing?'':'none';
+  updateDerivedBars(side);
+}
+
+// Refresh the "= N bars" note when in spacing mode.
+function updateDerivedBars(side){
+  const sel=document.getElementById('bar_mode_'+side);
+  const note=document.getElementById('n_bars_'+side+'_derived');
+  if(!sel||!note) return;
+  if(sel.value!=='spacing'){ note.style.display='none'; note.textContent=''; return; }
+  const spacing=parseFloat(document.getElementById('n_bars_'+side).value);
+  if(!(spacing>0)){ note.textContent='(enter spacing)'; return; }
+  const n=barsFromSpacing(spacing, dForWidthLookup(side));
+  note.textContent='= '+n+' bar'+(n===1?'':'s');
+}
+
+// Recompute the derived note when bar size or relevant geometry changes.
+['top_bar','bot_bar','b_flange','b_web','hf_top','hf_bot','h_total','cover','sectionType','shear_bar'].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.addEventListener('change',()=>{ updateDerivedBars('top'); updateDerivedBars('bot'); });
+});
+['d_top_ovr','d_bot_ovr','d_top_override','d_bot_override'].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.addEventListener('change',()=>{ updateDerivedBars('top'); updateDerivedBars('bot'); });
+});
 
 function getMRRows(){
   const rows=[];
