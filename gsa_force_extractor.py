@@ -182,6 +182,7 @@ class JobCfg:
     forces_to_output: list[str]
     envelopes: list[EnvelopeRule]
     result_type: str = "element_forces"  # "element_forces" or "node_reactions"
+    in_batch: bool = True    # whether this job is ticked for batch extraction
 
 
 @dataclass
@@ -283,6 +284,7 @@ def _parse_job(j: dict) -> JobCfg:
         forces_to_output=list(j["forces_to_output"]),
         envelopes=envelopes,
         result_type=j.get("result_type", "element_forces"),
+        in_batch=bool(j.get("in_batch", True)),
     )
 
 
@@ -312,6 +314,7 @@ def config_to_dict(cfg: Config) -> dict:
                     for e in j.envelopes
                 ],
                 "result_type": j.result_type,
+                "in_batch": j.in_batch,
             }
             for j in cfg.jobs
         ],
@@ -807,6 +810,18 @@ class GsaApiAdapter:
         # Each perm_list entry is a list of position dicts.
         self._combo_cache: dict[str, dict[int, list[list[dict]]]] = {}
         self._perm_count_cache: dict[str, int] = {}
+        # Warning messages surfaced in the GUI's extraction-warnings dialog.
+        # Currently populated by:
+        #   - _lazy_fetch when an element missing from prefetch cache is
+        #     recovered on-demand (signals a prefetch regression).
+        #   - run_job when prefetch skips elements that have no
+        #     Element1dForce data (springs/links/excluded-from-analysis).
+        self._lazy_fetch_log: list[str] = []
+        # Populated by prefetch(): combo -> list of element IDs that
+        # Element1dForce returned no data for. run_job reads this to filter
+        # the candidate iteration so a single bad element doesn't fail the
+        # whole job.
+        self._missing_in_prefetch: dict[str, list[int]] = {}
 
     @classmethod
     def from_file(cls, path: str) -> "GsaApiAdapter":
@@ -895,46 +910,115 @@ class GsaApiAdapter:
                 return
 
         _case_type, case_ref = _parse_case_id(combo)
+        # Validate the combo exists up-front (cheap; throws early).
         combo_results = self._model.CombinationCaseResults()
         if case_ref not in combo_results:
             raise RuntimeError(
                 f"Combination case {combo!r} (ref {case_ref}) not found in "
                 f"model results. Has analysis been run in GSA?"
             )
-        ccr = combo_results[case_ref]
-        n_pts = self.POSITION_RESOLUTION + 1
 
         # Query elements individually — GsaAPI batch Element1dForce
         # only returns position data for the lowest element ID, and the
         # underlying Results1D is not thread-safe (AccessViolationException).
+        # CRITICAL: bind the intermediate CombinationCaseResults() to a
+        # NAMED Python variable before indexing it — i.e.
+        #     combo_results = self._model.CombinationCaseResults()
+        #     ccr = combo_results[case_ref]
+        # NOT the chained form `ccr = self._model.CombinationCaseResults()[case_ref]`.
+        # In the chained form pythonnet discards the intermediate wrapper
+        # and the underlying .NET object can finalize before Element1dForce
+        # runs, returning an empty Dict for every element. _lazy_fetch uses
+        # the named-intermediate pattern and works reliably; keep them in
+        # sync.
         cache: dict[int, list[list[dict]]] = {}
         n_perms = 0
         n_elems = len(elements)
         for ei, eid in enumerate(elements):
             if progress_cb is not None:
                 progress_cb(ei, n_elems)
-            forces = ccr.Element1dForce(str(eid), n_pts, None)
-            for elem_id in forces.Keys:
-                eid_int = int(elem_id)
-                perm_list = forces[elem_id]
-                n_perms = max(n_perms, len(perm_list))
-                elem_data: list[list[dict]] = []
-                for perm_positions in perm_list:
-                    positions: list[dict] = []
-                    for d6 in perm_positions:
-                        positions.append({
-                            "Fx": float(d6.X), "Fy": float(d6.Y),
-                            "Fz": float(d6.Z), "Mxx": float(d6.XX),
-                            "Myy": float(d6.YY), "Mzz": float(d6.ZZ),
-                        })
-                    elem_data.append(positions)
-                cache[eid_int] = elem_data
+            combo_results = self._model.CombinationCaseResults()
+            ccr = combo_results[case_ref]
+            elem_data, perms_returned = self._parse_element1d_force(ccr, int(eid))
+            if elem_data is not None:
+                cache[int(eid)] = elem_data
+                n_perms = max(n_perms, perms_returned)
 
         if combo in self._combo_cache:
             self._combo_cache[combo].update(cache)
         else:
             self._combo_cache[combo] = cache
-        self._perm_count_cache[combo] = n_perms
+        self._perm_count_cache[combo] = max(
+            self._perm_count_cache.get(combo, 0), n_perms
+        )
+        # Record elements that Element1dForce returned no data for (after
+        # merging into the persistent cache, so previously-cached elements
+        # from lazy_fetch or prior prefetch calls aren't falsely flagged).
+        final_cache = self._combo_cache[combo]
+        self._missing_in_prefetch[combo] = [
+            int(eid) for eid in elements if int(eid) not in final_cache
+        ]
+
+    def _parse_element1d_force(self, ccr: Any, eid: int
+                               ) -> tuple[Optional[list[list[dict]]], int]:
+        """Query Element1dForce for one element and translate the result.
+
+        Returns (elem_data, n_perms) where elem_data is a list of perm rows
+        (each a list of position dicts), or (None, 0) if GsaAPI returned
+        no data for `eid`. Reused by prefetch() and the lazy fallback in
+        elem_forces_all_positions().
+        """
+        n_pts = self.POSITION_RESOLUTION + 1
+        forces = ccr.Element1dForce(str(eid), n_pts, None)
+        for elem_id in forces.Keys:
+            if int(elem_id) != eid:
+                continue
+            perm_list = forces[elem_id]
+            elem_data: list[list[dict]] = []
+            for perm_positions in perm_list:
+                positions: list[dict] = []
+                for d6 in perm_positions:
+                    positions.append({
+                        "Fx": float(d6.X), "Fy": float(d6.Y),
+                        "Fz": float(d6.Z), "Mxx": float(d6.XX),
+                        "Myy": float(d6.YY), "Mzz": float(d6.ZZ),
+                    })
+                elem_data.append(positions)
+            return elem_data, len(perm_list)
+        return None, 0
+
+    def _lazy_fetch(self, combo: str, elem: int) -> bool:
+        """Lazy single-element prefetch. Returns True if `elem` was added
+        to the cache, False if GsaAPI has no Element1dForce data for it.
+
+        Used as a fallback in elem_forces_all_positions/elem_forces_at
+        when an element is unexpectedly missing from the prefetch cache.
+        """
+        _case_type, case_ref = _parse_case_id(combo)
+        combo_results = self._model.CombinationCaseResults()
+        if case_ref not in combo_results:
+            return False
+        ccr = combo_results[case_ref]
+        elem_data, n_perms = self._parse_element1d_force(ccr, elem)
+        if elem_data is None:
+            return False
+        cache = self._combo_cache.setdefault(combo, {})
+        cache[elem] = elem_data
+        self._perm_count_cache[combo] = max(
+            self._perm_count_cache.get(combo, 0), n_perms
+        )
+        msg = (
+            f"[gsa_force_extractor] WARNING: element {elem} was missing "
+            f"from prefetch cache for {combo!r}; recovered via lazy fetch "
+            f"({n_perms} perms). This indicates a silent drop in prefetch."
+        )
+        self._lazy_fetch_log.append(msg)
+        if sys.stderr is not None:
+            try:
+                sys.stderr.write(msg + "\n")
+            except Exception:
+                pass
+        return True
 
     # --- permutation enumeration ---------------------------------------
 
@@ -964,10 +1048,15 @@ class GsaApiAdapter:
         combo, perm_idx = self._parse_perm_string(perm)
         cache = self._combo_cache.get(combo)
         if cache is None or elem not in cache:
-            raise RuntimeError(
-                f"Element {elem} perm {perm!r} not in cache. "
-                f"Call prefetch() first."
-            )
+            if not self._lazy_fetch(combo, elem):
+                raise RuntimeError(
+                    f"Element {elem} has no Element1dForce results in "
+                    f"combo {combo!r} (perm {perm!r}). The element may be a "
+                    f"non-beam type (spring, link, mass), excluded from this "
+                    f"analysis task, or deleted from the model while still "
+                    f"referenced by a saved list."
+                )
+            cache = self._combo_cache[combo]
         positions = cache[elem][perm_idx]
         n = len(positions)
         return [
@@ -1293,6 +1382,32 @@ def run_job(adapter: Any, job: JobCfg,
                 progress_cb(ei, n, 0, 1)
         adapter.prefetch(job.combo, elements,
                          progress_cb=_prefetch_progress)
+
+        # Drop elements that have no Element1dForce data — saved lists can
+        # include springs/links/masses or elements excluded from this
+        # analysis task. Continuing with the remaining elements is more
+        # useful than failing the whole job on the first bad one; we
+        # surface the skip in the GUI's warnings dialog.
+        missing = list(getattr(adapter, "_missing_in_prefetch", {})
+                       .get(job.combo, []))
+        if missing:
+            preview = ", ".join(str(e) for e in missing[:20])
+            tail = (f", ... (+{len(missing) - 20} more)"
+                    if len(missing) > 20 else "")
+            adapter._lazy_fetch_log.append(
+                f"[{job.name}] Skipped {len(missing)} element(s) with no "
+                f"Element1dForce data in {job.combo!r} (likely non-beam "
+                f"types or excluded from analysis): {preview}{tail}"
+            )
+            missing_set = set(missing)
+            elements = [e for e in elements if e not in missing_set]
+            if not elements:
+                raise RuntimeError(
+                    f"Job {job.name!r}: every element in the target list "
+                    f"has no Element1dForce data in combo {job.combo!r}. "
+                    f"Check that the saved list resolves to beam elements "
+                    f"and that the analysis covers this combination."
+                )
 
     # Build the list of targets. Each target produces its own table block.
     # Per-element targets keep the int element ID; summed targets use a

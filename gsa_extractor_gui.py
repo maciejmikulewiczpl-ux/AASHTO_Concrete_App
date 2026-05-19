@@ -990,7 +990,16 @@ class App(tk.Tk):
         # Left: list + buttons
         left = ttk.Frame(f)
         left.pack(side="left", fill="y", padx=4, pady=4)
-        ttk.Label(left, text="Jobs:", font=("TkDefaultFont", 9)).pack(anchor="w")
+
+        # Header row: "Jobs:" label + batch select-all/deselect-all buttons
+        header = ttk.Frame(left)
+        header.pack(fill="x")
+        ttk.Label(header, text="Jobs:",
+                  font=("TkDefaultFont", 9)).pack(side="left")
+        ttk.Button(header, text="None", width=5,
+                   command=self._deselect_all_batch).pack(side="right", padx=1)
+        ttk.Button(header, text="All", width=4,
+                   command=self._select_all_batch).pack(side="right", padx=1)
 
         # Scrollable frame of job rows (Checkbutton + Label per job)
         list_border = ttk.Frame(left, relief="sunken", borderwidth=1)
@@ -1060,9 +1069,11 @@ class App(tk.Tk):
     # -- Job list ops --------------------------------------------------
 
     def _refresh_jobs_list(self, select_index: Optional[int] = None):
-        # Sync batch flags length to jobs list
+        # Sync batch flags length to jobs list. Pull defaults from
+        # job.in_batch (loaded from file) when the list is shorter.
         while len(self._batch_flags) < len(self.cfg.jobs):
-            self._batch_flags.append(True)
+            i = len(self._batch_flags)
+            self._batch_flags.append(self.cfg.jobs[i].in_batch)
         self._batch_flags = self._batch_flags[:len(self.cfg.jobs)]
 
         # Destroy old row widgets
@@ -1100,6 +1111,21 @@ class App(tk.Tk):
         self._batch_rows = []
         self._batch_cols = []
 
+    def _set_all_batch_flags(self, value: bool):
+        """Toggle every job's batch checkbox to `value`."""
+        for i in range(len(self._batch_flags)):
+            self._batch_flags[i] = value
+        for row in self._job_rows:
+            row["var"].set(value)
+        self._batch_rows = []
+        self._batch_cols = []
+
+    def _select_all_batch(self):
+        self._set_all_batch_flags(True)
+
+    def _deselect_all_batch(self):
+        self._set_all_batch_flags(False)
+
     def _select_job(self, idx: int):
         """Select a job for editing (click on its name label)."""
         # Commit edits to the previously-selected job before switching.
@@ -1131,13 +1157,19 @@ class App(tk.Tk):
         if self._current_job_index is None:
             return
         self._commit_current_silent()
-        src = self.cfg.jobs[self._current_job_index]
+        # Capture the source's current checkbox state from the GUI (the
+        # parallel _batch_flags list is the live truth during a session;
+        # in_batch on the dataclass is only synced at save time).
+        src_idx = self._current_job_index
+        src_flag = (self._batch_flags[src_idx]
+                    if src_idx < len(self._batch_flags) else True)
+        src = self.cfg.jobs[src_idx]
         from copy import deepcopy
         new = deepcopy(src)
         new.name = src.name + " (copy)"
-        self.cfg.jobs.insert(self._current_job_index + 1, new)
-        self._batch_flags.insert(self._current_job_index + 1, True)
-        self._refresh_jobs_list(select_index=self._current_job_index + 1)
+        self.cfg.jobs.insert(src_idx + 1, new)
+        self._batch_flags.insert(src_idx + 1, src_flag)
+        self._refresh_jobs_list(select_index=src_idx + 1)
 
     def _job_del(self):
         if self._current_job_index is None or len(self.cfg.jobs) <= 1:
@@ -1242,10 +1274,22 @@ class App(tk.Tk):
         if cancelled and not all_rows:
             return
 
+        lazy_warnings = list(getattr(adapter, "_lazy_fetch_log", []))
+
         if errors:
             messagebox.showwarning(
                 "Some jobs failed",
                 "\n".join(errors),
+                parent=self,
+            )
+        elif lazy_warnings:
+            preview = lazy_warnings[:10]
+            extra = (f"\n… (+{len(lazy_warnings) - 10} more)"
+                     if len(lazy_warnings) > 10 else "")
+            messagebox.showwarning(
+                "Extraction warnings",
+                "Extraction completed but emitted the following warnings:"
+                "\n\n" + "\n".join(preview) + extra,
                 parent=self,
             )
         if not all_rows:
@@ -1355,6 +1399,11 @@ class App(tk.Tk):
     def _do_save(self, path: str):
         self._read_setup_into_cfg()
         self._commit_current_silent()
+        # Mirror the GUI's checkbox state into the JobCfg before serialising
+        # so the in_batch field round-trips through the saved config.
+        for i, job in enumerate(self.cfg.jobs):
+            if i < len(self._batch_flags):
+                job.in_batch = bool(self._batch_flags[i])
         try:
             gfe.save_config(self.cfg, path)
         except Exception as e:

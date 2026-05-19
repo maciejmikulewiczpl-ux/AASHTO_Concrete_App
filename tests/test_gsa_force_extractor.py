@@ -856,6 +856,34 @@ def test_save_load_config_round_trip(tmp_path):
     assert gfe.config_to_dict(cfg) == gfe.config_to_dict(cfg2)
 
 
+def test_in_batch_defaults_to_true_when_absent(tmp_path):
+    """Old configs (no in_batch key) must load with in_batch=True so that
+    existing files keep working after the field was introduced."""
+    cfg = gfe.load_config(_write_json(tmp_path, _minimal_cfg()))
+    assert cfg.jobs[0].in_batch is True
+
+
+def test_in_batch_round_trips_through_save_load(tmp_path):
+    """Untick a job, save, reload — the in_batch=False must survive."""
+    raw = _minimal_cfg()
+    raw["jobs"].append({
+        "name": "j2",
+        "location": {"element": 2, "position": 0.5},
+        "combo": "C1",
+        "axes": {"Pu": "Fx", "Mu": "Mzz"},
+        "forces_to_output": ["Pu", "Mu"],
+        "envelopes": [{"action": "max", "on": "Mu", "top_n": 1}],
+    })
+    cfg = gfe.load_config(_write_json(tmp_path, raw))
+    cfg.jobs[0].in_batch = False
+    cfg.jobs[1].in_batch = True
+    out = tmp_path / "out.json"
+    gfe.save_config(cfg, str(out))
+    reloaded = gfe.load_config(str(out))
+    assert reloaded.jobs[0].in_batch is False
+    assert reloaded.jobs[1].in_batch is True
+
+
 def test_load_config_strips_underscore_comment_keys(tmp_path):
     cfg = _minimal_cfg()
     cfg["_comment_top"] = "ignore me"
@@ -1285,3 +1313,151 @@ def test_run_reaction_job_rejects_gsapy_adapter():
     job = _rxn_job(nodes=[10])
     with pytest.raises(RuntimeError, match="GsaAPI"):
         gfe.run_job(adapter, job, "N", "N.m", gfe.UnitsCfg(), gfe.SignsCfg())
+
+
+# ---------------------------------------------------------------------------
+# Skip-with-warning: prefetch silently drops non-beam elements (springs,
+# links, deleted-but-saved-list-referenced), and run_job filters them out
+# of the candidate iteration. The whole job must NOT fail because of one
+# bad element — only the genuinely-empty-target case raises.
+# ---------------------------------------------------------------------------
+
+class MockElementApiAdapter:
+    """Mock matching the GsaApiAdapter surface that run_job calls for
+    element-force jobs. Lets a test mark specific element IDs as
+    "Element1dForce returns no data" so prefetch flags them in
+    `_missing_in_prefetch` and run_job filters them out.
+
+    forces_by_elem: {elem_id: {(perm, position): {axis: float}}} for the
+    elements that DO have data. Element IDs absent from this dict (but
+    present in the elements arg to prefetch) are treated as no-data.
+    """
+
+    POSITION_RESOLUTION = 4
+
+    def __init__(self, forces_by_elem: dict, perm_count: int):
+        self._forces_by_elem = forces_by_elem
+        self._perm_count = perm_count
+        self._combo_cache: dict = {}
+        self._perm_count_cache: dict = {}
+        self._lazy_fetch_log: list = []
+        self._missing_in_prefetch: dict = {}
+
+    def discover_units(self):
+        return ("N", "N.m")
+
+    def elements_in_group(self, name):
+        raise NotImplementedError
+
+    def prefetch(self, combo, elements, progress_cb=None):
+        cache: dict = {}
+        n_pts = self.POSITION_RESOLUTION + 1
+        for eid in elements:
+            if eid not in self._forces_by_elem:
+                continue  # no-data element — silently dropped (like real .NET)
+            perm_data = self._forces_by_elem[eid]
+            elem_perms = []
+            for pi in range(1, self._perm_count + 1):
+                perm = f"{combo}p{pi}"
+                positions = []
+                for posi in range(n_pts):
+                    pos = posi / (n_pts - 1) if n_pts > 1 else 0.0
+                    f = perm_data.get((perm, pos),
+                                      {"Fx": 0, "Fy": 0, "Fz": 0,
+                                       "Mxx": 0, "Myy": 0, "Mzz": 0})
+                    positions.append(dict(f))
+                elem_perms.append(positions)
+            cache[int(eid)] = elem_perms
+        if combo in self._combo_cache:
+            self._combo_cache[combo].update(cache)
+        else:
+            self._combo_cache[combo] = cache
+        self._perm_count_cache[combo] = self._perm_count
+        final_cache = self._combo_cache[combo]
+        self._missing_in_prefetch[combo] = [
+            int(e) for e in elements if int(e) not in final_cache
+        ]
+
+    def list_permutations(self, combo):
+        n = self._perm_count_cache.get(combo, 0)
+        return [f"{combo}p{i}" for i in range(1, n + 1)] if n > 0 else [combo]
+
+    def elem_forces_all_positions(self, elem, perm):
+        combo = perm.rpartition("p")[0] if "p" in perm else perm
+        idx = int(perm.rpartition("p")[2]) - 1 if "p" in perm else 0
+        positions = self._combo_cache[combo][elem][idx]
+        n = len(positions)
+        return [(i / (n - 1) if n > 1 else 0.0, dict(p))
+                for i, p in enumerate(positions)]
+
+    def elem_forces_at(self, elem, position, perm):
+        pts = self.elem_forces_all_positions(elem, perm)
+        idx = round(float(position) * (len(pts) - 1))
+        idx = max(0, min(len(pts) - 1, idx))
+        return pts[idx][1]
+
+
+def _elem_job(name="job", elements=(1, 2, 3), combo="C1"):
+    return gfe.JobCfg(
+        name=name,
+        location={"elements": list(elements), "position": 0.5},
+        combo=combo,
+        axes={"Pu": "Fx", "Mu": "Myy", "Vu": "Fz", "Tu": "Mxx"},
+        forces_to_output=["Pu", "Mu", "Vu", "Tu"],
+        envelopes=[gfe.EnvelopeRule("max", "Mu", 1)],
+    )
+
+
+def test_run_job_skips_elements_without_element1d_force_data():
+    """A saved list with a spring/link mixed in must not fail the whole
+    job. The bad element is skipped and a warning is logged."""
+    forces = {
+        1: {("C1p1", 0.5): {"Fx": 10, "Fy": 0, "Fz": 0,
+                            "Mxx": 0, "Myy": 100, "Mzz": 0}},
+        2: {("C1p1", 0.5): {"Fx": 20, "Fy": 0, "Fz": 0,
+                            "Mxx": 0, "Myy": 200, "Mzz": 0}},
+        # element 3 deliberately absent — simulates a spring/link with no data.
+    }
+    adapter = MockElementApiAdapter(forces, perm_count=1)
+    job = _elem_job(elements=[1, 2, 3], combo="C1")
+
+    rows = gfe.run_job(adapter, job, "N", "N.m",
+                       gfe.UnitsCfg(output_force="N", output_moment="N.m"),
+                       gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                                    moment_hogging_positive_in_gsa=False))
+    assert len(rows) == 1
+    assert rows[0]["Element"] == 2  # max Mu winner from the two valid elems
+    # Warning must mention the skipped element and the combo.
+    assert any("3" in w and "C1" in w
+               for w in adapter._lazy_fetch_log), adapter._lazy_fetch_log
+
+
+def test_run_job_raises_when_every_element_lacks_data():
+    """If the entire target list has no Element1dForce data, run_job must
+    raise a clear error — silently returning zero rows would hide the
+    misconfiguration."""
+    adapter = MockElementApiAdapter({}, perm_count=1)
+    job = _elem_job(elements=[10, 20], combo="C1")
+    with pytest.raises(RuntimeError, match="every element"):
+        gfe.run_job(adapter, job, "N", "N.m",
+                    gfe.UnitsCfg(output_force="N", output_moment="N.m"),
+                    gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                                 moment_hogging_positive_in_gsa=False))
+
+
+def test_run_job_no_warning_when_all_elements_have_data():
+    """Happy path: every element returns data; warning log stays empty."""
+    forces = {
+        1: {("C1p1", 0.5): {"Fx": 10, "Fy": 0, "Fz": 0,
+                            "Mxx": 0, "Myy": 100, "Mzz": 0}},
+        2: {("C1p1", 0.5): {"Fx": 20, "Fy": 0, "Fz": 0,
+                            "Mxx": 0, "Myy": 200, "Mzz": 0}},
+    }
+    adapter = MockElementApiAdapter(forces, perm_count=1)
+    job = _elem_job(elements=[1, 2], combo="C1")
+    rows = gfe.run_job(adapter, job, "N", "N.m",
+                       gfe.UnitsCfg(output_force="N", output_moment="N.m"),
+                       gfe.SignsCfg(axial_compression_positive_in_gsa=False,
+                                    moment_hogging_positive_in_gsa=False))
+    assert len(rows) == 1
+    assert adapter._lazy_fetch_log == []
