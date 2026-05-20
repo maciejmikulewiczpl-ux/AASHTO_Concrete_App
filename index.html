@@ -79,7 +79,29 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background
 /* Inline mode selector (Count/Spacing) used in the Flexural Reinforcement
    rows — needs enough width to show "Number of bottom bars" without the
    text being clipped by the browser default <select> width. */
-.bar-mode-sel { width: 100%; max-width: 200px; font-size: 0.84rem; font-weight: 500; color: var(--text); }
+/* `.form-row select` (further down in this file) sets width:100px for every
+   select inside a form-row. We need a more specific selector here to win,
+   otherwise "Number of top/bottom bars" gets truncated to 100px. */
+.form-row select.bar-mode-sel { width: 230px; font-size: 0.84rem; font-weight: 500; color: var(--text); }
+/* Section Definition tab: bump label min-width so every form-row's right-side
+   input/select column aligns. Without this, the row that hosts the wider
+   bar-mode dropdown ("Number of top/bottom bars") pushes its right column
+   out further than rows whose labels are short. */
+#tab-section .form-row label { min-width: 230px; }
+/* Section Definition tab uses a 1fr / 2fr grid so the wider tiles (Flexural
+   Reinforcement, Shear & Torsion) get twice the horizontal room of the
+   narrower ones (Section Geometry, Bonded Prestressing). Scoped to this tab
+   so other tabs that share .grid-2 keep their original auto-fit layout. */
+#tab-section > .grid-2 { grid-template-columns: minmax(280px, 1fr) minmax(420px, 2fr); }
+/* In the Flexural Reinforcement card the d_top/d_bot rows have an Override
+   checkbox that — with the new wider 2fr column — would float at the far
+   right of the card, disconnected from the value it overrides. Pull it back
+   close to the value/unit by neutralising the margin-left:auto that pushes
+   it (kept globally for other tabs that DO want it far right). */
+#tab-section .form-row > .ovr-label,
+#tab-section .form-row > .ovr-col-header { margin-left: 12px; min-width: 0; }
+.slab-note { background:#eaf2f8; border-left:3px solid #3498db; padding:6px 8px; margin:6px 0 8px; font-size:0.78rem; color:#2c3e50; line-height:1.4; }
+.slab-note code { background:rgba(255,255,255,0.6); padding:0 3px; border-radius:2px; font-size:0.78rem; }
 .form-row input:not([type="checkbox"]), .form-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.84rem; width: 100px; }
 .form-row select.wide { flex: 1; min-width: 100px; max-width: 280px; }
 .form-row input:not([type="checkbox"]):focus, .form-row select:focus { outline: none; border-color: var(--primary-light); box-shadow: 0 0 0 2px rgba(41,128,185,0.15); }
@@ -487,6 +509,12 @@ canvas { width: 100% !important; height: 100% !important; }
       <div class="card-header green">Section Geometry</div>
       <div class="card-body">
         <div class="form-row"><label>Section Type</label>
+          <select id="memberType" class="wide" onchange="onMemberTypeChange()">
+            <option value="BEAM" selected>Beam</option>
+            <option value="SLAB">Slab</option>
+          </select>
+        </div>
+        <div class="form-row" id="sectionShapeRow"><label>Section Shape</label>
           <select id="sectionType" class="wide"><option value="RECTANGULAR">Rectangular</option><option value="T-SECTION">I-Section</option></select>
         </div>
         <div class="form-row"><label>Flange width, b</label><input type="number" id="b_flange" value="16.38" step="any"><span class="unit">in</span></div>
@@ -501,6 +529,11 @@ canvas { width: 100% !important; height: 100% !important; }
     <div class="card">
       <div class="card-header blue">Flexural Reinforcement</div>
       <div class="card-body">
+        <div id="slabAsNote" class="slab-note" style="display:none">
+          <b>Slab mode:</b> when reinforcement is entered as a <b>spacing</b> <i>s</i>, As is pro-rated across the full section width:
+          <code>As = (b / s) &times; A<sub>b</sub></code>. Bars are drawn at exact spacing centered on the section.
+          When entered as a <b>bar count</b>, As = N &times; A<sub>b</sub> (no pro-rating). Per-row spacing in <i>Multiple Rows</i> is pro-rated the same way.
+        </div>
         <div class="form-row"><label><b>Top bars</b> &mdash; bar size</label>
           <select id="top_bar">
             <option value="0">None</option><option value="3">#3</option><option value="4">#4</option><option value="5">#5</option>
@@ -1029,6 +1062,7 @@ function saveCurrentSectionState(){
     wc_val: document.getElementById('wc').value,
     K1_val: document.getElementById('K1').value,
     secType: document.getElementById('sectionType').value,
+    memberType: (document.getElementById('memberType')||{value:'BEAM'}).value,
     b: V('b_flange'), h: V('h_total'), bw_input: V('b_web'), hf_top: V('hf_top'), hf_bot: V('hf_bot'), cover: V('cover'),
     barN_top: parseInt(document.getElementById('top_bar').value),
     // n_bars_top: when in 'spacing' mode, the field holds the raw spacing
@@ -1133,6 +1167,9 @@ function loadSectionState(name){
   document.getElementById('codeEdition').value = inp.codeEdition||'CA';
   document.getElementById('sectionClass').value = inp.sectionClass||'CIP_PT';
   document.getElementById('sectionType').value = inp.secType||'RECTANGULAR';
+  // memberType (Beam/Slab). Old saves without this key default to BEAM (== legacy behavior).
+  const _mtRestore=document.getElementById('memberType');
+  if(_mtRestore) _mtRestore.value = inp.memberType||'BEAM';
 
   // Geometry
   setV('b_flange',inp.b); setV('h_total',inp.h); setV('b_web',inp.bw_input);
@@ -1262,6 +1299,7 @@ function loadSectionState(name){
 
   // Trigger UI updates
   updateSectionFields();
+  if(typeof onMemberTypeChange==='function') onMemberTypeChange();
   updatePTFields();
   syncApsToTab();
 
@@ -1762,9 +1800,27 @@ function drawCrossSection(){
     const barR_bot=visBarR(bar_bot_cs.d);
     const barY_bot=sy(clampBarY(d_bot_cs,bar_bot_cs.d));
     const bxArr_bot=[];
-    const _iw_b=barInnerW(bar_bot_cs.d,d_bot_cs), _ox_b=barOriginX(bar_bot_cs.d,d_bot_cs);
-    for(let i=0;i<nBars_bot_cs;i++){
-      bxArr_bot.push(nBars_bot_cs===1?b/2:_ox_b+_iw_b*i/(nBars_bot_cs-1));
+    // Slab + spacing input: place bars at EXACT spacing centered on b/2,
+    // rather than evenly distributed within the clear width (which is the
+    // beam-mode convention). The engine receives a pro-rated As via
+    // As_bot_ovr, so the visual count here is independent from As.
+    const _mtEl=document.getElementById('memberType');
+    const _isSlab=_mtEl&&_mtEl.value==='SLAB';
+    const _modeBotEl=document.getElementById('bar_mode_bot');
+    const _modeBot=_modeBotEl?_modeBotEl.value:'count';
+    const _sBot=parseFloat(document.getElementById('n_bars_bot').value)||0;
+    if(_isSlab&&_modeBot==='spacing'&&_sBot>0){
+      const edgeMin=cover+db_stir+bar_bot_cs.d/2;
+      const usable=Math.max(b-2*edgeMin,0);
+      const nFit=Math.max(Math.floor(usable/_sBot)+1,1);
+      for(let i=0;i<nFit;i++){
+        bxArr_bot.push(b/2+(i-(nFit-1)/2)*_sBot);
+      }
+    } else {
+      const _iw_b=barInnerW(bar_bot_cs.d,d_bot_cs), _ox_b=barOriginX(bar_bot_cs.d,d_bot_cs);
+      for(let i=0;i<nBars_bot_cs;i++){
+        bxArr_bot.push(nBars_bot_cs===1?b/2:_ox_b+_iw_b*i/(nBars_bot_cs-1));
+      }
     }
     checkRowSpacing(bxArr_bot, bar_bot_cs.d, 'Bottom bars');
     const hasViol_bot=spacingWarnings.length>0;
@@ -1800,9 +1856,24 @@ function drawCrossSection(){
     const barR_top=visBarR(bar_top_cs.d);
     const barY_top=sy(clampBarY(d_top_cs,bar_top_cs.d));
     const bxArr_top=[];
-    const _iw_t=barInnerW(bar_top_cs.d,d_top_cs), _ox_t=barOriginX(bar_top_cs.d,d_top_cs);
-    for(let i=0;i<nBars_top_cs;i++){
-      bxArr_top.push(nBars_top_cs===1?b/2:_ox_t+_iw_t*i/(nBars_top_cs-1));
+    // Slab + spacing input: exact spacing centered on b/2 (mirrors bottom branch above).
+    const _mtEl_t=document.getElementById('memberType');
+    const _isSlab_t=_mtEl_t&&_mtEl_t.value==='SLAB';
+    const _modeTopEl=document.getElementById('bar_mode_top');
+    const _modeTop=_modeTopEl?_modeTopEl.value:'count';
+    const _sTop=parseFloat(document.getElementById('n_bars_top').value)||0;
+    if(_isSlab_t&&_modeTop==='spacing'&&_sTop>0){
+      const edgeMin_t=cover+db_stir+bar_top_cs.d/2;
+      const usable_t=Math.max(b-2*edgeMin_t,0);
+      const nFit_t=Math.max(Math.floor(usable_t/_sTop)+1,1);
+      for(let i=0;i<nFit_t;i++){
+        bxArr_top.push(b/2+(i-(nFit_t-1)/2)*_sTop);
+      }
+    } else {
+      const _iw_t=barInnerW(bar_top_cs.d,d_top_cs), _ox_t=barOriginX(bar_top_cs.d,d_top_cs);
+      for(let i=0;i<nBars_top_cs;i++){
+        bxArr_top.push(nBars_top_cs===1?b/2:_ox_t+_iw_t*i/(nBars_top_cs-1));
+      }
     }
     checkRowSpacing(bxArr_top, bar_top_cs.d, 'Top bars');
     const hasViol_top=spacingWarnings.some(w=>w.label==='Top bars');
@@ -2743,24 +2814,39 @@ function buildInputsFromState(state){
   const dp=num(inp.dp_input,0), fpe=num(inp.fpe_input,0);
   const tN=(shN_eff===0)?4:shN_eff;
   const s_torsion=s_shear;
-  // Multi-row reinforcement
+  // Beam vs Slab (mirrors gatherInputs slab branch).
+  const memberType=(inp.memberType==='SLAB')?'SLAB':'BEAM';
+  const isSlab=memberType==='SLAB';
+  // Multi-row reinforcement. Per-row slab pro-rating uses full-width (b/s)*A_b
+  // when r.mode==='spacing'; count rows are unchanged.
   const mrArrs={top:(state.mrData&&state.mrData.top)||null, bot:(state.mrData&&state.mrData.bot)||null};
   const clearW=b-2*cover-2*db_stir;
   function resolveArr(arr){
     if(!arr||!arr.length) return null;
     return arr.map(r=>{
       const bar=BARS[r.barN]||BARS[7];
+      if(isSlab&&r.mode==='spacing'&&r.val>0){
+        return {d:r.d, As:(b/r.val)*bar.a};
+      }
       const nBars=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1):Math.max(Math.round(r.val),0);
       return {d:r.d, As:nBars*bar.a};
     });
   }
   const mr_rows_top=resolveArr(mrArrs.top);
   const mr_rows_bot=resolveArr(mrArrs.bot);
-  const As_top_ovr=mr_rows_top?mr_rows_top.reduce((s,r)=>s+r.As,0):null;
-  const As_bot_ovr=mr_rows_bot?mr_rows_bot.reduce((s,r)=>s+r.As,0):null;
+  let As_top_ovr=mr_rows_top?mr_rows_top.reduce((s,r)=>s+r.As,0):null;
+  let As_bot_ovr=mr_rows_bot?mr_rows_bot.reduce((s,r)=>s+r.As,0):null;
+  // Single-row slab pro-rating (only when no multi-row override is active for that side).
+  // inp.spacing_top / inp.spacing_bot hold the raw spacing value when mode_*='spacing'.
+  if(isSlab && As_top_ovr===null && inp.mode_top==='spacing' && bar_top && num(inp.spacing_top,0)>0){
+    As_top_ovr=(b/num(inp.spacing_top,0))*bar_top.a;
+  }
+  if(isSlab && As_bot_ovr===null && inp.mode_bot==='spacing' && num(inp.spacing_bot,0)>0){
+    As_bot_ovr=(b/num(inp.spacing_bot,0))*bar_bot.a;
+  }
   const concType=inp.concType||'NORMAL';
   return {fc,fy,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override:!!inp.ecl_ovr,etl_override:!!inp.etl_ovr,
-    ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
+    ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,
     nStrands,strand_area,dp,fpe,ductDia,
     shN:shN_eff===0?4:shN_eff,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
@@ -3935,11 +4021,21 @@ function gatherInputs(){
   const dp=VE('dp_input'), fpe=V('fpe_input')||0;
   const tN=(shN===0)?4:shN; // Default to #4 if None selected, for Python processing
   const s_torsion=s_shear;
+  // Beam vs Slab. In Slab mode, when reinforcement is given as spacing, As is
+  // pro-rated by (b/s)*A_b instead of (integer count)*A_b. Fed to the engine
+  // via the existing As_*_ovr override channel, so calc_engine.py is unchanged.
+  const _mtEl=document.getElementById('memberType');
+  const memberType=_mtEl?_mtEl.value:'BEAM';
+  const isSlab=memberType==='SLAB';
   // Multi-row As overrides (when mixed bar sizes, nBars*bar_a won't match real total)
+  // In Slab mode, per-row spacing entries are pro-rated by (b/s)*A_b instead of integer count.
   let As_top_ovr=null, As_bot_ovr=null;
   if(mrData.top&&mrData.top.length>0){
     As_top_ovr=mrData.top.reduce((s,r)=>{
       const bar=BARS[r.barN]||BARS[7];
+      if(isSlab&&r.mode==='spacing'&&r.val>0){
+        return s+(b/r.val)*bar.a;
+      }
       const clearW=b-2*cover-2*db_stir;
       const nB=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1):Math.max(Math.round(r.val),0);
       return s+nB*bar.a;
@@ -3948,10 +4044,21 @@ function gatherInputs(){
   if(mrData.bot&&mrData.bot.length>0){
     As_bot_ovr=mrData.bot.reduce((s,r)=>{
       const bar=BARS[r.barN]||BARS[7];
+      if(isSlab&&r.mode==='spacing'&&r.val>0){
+        return s+(b/r.val)*bar.a;
+      }
       const clearW=b-2*cover-2*db_stir;
       const nB=r.mode==='spacing'?(r.val>0?Math.max(Math.floor(clearW/r.val)+1,1):1):Math.max(Math.round(r.val),0);
       return s+nB*bar.a;
     },0);
+  }
+  // Single-row slab pro-rating (only when no multi-row override is active for that side).
+  // V('n_bars_top') / V('n_bars_bot') hold the spacing value when bar_mode='spacing'.
+  if(isSlab && As_top_ovr===null && _modeTop==='spacing' && bar_top && V('n_bars_top')>0){
+    As_top_ovr=(b/V('n_bars_top'))*bar_top.a;
+  }
+  if(isSlab && As_bot_ovr===null && _modeBot==='spacing' && V('n_bars_bot')>0){
+    As_bot_ovr=(b/V('n_bars_bot'))*bar_bot.a;
   }
   // Multi-row reinforcement row arrays for PM curves (individual layers)
   let mr_rows_bot=null, mr_rows_top=null;
@@ -3970,7 +4077,7 @@ function gatherInputs(){
     }
   });
   const concType=document.getElementById('concType').value;
-  return {fc,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,
+  return {fc,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
     astm_spec,factor_overrides,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,nStrands,strand_area,dp,fpe,ductDia:ductDia,
     shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,at_add_bar_N,s_at_add,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
@@ -6619,6 +6726,29 @@ function updateSectionFields(){
     el.querySelector('input').disabled=isRect;
   });
 }
+// Beam vs Slab: in Slab mode the section is locked to RECTANGULAR (no T-section
+// flange/web) and pro-rated As applies when reinforcement is entered as spacing.
+// See `slabAsNote` banner for the user-facing explanation.
+function onMemberTypeChange(){
+  const mtEl=document.getElementById('memberType');
+  const isSlab=mtEl&&mtEl.value==='SLAB';
+  const shapeSel=document.getElementById('sectionType');
+  const shapeRow=document.getElementById('sectionShapeRow');
+  if(isSlab){
+    if(shapeSel.value!=='RECTANGULAR') shapeSel.value='RECTANGULAR';
+    shapeSel.disabled=true;
+    if(shapeRow) shapeRow.classList.add('disabled');
+  } else {
+    shapeSel.disabled=false;
+    if(shapeRow) shapeRow.classList.remove('disabled');
+  }
+  updateSectionFields();
+  const note=document.getElementById('slabAsNote');
+  if(note) note.style.display=isSlab?'':'none';
+  updateDerivedBars('top'); updateDerivedBars('bot');
+  try{drawCrossSection();}catch(e){}
+  if(typeof runAllCalculations==='function') runAllCalculations();
+}
 const PT_DEFAULTS={strand_area:'0.217',n_strands:'10',dp_input:'15.5',duct_dia:'6'};
 function updatePTFields(){
   const sc=document.getElementById('sectionClass').value;
@@ -6847,16 +6977,31 @@ function onBarModeChange(side){
   updateDerivedBars(side);
 }
 
-// Refresh the "= N bars" note when in spacing mode.
+// Refresh the "= N bars" note when in spacing mode. In Slab mode the note
+// instead shows the pro-rated As = (b/s) * A_b that the engine will use,
+// because Slab+spacing decouples drawing count from As (see drawCrossSection
+// and gatherInputs slab branch).
 function updateDerivedBars(side){
   const sel=document.getElementById('bar_mode_'+side);
   const note=document.getElementById('n_bars_'+side+'_derived');
   if(!sel||!note) return;
   if(sel.value!=='spacing'){ note.style.display='none'; note.textContent=''; return; }
+  note.style.display='';
   const spacing=parseFloat(document.getElementById('n_bars_'+side).value);
   if(!(spacing>0)){ note.textContent='(enter spacing)'; return; }
-  const n=barsFromSpacing(spacing, dForWidthLookup(side));
-  note.textContent='= '+n+' bar'+(n===1?'':'s');
+  const mtEl=document.getElementById('memberType');
+  const isSlab=mtEl&&mtEl.value==='SLAB';
+  if(isSlab){
+    const b=VE('b_flange');
+    const barN=parseInt(document.getElementById((side==='top'?'top':'bot')+'_bar').value)||0;
+    const bar=BARS[barN]||null;
+    if(!bar){ note.textContent='(no bar size)'; return; }
+    const As=(b/spacing)*bar.a;
+    note.textContent='≈ Aₛ = '+As.toFixed(2)+' in²';
+  } else {
+    const n=barsFromSpacing(spacing, dForWidthLookup(side));
+    note.textContent='= '+n+' bar'+(n===1?'':'s');
+  }
 }
 
 // Recompute the derived note when bar size or relevant geometry changes.
