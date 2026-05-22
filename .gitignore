@@ -13,8 +13,10 @@ env/
 # Build artifacts
 build/
 dist/
-*.spec
 AASHTO_Concrete_App_release.zip
+
+# Stale legacy spec (superseded by AASHTO_Concrete_App.spec, kept untracked)
+app.spec
 
 # Documents
 *.pdf
