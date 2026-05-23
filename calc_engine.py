@@ -3,6 +3,7 @@ AASHTO LRFD Reinforced Concrete Section Design — Calculation Engine
 Pure math, no UI dependencies. All units: kip, in, ksi.
 """
 import math
+import pt_engine
 
 # ─── Equation Instrumentation ───────────────────────────────────────
 
@@ -1782,6 +1783,11 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     beta_s = 1 + dc / (0.7 * (h - dc)) if (h - dc) > 0 else 1
     fss_simp = 0.6 * fy_long
     s_crack = (700 * gamma_e) / (beta_s * fss_simp) - 2 * dc if (beta_s * fss_simp) > 0 else 0
+    # Crack-mode toggle (AASHTO 5.6.7-1): user chooses whether spacing limit uses
+    # the capped 0.6*fy shortcut or the actual cracked-section fss (computed below).
+    crack_mode = I.get("crack_mode", "capped")
+    s_crack_capped = s_crack  # using fss_simp = 0.6*fy
+    # s_crack_actual and fss_used are finalized after fss is computed below.
 
     # ── Spacing (5.10.3) ──
     s_min_ck = max(1.5 * bar_d_tens, 1.5 * I["ag"], 1.5)
@@ -1864,6 +1870,50 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     eps_rb = fss / Es if Es > 0 else 0
     curv = abs(eps_rb / (s_ds - c_cr)) if (s_ds - c_cr) != 0 else 0
 
+    # ── Finalize crack-mode selection (AASHTO 5.6.7-1) ──
+    fss_actual = max(fss, 0.0)  # negative fss = net compression in rebar
+    if fss_actual * beta_s > 0:
+        s_crack_actual = (700 * gamma_e) / (beta_s * fss_actual) - 2 * dc
+    else:
+        s_crack_actual = 0
+    if crack_mode == "actual":
+        fss_used, s_crack = fss_actual, s_crack_actual
+    else:
+        fss_used, s_crack = fss_simp, s_crack_capped
+
+    # Full equation breakdown for the crack-control report
+    breakdown_crack = EqBreakdown("Crack Control per AASHTO 5.6.7")
+    breakdown_crack.add(
+        f"dc = cover + d_bar/2 = {fmt_num(cover, 2)} + {fmt_num(bar_d_tens, 3)}/2",
+        "distance from extreme tension fiber to centroid of outermost bar",
+        dc, "in")
+    breakdown_crack.add(
+        f"βs = 1 + dc/(0.7·(h - dc)) = 1 + {fmt_num(dc, 2)}/(0.7·({fmt_num(h, 2)} - {fmt_num(dc, 2)}))",
+        "crack distribution factor (Eq. 5.6.7-2)",
+        beta_s, "")
+    breakdown_crack.add(
+        f"fss,capped = 0.6·fy = 0.6·{fmt_num(fy_long, 1)}",
+        "simplified rebar stress shortcut",
+        fss_simp, "ksi")
+    breakdown_crack.add(
+        f"fss,actual = M·(ds - c_cr)/Icr·n + Ps·n/(transformed area)",
+        f"cracked-section service stress = {fmt_num(M_total_serv, 1)}·{fmt_num(s_ds - c_cr, 2)}/{fmt_num(Icr, 1)}·{fmt_num(n_mod, 2)}",
+        fss_actual, "ksi")
+    if fss_simp * beta_s > 0:
+        breakdown_crack.add(
+            f"s_capped = 700·γe/(βs·fss,capped) - 2·dc = 700·{fmt_num(gamma_e, 2)}/({fmt_num(beta_s, 3)}·{fmt_num(fss_simp, 1)}) - 2·{fmt_num(dc, 2)}",
+            "max bar spacing using capped fss (Eq. 5.6.7-1)",
+            s_crack_capped, "in")
+    if fss_actual * beta_s > 0:
+        breakdown_crack.add(
+            f"s_actual = 700·γe/(βs·fss,actual) - 2·dc = 700·{fmt_num(gamma_e, 2)}/({fmt_num(beta_s, 3)}·{fmt_num(fss_actual, 2)}) - 2·{fmt_num(dc, 2)}",
+            "max bar spacing using actual fss (Eq. 5.6.7-1)",
+            s_crack_actual, "in")
+    breakdown_crack.add(
+        f"crack_mode = '{crack_mode}'",
+        f"governing s_crack = {fmt_num(s_crack, 2)} in",
+        s_crack, "in")
+
     # Ig — gross moment of inertia (compute before Ieff)
     if is_rect:
         Ig = b * h ** 3 / 12
@@ -1938,6 +1988,9 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
         "fr": fr, "Sc": Sc, "Mcr": Mcr, "Mcond": Mcond, "min_flex_ok": min_flex_ok,
         # Crack control
         "dc": dc, "beta_s": beta_s, "fss_simp": fss_simp, "s_crack": s_crack,
+        "crack_mode": crack_mode, "fss_used": fss_used,
+        "s_crack_capped": s_crack_capped, "s_crack_actual": s_crack_actual,
+        "breakdown_crack": breakdown_crack.to_dict(),
         # Spacing
         "s_min_ck": s_min_ck, "s_max_ck": s_max_ck,
         # Cracked section
@@ -1953,6 +2006,276 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
         "phi_cc": phi_cc, "phi_tc": phi_tc, "phi_k": phi_k,
         # Section props
         "Aps": Aps, "Aps_tens": Aps_tens, "pt_in_compression": pt_in_compression,
+    }
+
+
+# ─── PT Service-Stage Concrete Fiber Stress Check (AASHTO LRFD 10th Ed.) ──
+# Coefficients verified from AASHTO LRFD Bridge Design Specifications, 10th Ed.
+# (2024), Section 5.9.2.3 (Tables 5.9.2.3.1b-1, 5.9.2.3.2a-1, 5.9.2.3.2b-1).
+
+_PT_LIMITS_DEFAULTS = {
+    # Temporary (transfer, before time-dependent losses) — §5.9.2.3.1
+    "kc_xfr_gen":     0.65,    # compression × f'ci, general (5.9.2.3.1a)
+    "kc_xfr_peak":    0.70,    # compression × f'ci, peak (lateral bending/handling)
+    "kt_xfr_bonded":  0.24,    # tension × λ√f'ci with bonded reinforcement (Table 5.9.2.3.1b-1 row 1)
+    "kt_xfr_plain":   0.0948,  # tension × λ√f'ci all other areas (Table 5.9.2.3.1b-1 row 2)
+    # Service Limit State — §5.9.2.3.2
+    "kc_srv1_sust":   0.45,    # compression × f'c, DL + PT (Table 5.9.2.3.2a-1 row 1)
+    "kc_srv1_full":   0.60,    # compression × φw·f'c, DL + LL + PT (Table 5.9.2.3.2a-1 row 2)
+    "kt_srv3_mod":    0.19,    # tension × λ√f'c, moderate corrosion bonded (Table 5.9.2.3.2b-1 row 1)
+    "kt_srv3_sev":    0.0948,  # tension × λ√f'c, severe corrosion bonded (Table 5.9.2.3.2b-1 row 2)
+}
+
+# Tensile stress caps per AASHTO tables (part of the formula, not a separate gate)
+_PT_TENS_CAPS = {
+    "kt_xfr_plain":  0.2,  # Table 5.9.2.3.1b-1 row 2
+    "kt_srv3_mod":   0.6,  # Table 5.9.2.3.2b-1 row 1
+    "kt_srv3_sev":   0.3,  # Table 5.9.2.3.2b-1 row 2
+}
+
+_PT_FLAGS_DEFAULTS = {
+    # Tendon bonding is structural metadata; the Service III dropdown
+    # carries the actual tension-limit selection (set to "none" for unbonded).
+    "bonded":          True,
+    # Case selectors map directly to AASHTO LRFD 10th Ed. table rows.
+    "temp_comp_case":  "general",   # "general" → 0.65·f'ci; "peak" → 0.70·f'ci
+    "temp_tens_case":  "bonded",    # "bonded" → 0.24·λ·√f'ci; "plain" → 0.0948·λ·√f'ci ≤ 0.2
+    "srv3_tens_case":  "moderate",  # "moderate" → 0.19·λ·√f'c ≤ 0.6; "severe" → 0.0948·λ·√f'c ≤ 0.3; "none" → 0
+    "phi_w":           1.0,         # web/flange slenderness reduction per §5.6.4.7
+}
+
+# Map of legacy v1 pt_limits keys -> v2 keys (silent migration).
+_PT_LIMITS_LEGACY_MAP = {
+    "kc_xfr":  "kc_xfr_gen",
+    "kt_xfr":  "kt_xfr_plain",
+    "kc_srv1": "kc_srv1_full",
+    "kc_sust": "kc_srv1_sust",
+    "kt_srv3": "kt_srv3_mod",
+}
+
+
+def _resolve_pt_lims_and_flags(I):
+    """Merge defaults with user-supplied pt_limits + pt_flags, migrating legacy keys.
+
+    Coefficient overrides (`pt_limits`) are still accepted programmatically
+    (e.g. for tests), but the UI no longer exposes individual coefficient inputs;
+    the UI sends case-selector flags instead and the engine picks coefficients
+    from the (verified-AASHTO) defaults.
+    """
+    lim = dict(_PT_LIMITS_DEFAULTS)
+    flg = dict(_PT_FLAGS_DEFAULTS)
+    # Legacy pt_limits keys (v1) → v2 keys
+    pt_lim_in = I.get("pt_limits") or {}
+    for old_key, new_key in _PT_LIMITS_LEGACY_MAP.items():
+        if old_key in pt_lim_in and pt_lim_in[old_key] is not None:
+            lim[new_key] = pt_lim_in[old_key]
+    for k, v in pt_lim_in.items():
+        if k in lim and v is not None:
+            lim[k] = v
+    # Flags: first migrate legacy flag names, then apply v2 case selectors
+    pt_flg_in = I.get("pt_flags") or {}
+    # Legacy flag migration (v2-pre-case-selector): allow_peak_xfr / temp_bonded_reinf / corrosion
+    if "allow_peak_xfr" in pt_flg_in and pt_flg_in["allow_peak_xfr"] is not None:
+        flg["temp_comp_case"] = "peak" if pt_flg_in["allow_peak_xfr"] else "general"
+    if "temp_bonded_reinf" in pt_flg_in and pt_flg_in["temp_bonded_reinf"] is not None:
+        flg["temp_tens_case"] = "bonded" if pt_flg_in["temp_bonded_reinf"] else "plain"
+    if "corrosion" in pt_flg_in and pt_flg_in["corrosion"] is not None:
+        if not pt_flg_in.get("bonded", flg["bonded"]):
+            flg["srv3_tens_case"] = "none"
+        elif pt_flg_in["corrosion"] == "severe":
+            flg["srv3_tens_case"] = "severe"
+        else:
+            flg["srv3_tens_case"] = "moderate"
+    # v2 (case-selector) flags
+    for k, v in pt_flg_in.items():
+        if k in flg and v is not None:
+            flg[k] = v
+    return lim, flg
+
+
+def _pt_fiber_stress(P, M_kipin, Ag, Ig, e_cgs, yt, yb):
+    """Compute top/bottom concrete fiber stress on a GROSS section.
+
+    Sign convention:
+      P > 0 (magnitude of prestress force, always compressive on section).
+      e_cgs > 0 when CGS is BELOW the section centroid.
+      M > 0 = sagging (top fiber in compression from M alone).
+      Returned f_top, f_bot: compression NEGATIVE, tension POSITIVE.
+    """
+    if Ag <= 0 or Ig <= 0:
+        return 0.0, 0.0
+    axial = -P / Ag
+    f_top = axial + (P * e_cgs * yt / Ig) - (M_kipin * yt / Ig)
+    f_bot = axial - (P * e_cgs * yb / Ig) + (M_kipin * yb / Ig)
+    return f_top, f_bot
+
+
+# Load-case → (display label, AASHTO reference for table heading) map.
+_PT_LOAD_CASE_META = {
+    "temporary":       ("Temporary (transfer, before losses)",          "AASHTO 5.9.2.3.1"),
+    "service_I_sust":  ("Service I Compression - Permanent (DL + PT)",  "Table 5.9.2.3.2a-1, row 1"),
+    "service_I_full":  ("Service I Compression - Full (DL + LL + PT)",  "Table 5.9.2.3.2a-1, row 2"),
+    "service_III":     ("Service III (DL + 0.8·LL + PT)",               "Table 5.9.2.3.2b-1"),
+}
+
+
+def _pt_row_service_check(I, load_case, P_xfr_kip, P_serv_kip, M_kipin, dp_row):
+    """AASHTO 5.9.2.3 per-row PT service-stress check for a single load case.
+
+    Uses GROSS section properties. Returns a dict with f_top, f_bot, applicable
+    limits (None when the case doesn't check that side), ratios, status, and a
+    full EqBreakdown for the report.
+    """
+    lim, flg = _resolve_pt_lims_and_flags(I)
+    Ag = I.get("Ag", 0.0)
+    Ig = I.get("Ig", 0.0)
+    h = I.get("h", 0.0)
+    yb_c = I.get("yb_centroid", h / 2.0)
+    yt = yb_c
+    yb = h - yb_c
+    e_cgs = (dp_row - yb_c) if dp_row else 0.0
+    fc = I.get("fc", 0.0)
+    fci = I.get("fci", fc)
+    lam = I.get("lam", 1.0)
+
+    label, ref = _PT_LOAD_CASE_META.get(load_case, _PT_LOAD_CASE_META["service_I_full"])
+
+    # Resolve which P and which limits apply for this load case
+    sigma_c_lim = None
+    sigma_t_lim = None
+    not_allowed = False
+    c_eq_str = ""
+    t_eq_str = ""
+    c_cite = ""
+    t_cite = ""
+
+    if load_case == "temporary":
+        P = P_xfr_kip
+        # Compression: 0.65 (general) or 0.70 (peak) × f'ci  [§5.9.2.3.1a]
+        if flg["temp_comp_case"] == "peak":
+            kc = lim["kc_xfr_peak"]
+            c_cite = "AASHTO 5.9.2.3.1a (peak)"
+        else:
+            kc = lim["kc_xfr_gen"]
+            c_cite = "AASHTO 5.9.2.3.1a (general)"
+        sigma_c_lim = -kc * fci
+        c_eq_str = f"-{fmt_num(kc, 3)}·f'ci = -{fmt_num(kc, 3)}·{fmt_num(fci, 2)}"
+        # Tension: 0.24·λ·√f'ci (bonded reinf) OR 0.0948·λ·√f'ci ≤ 0.2 ksi (other areas)
+        if flg["temp_tens_case"] == "plain":
+            kt = lim["kt_xfr_plain"]
+            cap = _PT_TENS_CAPS["kt_xfr_plain"]
+            raw = kt * lam * math.sqrt(max(fci, 0.0))
+            sigma_t_lim = min(raw, cap)
+            t_eq_str = f"min({fmt_num(kt, 4)}·λ·√f'ci, {cap}) = min({fmt_num(raw, 4)}, {cap})"
+            t_cite = "Table 5.9.2.3.1b-1, other areas (cap 0.2 ksi)"
+        else:
+            kt = lim["kt_xfr_bonded"]
+            raw = kt * lam * math.sqrt(max(fci, 0.0))
+            sigma_t_lim = raw
+            t_eq_str = f"{fmt_num(kt, 4)}·λ·√f'ci = {fmt_num(kt, 4)}·{fmt_num(lam, 2)}·√{fmt_num(fci, 2)}"
+            t_cite = "Table 5.9.2.3.1b-1, bonded reinforcement"
+    elif load_case == "service_I_sust":
+        P = P_serv_kip
+        kc = lim["kc_srv1_sust"]
+        sigma_c_lim = -kc * fc
+        c_eq_str = f"-{fmt_num(kc, 3)}·f'c = -{fmt_num(kc, 3)}·{fmt_num(fc, 2)}"
+        c_cite = "Table 5.9.2.3.2a-1, row 1"
+    elif load_case == "service_I_full":
+        P = P_serv_kip
+        kc = lim["kc_srv1_full"]
+        phi_w = flg["phi_w"]
+        sigma_c_lim = -kc * phi_w * fc
+        c_eq_str = f"-{fmt_num(kc, 3)}·φw·f'c = -{fmt_num(kc, 3)}·{fmt_num(phi_w, 2)}·{fmt_num(fc, 2)}"
+        c_cite = "Table 5.9.2.3.2a-1, row 2"
+    elif load_case == "service_III":
+        P = P_serv_kip
+        case3 = flg["srv3_tens_case"]
+        if case3 == "none":
+            sigma_t_lim = 0.0
+            not_allowed = True
+            t_eq_str = "No tension allowed"
+            t_cite = "Table 5.9.2.3.2b-1, unbonded tendons (no tension)"
+        elif case3 == "severe":
+            kt = lim["kt_srv3_sev"]
+            cap = _PT_TENS_CAPS["kt_srv3_sev"]
+            raw = kt * lam * math.sqrt(max(fc, 0.0))
+            sigma_t_lim = min(raw, cap)
+            t_eq_str = f"min({fmt_num(kt, 4)}·λ·√f'c, {cap}) = min({fmt_num(raw, 4)}, {cap})"
+            t_cite = "Table 5.9.2.3.2b-1, severe corrosion"
+        else:
+            kt = lim["kt_srv3_mod"]
+            cap = _PT_TENS_CAPS["kt_srv3_mod"]
+            raw = kt * lam * math.sqrt(max(fc, 0.0))
+            sigma_t_lim = min(raw, cap)
+            t_eq_str = f"min({fmt_num(kt, 4)}·λ·√f'c, {cap}) = min({fmt_num(raw, 4)}, {cap})"
+            t_cite = "Table 5.9.2.3.2b-1, moderate corrosion"
+    else:
+        # Unknown load case — treat as Service I full (graceful fallback)
+        return _pt_row_service_check(I, "service_I_full", P_xfr_kip, P_serv_kip, M_kipin, dp_row)
+
+    f_top, f_bot = _pt_fiber_stress(P, M_kipin, Ag, Ig, e_cgs, yt, yb)
+
+    # Ratios — only populate the side that this load case checks
+    def _ratio_c(f):
+        if sigma_c_lim is None or sigma_c_lim == 0 or f >= 0:
+            return None
+        return f / sigma_c_lim  # both negative → positive ratio
+    def _ratio_t(f):
+        if sigma_t_lim is None or f <= 0:
+            return None
+        if sigma_t_lim == 0:
+            return float("inf") if f > 0 else 0.0
+        return f / sigma_t_lim
+
+    rtc = _ratio_c(f_top)
+    rtt = _ratio_t(f_top)
+    rbc = _ratio_c(f_bot)
+    rbt = _ratio_t(f_bot)
+
+    def _ok(rc, rt):
+        return ((rc is None) or rc <= 1.0) and ((rt is None) or rt <= 1.0)
+    pass_top = _ok(rtc, rtt)
+    pass_bot = _ok(rbc, rbt)
+    if not_allowed and (f_top > 0 or f_bot > 0):
+        status = "NOT_ALLOWED"
+    else:
+        status = "OK" if (pass_top and pass_bot) else "NG"
+
+    # Full equation breakdown for the report
+    bd = EqBreakdown(f"{label} — {ref}")
+    bd.add("P", f"prestress force at this stage", P, "kip")
+    bd.add("M", f"applied moment for this load case", M_kipin, "kip·in")
+    bd.add(
+        "f_top = -P/Ag + P·e·yt/Ig - M·yt/Ig",
+        f"= -{fmt_num(P, 1)}/{fmt_num(Ag, 1)} + {fmt_num(P, 1)}·{fmt_num(e_cgs, 3)}·{fmt_num(yt, 2)}/{fmt_num(Ig, 1)} - {fmt_num(M_kipin, 1)}·{fmt_num(yt, 2)}/{fmt_num(Ig, 1)}",
+        f_top, "ksi",
+    )
+    bd.add(
+        "f_bot = -P/Ag - P·e·yb/Ig + M·yb/Ig",
+        f"= -{fmt_num(P, 1)}/{fmt_num(Ag, 1)} - {fmt_num(P, 1)}·{fmt_num(e_cgs, 3)}·{fmt_num(yb, 2)}/{fmt_num(Ig, 1)} + {fmt_num(M_kipin, 1)}·{fmt_num(yb, 2)}/{fmt_num(Ig, 1)}",
+        f_bot, "ksi",
+    )
+    if sigma_c_lim is not None:
+        bd.add(f"σ_c,lim = {c_eq_str}", f"compression limit ({c_cite})", sigma_c_lim, "ksi")
+    if sigma_t_lim is not None:
+        bd.add(f"σ_t,lim = {t_eq_str}", f"tension limit ({t_cite})", sigma_t_lim, "ksi")
+
+    return {
+        "load_case": load_case,
+        "label": label,
+        "ref": ref,
+        "P_used": P,
+        "M_used": M_kipin,
+        "e_cgs": e_cgs,
+        "Ag": Ag, "Ig": Ig, "yt": yt, "yb": yb, "yb_centroid": yb_c,
+        "f_top": f_top, "f_bot": f_bot,
+        "sigma_c_lim": sigma_c_lim, "sigma_t_lim": sigma_t_lim,
+        "ratio_c_top": rtc, "ratio_t_top": rtt,
+        "ratio_c_bot": rbc, "ratio_t_bot": rbt,
+        "pass_top": pass_top, "pass_bot": pass_bot,
+        "status": status,
+        "limit_citations": [c for c in (c_cite, t_cite) if c],
+        "breakdown": bd.to_dict(),
     }
 
 
@@ -2683,8 +3006,12 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
 
 # ─── Compute Row Capacities ────────────────────────────────────────
 
-def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms, Ps):
-    """Compute capacities and status for a single demand row."""
+def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms, Ps, dr_row=None):
+    """Compute capacities and status for a single demand row.
+
+    `dr_row` (optional): the full demand-row dict. Currently used to read the
+    row's `load_case` for the per-row PT service-stress check (AASHTO 5.9.2.3).
+    """
     fc, fy_long, Es, Ept = I["fc"], I["fy_long"], I["Es"], I["Ept"]
     fy_trans = I["fy_trans"]
     fpu, fpy, ecl = I["fpu"], I["fpy"], I["ecl"]
@@ -2965,6 +3292,30 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         if s_crack_val <= 0:
             crack_status = "NG"
 
+    # Per-row PT service-stress check (AASHTO LRFD 10th Ed. §5.9.2.3).
+    # Each row's load_case ∈ {"temporary", "service_I_sust", "service_I_full",
+    # "service_III"} selects which limits apply; engine reads P from fpi or
+    # fpe accordingly. Status: "OK" / "NG" / "NOT_ALLOWED" / "NA".
+    pt_stress_status = "NA"
+    pt_stress_result = None
+    pt_stress_ftop = 0.0
+    pt_stress_fbot = 0.0
+    if Aps > 0 and I.get("hasPT"):
+        load_case_row = (dr_row or {}).get("load_case", "service_I_full") or "service_I_full"
+        fpi_section = float((I.get("pt_loss_summary") or {}).get("fpi", 0.0))
+        fpe_row = I.get("fpe", 0) or 0
+        dp_row_val = I.get("dp", 0) or 0
+        pt_stress_result = _pt_row_service_check(
+            I, load_case_row,
+            P_xfr_kip=fpi_section * Aps,
+            P_serv_kip=fpe_row * Aps,
+            M_kipin=Ms,
+            dp_row=dp_row_val,
+        )
+        pt_stress_status = pt_stress_result["status"]
+        pt_stress_ftop = pt_stress_result["f_top"]
+        pt_stress_fbot = pt_stress_result["f_bot"]
+
     # Flex status
     gamma1 = 1.6
     astm_spec = I.get("astm_spec", "A615_60")
@@ -3074,6 +3425,9 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         "Vn2_uncapped": Vn2_uncapped, "Vn2_capped": Vn2_capped,
         "Vn3_uncapped": Vn3_uncapped, "Vn3_capped": Vn3_capped,
         "crackStatus": crack_status, "flexStatus": flex_status, "shearStatus": shear_status,
+        "ptStressStatus": pt_stress_status,
+        "ptStressFtop": pt_stress_ftop, "ptStressFbot": pt_stress_fbot,
+        "pt_stress": pt_stress_result,
         "torsionConsider": torsion_consider_row,
         "shReqd": sh_reqd, "hasMinAv": has_min_av,
         "long_ok_1": long_ok_1_r, "long_ok_2": long_ok_2_r, "long_ok_3": long_ok_3_r,
@@ -3169,6 +3523,7 @@ def calculate_all(raw_inputs, demand_rows, active_row_idx):
             dr_row.get("Pu", 0), dr_row.get("Mu", 0), dr_row.get("Vu", 0),
             dr_row.get("Tu", 0), dr_row.get("Vp", 0),
             dr_row.get("Ms", 0), dr_row.get("Ps", 0),
+            dr_row=dr_row,
         )
         row_results.append(cap)
 

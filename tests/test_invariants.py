@@ -171,6 +171,9 @@ REQUIRED_FLEX_KEYS = [
     "dv", "de", "hf",
     "gamma1", "gamma3", "fr", "Sc", "Mcr", "Mcond", "min_flex_ok",
     "dc", "beta_s", "fss_simp", "s_crack", "s_min_ck", "s_max_ck",
+    # Crack-mode toggle (AASHTO 5.6.7-1): capped vs actual fss
+    "crack_mode", "fss_used", "s_crack_capped", "s_crack_actual",
+    "breakdown_crack",
     "c_cr", "Icr", "fss", "eps_rb", "curv", "Ieff", "Ig",
     "n_mod", "M_serv", "addlBM",
     "pm_data", "pm_curve",

@@ -682,3 +682,20 @@ def interpolate_at_x(profile, x_ft, key):
         return v0
     frac = (x_ft - x0) / (x1 - x0)
     return v0 + frac * (v1 - v0)
+
+
+def section_props_at(profile, x_ft, yb_centroid):
+    """Return tendon properties interpolated at a given x along the beam.
+
+    Returns dict {'fpe', 'dp', 'e_cgs', 'Vp', 'theta_deg', 'P_eff'}.
+    e_cgs = dp - yb_centroid, positive when CGS is BELOW section centroid.
+    Note: fpi is section-wide (post-ES) and NOT in the per-point profile;
+    callers take it from loss_summary["fpi"] separately.
+    """
+    keys = ("fpe", "dp", "Vp", "theta_deg", "P_eff")
+    out = {k: interpolate_at_x(profile, x_ft, k) for k in keys}
+    if out["dp"] is None:
+        out["e_cgs"] = None
+    else:
+        out["e_cgs"] = out["dp"] - yb_centroid
+    return out

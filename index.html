@@ -448,6 +448,47 @@ canvas { width: 100% !important; height: 100% !important; }
           </select>
         </div>
 
+        <h4 style="margin:12px 0 6px 0;font-size:0.85em;color:#555;border-top:1px solid #ddd;padding-top:8px;" id="ptLimitsHeader">
+          PT Service Stress Limits <small style="color:#888">(AASHTO LRFD 10th Ed., 2024 &mdash; &sect;5.9.2.3)</small>
+        </h4>
+        <div id="ptFlagsBlock" style="font-size:0.82em;color:#555;padding:6px 0;">
+          <div class="form-row" style="margin-bottom:4px"><label>Tendon bonding</label>
+            <select id="pt_bonded" class="wide" style="max-width:220px">
+              <option value="true" selected>Bonded</option>
+              <option value="false">Unbonded</option>
+            </select></div>
+          <div class="form-row" style="margin-bottom:4px"><label>f'<sub>ci</sub> &mdash; concrete strength at transfer of prestress</label>
+            <input type="number" id="pt_fci_chk" step="0.01" value="4.0" style="max-width:90px"><span class="unit">ksi</span></div>
+        </div>
+        <table class="factors-table" id="ptLimitsTable" style="width:100%;font-size:0.82em;border-collapse:collapse;">
+          <thead><tr><th style="text-align:left">Stress Limit</th><th style="text-align:left">AASHTO Formula</th></tr></thead>
+          <tbody>
+            <tr style="border-bottom:1px solid #ddd;"><td>Temporary Compressive Stress <small>(&sect;5.9.2.3.1a)</small></td>
+                <td><select id="pt_temp_comp_case" class="wide" style="max-width:340px">
+                  <option value="general" selected>0.65&middot;f'<sub>ci</sub> (general case)</option>
+                  <option value="peak">0.70&middot;f'<sub>ci</sub> (peak &mdash; lateral bending / handling)</option>
+                </select></td></tr>
+            <tr style="border-bottom:1px solid #ddd;"><td>Temporary Tensile Stress <small>(Table 5.9.2.3.1b-1)</small></td>
+                <td><select id="pt_temp_tens_case" class="wide" style="max-width:340px">
+                  <option value="bonded" selected>0.24&middot;&lambda;&middot;&radic;f'<sub>ci</sub> (with bonded reinforcement)</option>
+                  <option value="plain">0.0948&middot;&lambda;&middot;&radic;f'<sub>ci</sub> &le; 0.2 ksi (other areas)</option>
+                </select></td></tr>
+            <tr style="border-bottom:1px solid #ddd;"><td>Service I Compression &mdash; Permanent Loads <small>(DL+PT, Table 5.9.2.3.2a-1)</small></td>
+                <td style="font-family:Cambria,serif;font-style:italic">0.45&middot;f'<sub>c</sub></td></tr>
+            <tr style="border-bottom:1px solid #ddd;"><td>Service I Compression &mdash; Total Loads <small>(DL+LL+PT, Table 5.9.2.3.2a-1)</small></td>
+                <td style="font-family:Cambria,serif"><i>0.60&middot;&phi;<sub>w</sub>&middot;f'<sub>c</sub></i> &nbsp;
+                  <small style="font-style:normal">&phi;<sub>w</sub> =</small>
+                  <input type="number" id="pt_phi_w" step="0.01" value="1.00" style="width:60px;font-style:normal">
+                  <small style="color:#888;font-style:normal">(&sect;5.6.4.7, default 1.0)</small></td></tr>
+            <tr><td>Service III Tension <small>(Table 5.9.2.3.2b-1)</small></td>
+                <td><select id="pt_srv3_tens_case" class="wide" style="max-width:380px">
+                  <option value="moderate" selected>0.19&middot;&lambda;&middot;&radic;f'<sub>c</sub> &le; 0.6 ksi (moderate corrosion, bonded)</option>
+                  <option value="severe">0.0948&middot;&lambda;&middot;&radic;f'<sub>c</sub> &le; 0.3 ksi (severe corrosion, bonded)</option>
+                  <option value="none">No Tension (unbonded tendons)</option>
+                </select></td></tr>
+          </tbody>
+        </table>
+
         <h4 style="margin:12px 0 6px 0;font-size:0.85em;color:#555;border-top:1px solid #ddd;padding-top:8px;">Safety Factors Summary</h4>
         <table class="factors-table" id="factorsTable" style="width:100%;font-size:0.82em;border-collapse:collapse;">
           <thead><tr><th style="text-align:left">Factor</th><th>Value</th><th>Override</th><th style="display:none"></th></tr></thead>
@@ -806,11 +847,26 @@ canvas { width: 100% !important; height: 100% !important; }
 
 <!-- ==================== SERVICE FLEXURE STRESS TAB ==================== -->
 <div class="tab-panel" id="tab-service" data-title="Service Flexure Stress">
-  <div class="grid grid-2">
+  <div class="card" style="margin-bottom:14px" id="rcCrackModeCard">
+    <div class="card-header purple">Crack-Control Stress Source <small>(RC, AASHTO 5.6.7-1)</small></div>
+    <div class="card-body">
+      <div class="form-row"><label>f<sub>ss</sub> source for s<sub>max,crack</sub></label>
+        <select id="crack_mode" class="wide">
+          <option value="capped" selected>Capped at 0.6&middot;f<sub>y</sub> (conservative shortcut)</option>
+          <option value="actual">Actual f<sub>ss</sub> from cracked-section analysis</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="grid grid-2" id="rcServiceGrid">
     <div class="card"><div class="card-header orange">Service Stress &mdash; Cracked Section</div><div class="card-body" id="serviceResults"></div></div>
     <div class="card"><div class="card-header orange">Strain &amp; Stress Distribution</div><div class="card-body" style="text-align:center;padding:10px;">
       <canvas id="serviceStrainCanvas" width="600" height="400" style="width:100%;border-radius:4px;background:#fff;"></canvas>
     </div></div>
+  </div>
+  <div id="ptServiceBlock" style="display:none">
+    <div class="card" style="margin-top:14px"><div class="card-header orange">PT Service Stress &mdash; Per-Row Summary <small>(AASHTO LRFD 10th Ed., &sect;5.9.2.3)</small></div><div class="card-body" id="ptServiceSummary"><div style="color:#888;font-size:0.85em">Add demand rows in the Demands &amp; Results tab and pick a Load Case per row, then press Calculate.</div></div></div>
+    <div class="card" style="margin-top:14px"><div class="card-header orange">PT Service Stress &mdash; Detailed Derivation (Active Row)</div><div class="card-body" id="ptServiceDetail"></div></div>
   </div>
 </div>
 
@@ -1120,11 +1176,13 @@ function saveCurrentSectionState(){
     const gv=(cls)=>{const v=parseFloat(row.querySelector('.'+cls).value);return isNaN(v)?0:v;};
     const gvn=(cls)=>{const el=row.querySelector('.'+cls);if(!el)return null;const v=parseFloat(el.value);return isNaN(v)||el.value.trim()===''?null:v;};
     const modeEl=row.querySelector('.dr-pt-mode');
+    const lcEl=row.querySelector('.dr-load-case');
     state.demandRows.push({
       Pu:gv('dr-Pu'),Mu:gv('dr-Mu'),Vu:gv('dr-Vu'),Tu:gv('dr-Tu'),
       Vp:gv('dr-Vp'),Ps:gv('dr-Ps'),Ms:gv('dr-Ms'),
       x:gvn('dr-x'),dp:gvn('dr-dp'),fpe:gvn('dr-fpe'),
-      ptMode:modeEl?modeEl.value:'layout'
+      ptMode:modeEl?modeEl.value:'layout',
+      loadCase:lcEl?lcEl.value:'service_I_full'
     });
   }
 
@@ -1263,7 +1321,7 @@ function loadSectionState(name){
 
   if(state.demandRows && state.demandRows.length>0){
     state.demandRows.forEach((d,i)=>{
-      addDemandRow(d.Pu,d.Mu,d.Vu,d.Tu,d.Vp,d.Ms,d.Ps,d.x,d.dp,d.fpe);
+      addDemandRow(d.Pu,d.Mu,d.Vu,d.Tu,d.Vp,d.Ms,d.Ps,d.x,d.dp,d.fpe,d.loadCase);
       // Restore PT mode
       if(d.ptMode){
         const row=document.getElementById('dr_'+(i+1));
@@ -2551,9 +2609,15 @@ function rebuildDemandThead(){
     r2+=`<th${rs2} class="grp-status">Shear</th>`;
   } else {
     // Service subtab
+    const _sc=document.getElementById('sectionClass').value;
+    const _isPT=(_sc==='PP'||_sc==='CIP_PT');
     r1+=`<th rowspan="2">#</th>`;
     r1+=`<th colspan="4" class="grp-demand" style="background:#1a5276">Location &amp; PT Profile</th>`;
-    r1+=`<th colspan="2" class="grp-service">Service Demands</th>`;
+    r1+=`<th colspan="${_isPT?3:2}" class="grp-service">Service Demands</th>`;
+    if(_isPT){
+      r1+=`<th colspan="3" class="grp-pt-stress" style="background:#7f8c8d">Compression (AASHTO &sect;5.9.2.3)</th>`;
+      r1+=`<th colspan="3" class="grp-pt-stress" style="background:#7f8c8d">Tension (AASHTO &sect;5.9.2.3)</th>`;
+    }
     r1+=`<th colspan="1" class="grp-status">Status</th>`;
     r1+=`<th rowspan="2"></th>`;
     r2+=`<th class="grp-demand" style="background:#2471a3">x<br><small>ft</small></th>`;
@@ -2562,18 +2626,33 @@ function rebuildDemandThead(){
     r2+=`<th class="grp-demand" style="background:#2471a3">V<sub>p</sub><br><small>kip</small></th>`;
     r2+=`<th class="grp-service">P<sub>s</sub><br><small>kip</small></th>`;
     r2+=`<th class="grp-service">M<sub>s</sub><br><small>k-in</small></th>`;
-    r2+=`<th class="grp-status">Crack</th>`;
+    if(_isPT) r2+=`<th class="grp-service" title="AASHTO LRFD 10th Ed. §5.9.2.3 load case">Load Case</th>`;
+    if(_isPT){
+      r2+=`<th class="grp-pt-stress" style="background:#95a5a6">&sigma;<sub>c</sub><br><small>ksi</small></th>`;
+      r2+=`<th class="grp-pt-stress" style="background:#95a5a6">&sigma;<sub>c,lim</sub><br><small>ksi</small></th>`;
+      r2+=`<th class="grp-pt-stress" style="background:#95a5a6">D/C</th>`;
+      r2+=`<th class="grp-pt-stress" style="background:#95a5a6">&sigma;<sub>t</sub><br><small>ksi</small></th>`;
+      r2+=`<th class="grp-pt-stress" style="background:#95a5a6">&sigma;<sub>t,lim</sub><br><small>ksi</small></th>`;
+      r2+=`<th class="grp-pt-stress" style="background:#95a5a6">D/C</th>`;
+    }
+    r2+=`<th class="grp-status">${_isPT?'PT Stress':'Crack'}</th>`;
   }
   thead.innerHTML=`<tr>${r1}</tr><tr>${r2}</tr>${r3?`<tr>${r3}</tr>`:''}`;
 
 }
 function applyDemandColVisibility(){
   const flags=getDemandShearFlags();
+  const _sc=document.getElementById('sectionClass').value;
+  const _isPT=(_sc==='PP'||_sc==='CIP_PT');
   document.querySelectorAll('#demandBody tr').forEach(tr=>{
     // Strength demand inputs
     tr.querySelectorAll('.col-str-demand').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
     // Service demand inputs
     tr.querySelectorAll('.col-svc-demand').forEach(td=>td.style.display=demandSubtab==='service'?'':'none');
+    // Load Case is a service-tab column that only appears for PT sections
+    tr.querySelectorAll('.col-load-case').forEach(td=>td.style.display=(demandSubtab==='service'&&_isPT)?'':'none');
+    // PT stress columns (σ_c / σ_c,lim / D/C / σ_t / σ_t,lim / D/C) — same gating
+    tr.querySelectorAll('.col-pt-stress').forEach(td=>td.style.display=(demandSubtab==='service'&&_isPT)?'':'none');
     // Torsion considered
     tr.querySelectorAll('.col-tors-consider').forEach(td=>td.style.display=demandSubtab==='strength'?'':'none');
     // Capacities
@@ -2594,13 +2673,20 @@ function applyDemandColVisibility(){
 }
 
 /* ====== DEMAND ROW MANAGEMENT ====== */
-function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
+function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe,loadCase){
   demandRowCount++;
   const n=demandRowCount;
   const tb=document.getElementById('demandBody');
   const tr=document.createElement('tr');
   tr.id='dr_'+n;
   tr.dataset.idx=n;
+  const _lc=loadCase||'service_I_full';
+  const _lcOpts=[
+    ['temporary','Temporary (transfer)'],
+    ['service_I_sust','Service I Compression - Permanent'],
+    ['service_I_full','Service I Compression - Full'],
+    ['service_III','Service III'],
+  ].map(([v,l])=>`<option value="${v}"${v===_lc?' selected':''}>${l}</option>`).join('');
   tr.innerHTML=`<td class="col-rownum">${n}</td>`
     +`<td class="col-loc"><input type="number" class="dr-x" value="${x??''}" step="any" placeholder="\u2014" style="width:42px">`
     +`<select class="dr-pt-mode" style="width:50px;font-size:0.68rem;padding:1px;margin-top:2px;display:block"><option value="layout" selected>Layout</option><option value="override">Override</option></select></td>`
@@ -2613,6 +2699,7 @@ function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
     +`<td class="col-str-demand"><input type="number" class="dr-Tu" value="${tu??0}" step="any"></td>`
     +`<td class="col-svc-demand"><input type="number" class="dr-Ps" value="${ps??-100}" step="any"></td>`
     +`<td class="col-svc-demand"><input type="number" class="dr-Ms" value="${ms??2500}" step="any"></td>`
+    +`<td class="col-svc-demand col-load-case"><select class="dr-load-case" style="font-size:0.75rem;padding:1px;max-width:140px">${_lcOpts}</select></td>`
     +`<td class="col-tors-consider" id="st_tors_${n}">&mdash;</td>`
     +`<td class="col-cap-mr cap-cell" id="cap_Mr_${n}">&mdash;</td>`
     +`<td class="col-cap-vr1 cap-cell" id="cap_Vr1_${n}">&mdash;</td>`
@@ -2623,6 +2710,12 @@ function addDemandRow(pu,mu,vu,tu,vp,ms,ps,x,dp,fpe){
     +`<td class="col-dc" id="dc_V_${n}">&mdash;</td>`
     +`<td class="col-long" id="dc_long_${n}">&mdash;</td>`
     +`<td class="col-dc" id="dc_T_${n}">&mdash;</td>`
+    +`<td class="col-pt-stress" id="pt_sc_${n}" style="text-align:right">&mdash;</td>`
+    +`<td class="col-pt-stress" id="pt_sclim_${n}" style="text-align:right">&mdash;</td>`
+    +`<td class="col-pt-stress" id="pt_dccomp_${n}" style="text-align:center">&mdash;</td>`
+    +`<td class="col-pt-stress" id="pt_st_${n}" style="text-align:right">&mdash;</td>`
+    +`<td class="col-pt-stress" id="pt_stlim_${n}" style="text-align:right">&mdash;</td>`
+    +`<td class="col-pt-stress" id="pt_dctens_${n}" style="text-align:center">&mdash;</td>`
     +`<td class="col-st-crack" id="st_crack_${n}">&mdash;</td>`
     +`<td class="col-st-flex" id="st_flex_${n}">&mdash;</td>`
     +`<td class="col-st-shear" id="st_shear_${n}">&mdash;</td>`
@@ -2705,8 +2798,10 @@ function getDemandRow(n){
     const kind=DEMAND_ROW_KINDS[cls];
     return (kind && kind!=='dimensionless') ? toEngine(v, kind) : v;
   };
+  const lcEl=row.querySelector('.dr-load-case');
   return {Pu:gv('dr-Pu'),Mu:gv('dr-Mu'),Vu:gv('dr-Vu'),Tu:gv('dr-Tu'),Vp:gv('dr-Vp'),Ps:gv('dr-Ps'),Ms:gv('dr-Ms'),
-          x:gvn('dr-x'),dp:gvn('dr-dp'),fpe:gvn('dr-fpe')};
+          x:gvn('dr-x'),dp:gvn('dr-dp'),fpe:gvn('dr-fpe'),
+          load_case:lcEl?lcEl.value:'service_I_full'};
 }
 function setDC(n,type,demand,capacity){
   const el=document.getElementById('dc_'+type+'_'+n);
@@ -4077,10 +4172,37 @@ function gatherInputs(){
     }
   });
   const concType=document.getElementById('concType').value;
-  return {fc,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
+
+  // Service check options + PT service-stress case selectors (v2.1 — AASHTO LRFD 10th Ed.)
+  const crackModeEl=document.getElementById('crack_mode');
+  const crack_mode=crackModeEl?crackModeEl.value:'capped';
+  const pickF=(id,dflt)=>{const el=document.getElementById(id);if(!el)return dflt;const v=parseFloat(el.value);return isNaN(v)?dflt:v;};
+  const pickSel=(id,dflt)=>{const el=document.getElementById(id);return el?el.value:dflt;};
+  const _bondedEl=document.getElementById('pt_bonded');
+  // Case selectors map directly to AASHTO formula choices.
+  // Force srv3 case = "none" whenever tendons are unbonded (AASHTO Table 5.9.2.3.2b-1).
+  const _bondedV=_bondedEl?(_bondedEl.value==='true'):true;
+  let _srv3Case=pickSel('pt_srv3_tens_case','moderate');
+  if(!_bondedV) _srv3Case='none';
+  const pt_flags={
+    bonded:           _bondedV,
+    temp_comp_case:   pickSel('pt_temp_comp_case','general'),
+    temp_tens_case:   pickSel('pt_temp_tens_case','bonded'),
+    srv3_tens_case:   _srv3Case,
+    phi_w:            pickF('pt_phi_w',1.0),
+  };
+  // PT profile from last "Calculate PT Profile" run (window._ptResult)
+  const ptR=window._ptResult||null;
+  const pt_profile=ptR&&ptR.profile?ptR.profile:null;
+  const pt_loss_summary=ptR&&ptR.loss_summary?ptR.loss_summary:null;
+  // f'ci: prefer the new Checks-panel input, else PT loss-card input, else f'c
+  const fci=pickF('pt_fci_chk',null)??pickF('pt_fci',fc);
+
+  return {fc,fci,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
     astm_spec,factor_overrides,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,nStrands,strand_area,dp,fpe,ductDia:ductDia,
-    shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,at_add_bar_N,s_at_add,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
+    shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,at_add_bar_N,s_at_add,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top,
+    crack_mode, pt_flags, pt_profile, pt_loss_summary};
 }
 
 function runAllCalculations(){
@@ -4098,7 +4220,7 @@ function runAllCalculations(){
   const demandRows=[];
   for(let r=1;r<=demandRowCount;r++){
     const d=getDemandRow(r);
-    if(d) demandRows.push(d); else demandRows.push({Pu:0,Mu:0,Vu:0,Tu:0,Vp:0,Ms:0,Ps:0,x:null,dp:null,fpe:null});
+    if(d) demandRows.push(d); else demandRows.push({Pu:0,Mu:0,Vu:0,Tu:0,Vp:0,Ms:0,Ps:0,x:null,dp:null,fpe:null,load_case:'service_I_full'});
   }
   const activeIdx=Math.max(0,activeRow-1);
   const payload=JSON.stringify({inputs,demandRows,activeRow:activeIdx});
@@ -4118,6 +4240,7 @@ function runAllCalculations(){
         try{ renderFlexure(res.flexure, res.inputs, res.demands); }catch(e){ console.error('renderFlexure error:',e); }
         try{ renderShear(res.shear, res.inputs, res.demands); }catch(e){ console.error('renderShear error:',e); }
         try{ renderTorsion(res.torsion, res.inputs, res.demands); }catch(e){ console.error('renderTorsion error:',e); }
+        try{ renderPtServiceRows(res.row_results, res.inputs); }catch(e){ console.error('renderPtServiceRows error:',e); }
         try{ updateFactorsDisplay(res); }catch(e){ console.error('updateFactorsDisplay error:',e); }
         // P-M chart
         pmChartData=res.flexure.pm_curve_sag; pmChartDataHog=res.flexure.pm_curve_hog; pmChartPu=res.demands.Pu; pmChartMu=res.demands.Mu; pmKeyPointsCache=res.flexure.pm_key_points||[];
@@ -4148,7 +4271,72 @@ function runAllCalculations(){
           const stCrack=document.getElementById('st_crack_'+n);
           const stFlex=document.getElementById('st_flex_'+n);
           const stShear=document.getElementById('st_shear_'+n);
-          stCrack.textContent=cap.crackStatus; stCrack.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stCrack.classList.add(cap.crackStatus==='OK'?'dc-ok':'dc-fail');
+          // For PT sections, the per-row "Crack" status cell shows the PT Service I fiber-stress check
+          // instead of the AASHTO 5.6.7 crack-spacing check (the latter is the RC-only crack control rule).
+          const _scRC=document.getElementById('sectionClass').value;
+          const _ptRow=(_scRC==='PP'||_scRC==='CIP_PT');
+          const _statRow=_ptRow?cap.ptStressStatus:cap.crackStatus;
+          stCrack.textContent=_statRow;
+          stCrack.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');
+          stCrack.classList.add(_statRow==='OK'?'dc-ok':(_statRow==='NA'?'dc-na':'dc-fail'));
+          if(_ptRow){
+            stCrack.title=`PT Service stress check at this row (AASHTO §5.9.2.3). See Service Flexure Stress tab for the detailed derivation.`;
+          } else {
+            stCrack.title='AASHTO 5.6.7 crack-spacing check (fss vs 0.6·fy).';
+          }
+          // ── PT stress cells: σ_c / σ_c,lim / D/C and σ_t / σ_t,lim / D/C ──
+          if(_ptRow && cap.pt_stress){
+            const pt=cap.pt_stress;
+            // Worst compression = most negative of f_top, f_bot (only if at least one is compressive)
+            const _fc=[pt.f_top,pt.f_bot].filter(f=>f<0);
+            const fc_dem=_fc.length?Math.min.apply(null,_fc):null;
+            // Worst tension = most positive
+            const _ft=[pt.f_top,pt.f_bot].filter(f=>f>0);
+            const ft_dem=_ft.length?Math.max.apply(null,_ft):null;
+            // D/C ratios
+            let dcComp=null;
+            if(fc_dem!=null && pt.sigma_c_lim!=null && pt.sigma_c_lim!==0){
+              dcComp=fc_dem/pt.sigma_c_lim; // both negative → positive ratio
+            }
+            let dcTens=null;
+            if(ft_dem!=null && pt.sigma_t_lim!=null){
+              if(pt.sigma_t_lim===0) dcTens=Infinity;
+              else dcTens=ft_dem/pt.sigma_t_lim;
+            }
+            const setCell=(id,text,cls)=>{
+              const el=document.getElementById(id);
+              if(!el) return;
+              el.textContent=text;
+              el.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');
+              if(cls) el.classList.add(cls);
+            };
+            // Calculated compression
+            setCell('pt_sc_'+n,
+              fc_dem!=null?F(fc_dem,3):'—',
+              fc_dem!=null?'':'dc-na');
+            setCell('pt_sclim_'+n,
+              pt.sigma_c_lim!=null?F(pt.sigma_c_lim,3):'—',
+              pt.sigma_c_lim!=null?'':'dc-na');
+            setCell('pt_dccomp_'+n,
+              dcComp!=null?F(dcComp,3):'—',
+              dcComp==null?'dc-na':(dcComp<=1.0?'dc-ok':'dc-fail'));
+            // Calculated tension
+            setCell('pt_st_'+n,
+              ft_dem!=null?F(ft_dem,3):'—',
+              ft_dem!=null?'':'dc-na');
+            setCell('pt_stlim_'+n,
+              pt.sigma_t_lim!=null?F(pt.sigma_t_lim,3):'—',
+              pt.sigma_t_lim!=null?'':'dc-na');
+            setCell('pt_dctens_'+n,
+              dcTens!=null?(isFinite(dcTens)?F(dcTens,3):'∞'):'—',
+              dcTens==null?'dc-na':(isFinite(dcTens)&&dcTens<=1.0?'dc-ok':'dc-fail'));
+          } else {
+            // RC section or no PT data: clear cells
+            ['pt_sc_','pt_sclim_','pt_dccomp_','pt_st_','pt_stlim_','pt_dctens_'].forEach(p=>{
+              const el=document.getElementById(p+n);
+              if(el){ el.textContent='—'; el.classList.remove('dc-ok','dc-fail','dc-na','dc-warn'); }
+            });
+          }
           stFlex.textContent=cap.flexStatus; stFlex.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stFlex.classList.add(cap.flexStatus==='OK'?'dc-ok':'dc-fail');
           stShear.textContent=cap.shearStatus==='NR'?'N/R':cap.shearStatus;
           stShear.classList.remove('dc-ok','dc-fail','dc-na','dc-warn');stShear.classList.add(cap.shearStatus==='OK'||cap.shearStatus==='NR'?'dc-ok':'dc-fail');
@@ -4292,8 +4480,12 @@ function renderFlexure(fl,inp,dem){
   o+=SH('Crack Control Spacing (5.6.7)');
   o+=R('d<sub>c</sub>',F(fl.dc,4),'in');
   o+=R('&beta;<sub>s</sub>',F(fl.beta_s,4));
-  o+=R('f<sub>ss</sub> (assumed 0.6f<sub>y</sub>)',F(fl.fss_simp,1),'ksi');
-  o+=R('Max spacing for crack control',F(fl.s_crack,2),'in');
+  o+=R('Crack-control mode',BI(fl.crack_mode||'capped'));
+  o+=R('f<sub>ss</sub> capped (0.6f<sub>y</sub>)',F(fl.fss_simp,1),'ksi');
+  o+=R('f<sub>ss</sub> actual (cracked section)',F(fl.fss,2),'ksi');
+  o+=R('s<sub>crack</sub> (capped)',F(fl.s_crack_capped,2),'in');
+  o+=R('s<sub>crack</sub> (actual)',F(fl.s_crack_actual,2),'in');
+  o+=R('s<sub>crack</sub> governing',BI(F(fl.s_crack,2)+' in'));
   o+=SH('Spacing of Reinforcement (5.10.3)');
   o+=R('s<sub>min</sub> (CIP)',F(fl.s_min_ck,3),'in');
   o+=R('s<sub>max</sub>',F(fl.s_max_ck,1),'in');
@@ -4380,6 +4572,88 @@ function renderFlexure(fl,inp,dem){
   o+=R('E<sub>c</sub>',F(Ec,1),'ksi');
   o+=R('d<sub>e</sub> (effective depth)',F(fl.de,4),'in');
   document.getElementById('sectionProps').innerHTML=o;
+}
+
+/* ─── PT Service-Stage Concrete Fiber-Stress Check (per-row, AASHTO LRFD 10th Ed. §5.9.2.3) ─── */
+function renderPtServiceRows(rowResults, inp){
+  const sumHost=document.getElementById('ptServiceSummary');
+  const detHost=document.getElementById('ptServiceDetail');
+  if(!sumHost||!detHost) return;
+  if(!inp.hasPT){
+    sumHost.innerHTML='<div style="color:#888;font-size:0.85em">PT not active.</div>';
+    detHost.innerHTML='';
+    return;
+  }
+  if(!rowResults||!rowResults.length){
+    sumHost.innerHTML='<div style="color:#888;font-size:0.85em">No demand rows.</div>';
+    detHost.innerHTML='';
+    return;
+  }
+  // Summary table — one row per demand row
+  let s='<table class="data-table" style="width:100%;font-size:0.85em;border-collapse:collapse;">';
+  s+='<thead><tr>'
+    +'<th style="text-align:center">#</th>'
+    +'<th style="text-align:left">Load Case</th>'
+    +'<th style="text-align:right">P (kip)</th>'
+    +'<th style="text-align:right">M (k&middot;in)</th>'
+    +'<th style="text-align:right">f<sub>top</sub> (ksi)</th>'
+    +'<th style="text-align:right">f<sub>bot</sub> (ksi)</th>'
+    +'<th style="text-align:right">&sigma;<sub>c,lim</sub></th>'
+    +'<th style="text-align:right">&sigma;<sub>t,lim</sub></th>'
+    +'<th style="text-align:center">Status</th>'
+    +'</tr></thead><tbody>';
+  rowResults.forEach((cap,i)=>{
+    const pt=cap.pt_stress;
+    if(!pt){
+      s+=`<tr><td style="text-align:center">${i+1}</td><td colspan="8" style="color:#888">(no PT stress check for this row)</td></tr>`;
+      return;
+    }
+    const sgC=(pt.sigma_c_lim==null)?'&mdash;':F(pt.sigma_c_lim,3);
+    const sgT=(pt.sigma_t_lim==null)?'&mdash;':F(pt.sigma_t_lim,4);
+    const stCls=pt.status==='OK'?'dc-ok':(pt.status==='NA'?'dc-na':'dc-fail');
+    s+=`<tr>`
+      +`<td style="text-align:center">${i+1}</td>`
+      +`<td>${pt.label}</td>`
+      +`<td style="text-align:right">${F(pt.P_used,1)}</td>`
+      +`<td style="text-align:right">${F(pt.M_used,1)}</td>`
+      +`<td style="text-align:right">${F(pt.f_top,3)}</td>`
+      +`<td style="text-align:right">${F(pt.f_bot,3)}</td>`
+      +`<td style="text-align:right">${sgC}</td>`
+      +`<td style="text-align:right">${sgT}</td>`
+      +`<td class="${stCls}" style="text-align:center;font-weight:bold">${pt.status}</td>`
+      +`</tr>`;
+  });
+  s+='</tbody></table>';
+  sumHost.innerHTML=s;
+
+  // Detailed equation breakdown for the active row
+  const idx=Math.max(0,(typeof activeRow!=='undefined'?activeRow-1:0));
+  const activeCap=rowResults[idx]||rowResults[0];
+  const pt=activeCap&&activeCap.pt_stress;
+  if(!pt){
+    detHost.innerHTML='<div style="color:#888;font-size:0.85em">Active row has no PT stress data.</div>';
+    return;
+  }
+  let d='';
+  d+=`<div style="font-weight:600;margin-bottom:8px">Row ${idx+1} &mdash; <b>${pt.label}</b> ${RREF(pt.ref)}</div>`;
+  d+=R('A<sub>g</sub>',F(pt.Ag,1),'in&sup2;');
+  d+=R('I<sub>g</sub>',F(pt.Ig,1),'in&#8308;');
+  d+=R('y<sub>t</sub> (top)',F(pt.yt,2),'in');
+  d+=R('y<sub>b</sub> (bot)',F(pt.yb,2),'in');
+  d+=R('e<sub>cgs</sub> (CGS &minus; centroid)',F(pt.e_cgs,3),'in');
+  d+=R('P (used)',F(pt.P_used,1),'kip');
+  d+=R('M (used)',F(pt.M_used,1),'kip&middot;in');
+  d+=R('f<sub>top</sub>',F(pt.f_top,4),'ksi');
+  d+=R('f<sub>bot</sub>',F(pt.f_bot,4),'ksi');
+  if(pt.sigma_c_lim!=null) d+=R('&sigma;<sub>c,lim</sub>',F(pt.sigma_c_lim,3),'ksi');
+  if(pt.sigma_t_lim!=null) d+=R('&sigma;<sub>t,lim</sub>',F(pt.sigma_t_lim,4),'ksi');
+  if(pt.ratio_c_top!=null) d+=R('|f<sub>top</sub>|/|&sigma;<sub>c,lim</sub>|',F(pt.ratio_c_top,3)+' '+BG(pt.ratio_c_top<=1.0));
+  if(pt.ratio_t_top!=null) d+=R('f<sub>top</sub>/&sigma;<sub>t,lim</sub>',F(pt.ratio_t_top,3)+' '+BG(pt.ratio_t_top<=1.0));
+  if(pt.ratio_c_bot!=null) d+=R('|f<sub>bot</sub>|/|&sigma;<sub>c,lim</sub>|',F(pt.ratio_c_bot,3)+' '+BG(pt.ratio_c_bot<=1.0));
+  if(pt.ratio_t_bot!=null) d+=R('f<sub>bot</sub>/&sigma;<sub>t,lim</sub>',F(pt.ratio_t_bot,3)+' '+BG(pt.ratio_t_bot<=1.0));
+  d+=R('Status',`<b class="${pt.status==='OK'?'dc-ok':'dc-fail'}">${pt.status}</b>`);
+  if(pt.breakdown) d+=renderDetailedBreakdown(pt.breakdown,true);
+  detHost.innerHTML=d;
 }
 
 function renderShear(sh,inp,dem){
@@ -6135,14 +6409,55 @@ function generateReport(){
   if(ck('rpt_crack')){
     h2+=`<h2>5 &mdash; Crack Control &amp; Reinforcement Spacing</h2>`;
     h2+=`<h3>5.1 Crack Control ${RREF('AASHTO 5.6.7')}</h3>`;
-    h2+=RR('d<sub>c</sub> (cover to bar center)',F(fl.dc,4),'in');
-    h2+=RR('&beta;<sub>s</sub> = 1 + d<sub>c</sub>/(0.7(h&minus;d<sub>c</sub>))',F(fl.beta_s,4));
-    h2+=RR('f<sub>ss</sub> = 0.6f<sub>y</sub>',F(fl.fss_simp,1),'ksi');
-    h2+=REQ("s &le; 700&gamma;<sub>e</sub>/(&beta;<sub>s</sub>f<sub>ss</sub>) &minus; 2d<sub>c</sub> = "+F(fl.s_crack,2)+" in &nbsp; "+RREF('5.6.7-1'));
-    h2+=RR('Max spacing for crack control',F(fl.s_crack,2),'in');
+    h2+=REQ("d<sub>c</sub> = cover + d<sub>bar</sub>/2 = "+F(cover,2)+" + "+F(fl.bar_d_tens,3)+"/2 = "+F(fl.dc,2)+" in &nbsp; "+RREF('5.6.7'));
+    h2+=REQ("&beta;<sub>s</sub> = 1 + d<sub>c</sub>/(0.7(h&minus;d<sub>c</sub>)) = 1 + "+F(fl.dc,2)+"/(0.7&middot;("+F(h,2)+"&minus;"+F(fl.dc,2)+")) = "+F(fl.beta_s,3)+" &nbsp; "+RREF('Eq. 5.6.7-2'));
+    h2+=REQ("f<sub>ss,capped</sub> = 0.6&middot;f<sub>y</sub> = 0.6&middot;"+F(fy,1)+" = "+F(fl.fss_simp,1)+" ksi &nbsp; "+RREF('5.6.7 (simplified)'));
+    h2+=REQ("f<sub>ss,actual</sub> = M&middot;(d<sub>s</sub>&minus;c<sub>cr</sub>)/I<sub>cr</sub>&middot;n + P<sub>s</sub>&middot;n/(transformed area) = "+F(fl.fss,2)+" ksi &nbsp; "+RREF('cracked section'));
+    if(fl.fss_simp*fl.beta_s>0){
+      h2+=REQ("s<sub>capped</sub> = 700&gamma;<sub>e</sub>/(&beta;<sub>s</sub>f<sub>ss,capped</sub>) &minus; 2d<sub>c</sub> = 700&middot;"+F(inp.gamma_e,2)+"/("+F(fl.beta_s,3)+"&middot;"+F(fl.fss_simp,1)+") &minus; 2&middot;"+F(fl.dc,2)+" = "+F(fl.s_crack_capped,2)+" in &nbsp; "+RREF('Eq. 5.6.7-1'));
+    }
+    if(fl.fss>0&&fl.beta_s>0){
+      h2+=REQ("s<sub>actual</sub> = 700&gamma;<sub>e</sub>/(&beta;<sub>s</sub>f<sub>ss,actual</sub>) &minus; 2d<sub>c</sub> = 700&middot;"+F(inp.gamma_e,2)+"/("+F(fl.beta_s,3)+"&middot;"+F(fl.fss,2)+") &minus; 2&middot;"+F(fl.dc,2)+" = "+F(fl.s_crack_actual,2)+" in &nbsp; "+RREF('Eq. 5.6.7-1'));
+    }
+    h2+=`<div class="rpt-note"><b>Mode:</b> ${fl.crack_mode||'capped'} &mdash; governing s<sub>max,crack</sub> = ${F(fl.s_crack,2)} in</div>`;
+    if(fl.breakdown_crack) h2+=renderDetailedBreakdown(fl.breakdown_crack,showDetails);
     h2+=`<h3>5.2 Spacing Limits ${RREF('AASHTO 5.10.3')}</h3>`;
     h2+=RR('Min clear spacing',F(fl.s_min_ck,3),'in');
     h2+=RR('Max allowable spacing',F(fl.s_max_ck,1),'in');
+    h2+=`<hr>`;
+  }
+
+  // ===================== 5b. PT SERVICE STRESS CHECK (per row) ============
+  if(ck('rpt_service') && hasPT && res.row_results && res.row_results.some(r=>r.pt_stress)){
+    h2+=`<h2>5b &mdash; PT Service Stress Check ${RREF('AASHTO LRFD 10th Ed., §5.9.2.3')}</h2>`;
+    h2+=`<div class="rpt-note">One sub-section per demand row. Gross section properties used (A<sub>g</sub>, I<sub>g</sub>, y<sub>b</sub>). Sign convention: compression negative, tension positive; e<sub>cgs</sub>&gt;0 when CGS is below the section centroid; sagging M positive. References point to the specific AASHTO table/section that supplied each limit.</div>`;
+    h2+=RR('A<sub>g</sub>',F(inp.Ag,1),'in&sup2;');
+    h2+=RR('I<sub>g</sub>',F(inp.Ig,1),'in&#8308;');
+    h2+=RR('y<sub>b,centroid</sub>',F(inp.yb_centroid,2),'in');
+    h2+=RR('A<sub>ps</sub>',F(inp.Aps,3),'in&sup2;');
+    res.row_results.forEach((cap,i)=>{
+      const pt=cap.pt_stress;
+      if(!pt) return;
+      h2+=`<h3>5b.${i+1} Row ${i+1} &mdash; ${pt.label} ${RREF(pt.ref)}</h3>`;
+      h2+=REQ("P = f<sub>p</sub>&middot;A<sub>ps</sub> = "+F(pt.P_used,1)+" kip");
+      h2+=REQ("M = "+F(pt.M_used,1)+" kip&middot;in");
+      h2+=REQ("f<sub>top</sub> = &minus;P/A<sub>g</sub> + P&middot;e&middot;y<sub>t</sub>/I<sub>g</sub> &minus; M&middot;y<sub>t</sub>/I<sub>g</sub>");
+      h2+=REQ("     = &minus;"+F(pt.P_used,1)+"/"+F(pt.Ag,1)+" + "+F(pt.P_used,1)+"&middot;"+F(pt.e_cgs,3)+"&middot;"+F(pt.yt,2)+"/"+F(pt.Ig,1)+" &minus; "+F(pt.M_used,1)+"&middot;"+F(pt.yt,2)+"/"+F(pt.Ig,1));
+      h2+=REQ("     = "+F(pt.f_top,4)+" ksi");
+      h2+=REQ("f<sub>bot</sub> = &minus;P/A<sub>g</sub> &minus; P&middot;e&middot;y<sub>b</sub>/I<sub>g</sub> + M&middot;y<sub>b</sub>/I<sub>g</sub>");
+      h2+=REQ("     = &minus;"+F(pt.P_used,1)+"/"+F(pt.Ag,1)+" &minus; "+F(pt.P_used,1)+"&middot;"+F(pt.e_cgs,3)+"&middot;"+F(pt.yb,2)+"/"+F(pt.Ig,1)+" + "+F(pt.M_used,1)+"&middot;"+F(pt.yb,2)+"/"+F(pt.Ig,1));
+      h2+=REQ("     = "+F(pt.f_bot,4)+" ksi");
+      if(pt.sigma_c_lim!=null) h2+=REQ("&sigma;<sub>c,lim</sub> = "+F(pt.sigma_c_lim,3)+" ksi &nbsp; "+RREF(pt.ref));
+      if(pt.sigma_t_lim!=null) h2+=REQ("&sigma;<sub>t,lim</sub> = "+F(pt.sigma_t_lim,4)+" ksi &nbsp; "+RREF(pt.ref));
+      const passLbl=s=>s==='OK'?'<b style="color:#2e7d32">PASS</b>':(s==='NOT_ALLOWED'?'<b style="color:#c62828">NOT ALLOWED</b>':'<b style="color:#c62828">FAIL</b>');
+      let ratioBits='';
+      if(pt.ratio_c_top!=null) ratioBits+=' |f<sub>top</sub>|/|σ<sub>c</sub>|='+F(pt.ratio_c_top,3);
+      if(pt.ratio_t_top!=null) ratioBits+=' f<sub>top</sub>/σ<sub>t</sub>='+F(pt.ratio_t_top,3);
+      if(pt.ratio_c_bot!=null) ratioBits+=' |f<sub>bot</sub>|/|σ<sub>c</sub>|='+F(pt.ratio_c_bot,3);
+      if(pt.ratio_t_bot!=null) ratioBits+=' f<sub>bot</sub>/σ<sub>t</sub>='+F(pt.ratio_t_bot,3);
+      h2+=RR('Status',passLbl(pt.status)+ratioBits);
+      if(pt.breakdown) h2+=renderDetailedBreakdown(pt.breakdown,showDetails);
+    });
     h2+=`<hr>`;
   }
 
@@ -6765,6 +7080,18 @@ function updatePTFields(){
   syncApsToTab();
   // Gray out Location & PT Profile columns in demand rows when NP
   updateDemandPtColumns(isNP);
+  // Hide PT Stress Limits coefficient table + global flags + crack-mode card when NP
+  const ptShow=(disp)=>{
+    ['ptLimitsTable','ptLimitsHeader','ptFlagsBlock','ptServiceBlock']
+      .forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=disp;});
+  };
+  ptShow(isNP?'none':'');
+  // For PT sections, AASHTO 5.6.7 crack-spacing check is replaced by 5.9.2.3 fiber
+  // stress checks → hide the RC cracked-section card + crack-mode selector.
+  const rcGrid=document.getElementById('rcServiceGrid');
+  const rcCard=document.getElementById('rcCrackModeCard');
+  if(rcGrid) rcGrid.style.display=isNP?'':'none';
+  if(rcCard) rcCard.style.display=isNP?'':'none';
 }
 
 /* Enable/disable Location & PT Profile inputs in demand rows */
@@ -6820,7 +7147,7 @@ function setupDpFpeModes(){
 }
 document.getElementById('sectionType').addEventListener('change',()=>{updateSectionFields();runAllCalculations();});
 ['codeEdition','sectionClass'].forEach(id=>{
-  document.getElementById(id).addEventListener('change',()=>{updatePTFields();runAllCalculations();});
+  document.getElementById(id).addEventListener('change',()=>{updatePTFields();rebuildDemandThead();applyDemandColVisibility();runAllCalculations();});
 });
 ['Ec_ovr','fpy_ovr','d_bot_ovr','d_top_ovr'].forEach(id=>{
   document.getElementById(id).addEventListener('change',()=>runAllCalculations());
@@ -7172,6 +7499,32 @@ window.addEventListener('load',()=>{
   ['chk_method1','chk_method2','chk_method3','chk_long_reinf'].forEach(id=>{
     document.getElementById(id).addEventListener('change',()=>{rebuildDemandThead();applyDemandColVisibility();});
   });
+  // Wire Service-tab inputs (crack_mode + PT case selectors + f'ci + phi_w + bonded) to trigger recalc banner
+  ['crack_mode','pt_bonded','pt_fci_chk','pt_temp_comp_case','pt_temp_tens_case','pt_srv3_tens_case','pt_phi_w'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el){
+      const fn=()=>{const b=document.getElementById('recalcBanner');if(b)b.style.display='';};
+      el.addEventListener('input',fn);
+      el.addEventListener('change',fn);
+    }
+  });
+  // When Tendon Bonding changes, auto-sync Service III dropdown: unbonded → No Tension
+  const _ptBondedEl=document.getElementById('pt_bonded');
+  const _ptSrv3El=document.getElementById('pt_srv3_tens_case');
+  if(_ptBondedEl&&_ptSrv3El){
+    const syncSrv3=()=>{
+      const unbonded=(_ptBondedEl.value!=='true');
+      if(unbonded){
+        _ptSrv3El.value='none';
+        _ptSrv3El.disabled=true;
+      } else {
+        _ptSrv3El.disabled=false;
+        if(_ptSrv3El.value==='none') _ptSrv3El.value='moderate';
+      }
+    };
+    _ptBondedEl.addEventListener('change',syncSrv3);
+    syncSrv3();
+  }
   setupAutoCalculate();
   // If user has a saved non-default unit preference, convert HTML defaults
   // (which were authored in kip/in) into those units before the first calc.
