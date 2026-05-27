@@ -2093,18 +2093,20 @@ def _resolve_pt_lims_and_flags(I):
     return lim, flg
 
 
-def _pt_fiber_stress(P, M_kipin, Ag, Ig, e_cgs, yt, yb):
+def _pt_fiber_stress(P, M_kipin, Ag, Ig, e_cgs, yt, yb, Ps_kip=0.0):
     """Compute top/bottom concrete fiber stress on a GROSS section.
 
     Sign convention:
       P > 0 (magnitude of prestress force, always compressive on section).
+      Ps_kip: external axial demand, positive = tension, negative = compression.
       e_cgs > 0 when CGS is BELOW the section centroid.
       M > 0 = sagging (top fiber in compression from M alone).
+      yt, yb: distances from section centroid to top / bottom fiber (both > 0).
       Returned f_top, f_bot: compression NEGATIVE, tension POSITIVE.
     """
     if Ag <= 0 or Ig <= 0:
         return 0.0, 0.0
-    axial = -P / Ag
+    axial = -P / Ag + Ps_kip / Ag   # prestress is compressive; Ps signed (tension+)
     f_top = axial + (P * e_cgs * yt / Ig) - (M_kipin * yt / Ig)
     f_bot = axial - (P * e_cgs * yb / Ig) + (M_kipin * yb / Ig)
     return f_top, f_bot
@@ -2119,12 +2121,15 @@ _PT_LOAD_CASE_META = {
 }
 
 
-def _pt_row_service_check(I, load_case, P_xfr_kip, P_serv_kip, M_kipin, dp_row):
+def _pt_row_service_check(I, load_case, P_xfr_kip, P_serv_kip, M_kipin, dp_row,
+                          Ps_kip=0.0, fpi_used=0.0, fpe_used=0.0, Aps_used=0.0):
     """AASHTO 5.9.2.3 per-row PT service-stress check for a single load case.
 
     Uses GROSS section properties. Returns a dict with f_top, f_bot, applicable
     limits (None when the case doesn't check that side), ratios, status, and a
-    full EqBreakdown for the report.
+    full EqBreakdown for the report. Ps_kip is the row's external axial demand
+    (positive = tension); fpi/fpe/Aps are echoed back through the breakdown so
+    the report can show the P = fp · Aps derivation explicitly.
     """
     lim, flg = _resolve_pt_lims_and_flags(I)
     Ag = I.get("Ag", 0.0)
@@ -2211,9 +2216,12 @@ def _pt_row_service_check(I, load_case, P_xfr_kip, P_serv_kip, M_kipin, dp_row):
             t_cite = "Table 5.9.2.3.2b-1, moderate corrosion"
     else:
         # Unknown load case — treat as Service I full (graceful fallback)
-        return _pt_row_service_check(I, "service_I_full", P_xfr_kip, P_serv_kip, M_kipin, dp_row)
+        return _pt_row_service_check(I, "service_I_full", P_xfr_kip, P_serv_kip,
+                                     M_kipin, dp_row, Ps_kip=Ps_kip,
+                                     fpi_used=fpi_used, fpe_used=fpe_used,
+                                     Aps_used=Aps_used)
 
-    f_top, f_bot = _pt_fiber_stress(P, M_kipin, Ag, Ig, e_cgs, yt, yb)
+    f_top, f_bot = _pt_fiber_stress(P, M_kipin, Ag, Ig, e_cgs, yt, yb, Ps_kip=Ps_kip)
 
     # Ratios — only populate the side that this load case checks
     def _ratio_c(f):
@@ -2241,20 +2249,52 @@ def _pt_row_service_check(I, load_case, P_xfr_kip, P_serv_kip, M_kipin, dp_row):
     else:
         status = "OK" if (pass_top and pass_bot) else "NG"
 
-    # Full equation breakdown for the report
+    # ─── Full equation breakdown for the report ───
+    # Pick which prestress stress (fpi at transfer vs fpe at service) drove P
+    fp_used = fpi_used if load_case == "temporary" else fpe_used
+    fp_label = "f_pi (initial, post-ES, before time-dep. losses)" if load_case == "temporary" else "f_pe (effective, after all losses)"
+
     bd = EqBreakdown(f"{label} — {ref}")
-    bd.add("P", f"prestress force at this stage", P, "kip")
-    bd.add("M", f"applied moment for this load case", M_kipin, "kip·in")
+    # 1) Section properties (gross) — with symbol definitions
+    bd.add("A_g — gross section area", "input", Ag, "in²")
+    bd.add("I_g — gross moment of inertia about the section centroidal axis",
+           "input", Ig, "in⁴")
+    bd.add("y_b,centroid — distance from top of section down to centroid",
+           "input", yb_c, "in")
+    bd.add("y_t — distance from centroid up to TOP fiber",
+           f"= y_b,centroid = {fmt_num(yb_c, 2)}", yt, "in")
+    bd.add("y_b — distance from centroid down to BOT fiber",
+           f"= h − y_b,centroid = {fmt_num(I.get('h', 0.0), 2)} − {fmt_num(yb_c, 2)}",
+           yb, "in")
+    # 2) Tendon geometry / prestress force build-up
+    bd.add("A_ps — total area of prestressing strand", "input", Aps_used, "in²")
+    bd.add("d_p — PT centroid measured DOWN from the top of section "
+           "(per-row, interpolated from PT profile at the row's x, or manual override)",
+           "input", dp_row, "in")
+    bd.add("e_cgs — eccentricity of PT centroid from section centroid (positive when CGS BELOW centroid)",
+           f"= d_p − y_b,centroid = {fmt_num(dp_row, 2)} − {fmt_num(yb_c, 2)}",
+           e_cgs, "in")
+    bd.add(fp_label, "input", fp_used, "ksi")
+    bd.add("P — prestress force on the section (magnitude, always compressive)",
+           f"= {('f_pi' if load_case == 'temporary' else 'f_pe')} · A_ps = {fmt_num(fp_used, 2)} · {fmt_num(Aps_used, 4)}",
+           P, "kip")
+    # 3) Demands at this load case
+    bd.add("P_s — external axial demand at this row (positive = tension, negative = compression)",
+           "input from demand row", Ps_kip, "kip")
+    bd.add(f"M — applied moment for this load case ({label})",
+           "input from demand row", M_kipin, "kip·in")
+    # 4) Fiber-stress equation with full numerical substitution (incl. Ps)
     bd.add(
-        "f_top = -P/Ag + P·e·yt/Ig - M·yt/Ig",
-        f"= -{fmt_num(P, 1)}/{fmt_num(Ag, 1)} + {fmt_num(P, 1)}·{fmt_num(e_cgs, 3)}·{fmt_num(yt, 2)}/{fmt_num(Ig, 1)} - {fmt_num(M_kipin, 1)}·{fmt_num(yt, 2)}/{fmt_num(Ig, 1)}",
+        "f_top = −P/A_g + P_s/A_g + P·e_cgs·y_t/I_g − M·y_t/I_g",
+        f"= −{fmt_num(P, 1)}/{fmt_num(Ag, 1)} + {fmt_num(Ps_kip, 1)}/{fmt_num(Ag, 1)} + {fmt_num(P, 1)}·{fmt_num(e_cgs, 3)}·{fmt_num(yt, 2)}/{fmt_num(Ig, 1)} − {fmt_num(M_kipin, 1)}·{fmt_num(yt, 2)}/{fmt_num(Ig, 1)}",
         f_top, "ksi",
     )
     bd.add(
-        "f_bot = -P/Ag - P·e·yb/Ig + M·yb/Ig",
-        f"= -{fmt_num(P, 1)}/{fmt_num(Ag, 1)} - {fmt_num(P, 1)}·{fmt_num(e_cgs, 3)}·{fmt_num(yb, 2)}/{fmt_num(Ig, 1)} + {fmt_num(M_kipin, 1)}·{fmt_num(yb, 2)}/{fmt_num(Ig, 1)}",
+        "f_bot = −P/A_g + P_s/A_g − P·e_cgs·y_b/I_g + M·y_b/I_g",
+        f"= −{fmt_num(P, 1)}/{fmt_num(Ag, 1)} + {fmt_num(Ps_kip, 1)}/{fmt_num(Ag, 1)} − {fmt_num(P, 1)}·{fmt_num(e_cgs, 3)}·{fmt_num(yb, 2)}/{fmt_num(Ig, 1)} + {fmt_num(M_kipin, 1)}·{fmt_num(yb, 2)}/{fmt_num(Ig, 1)}",
         f_bot, "ksi",
     )
+    # 5) AASHTO stress limits applicable to this load case
     if sigma_c_lim is not None:
         bd.add(f"σ_c,lim = {c_eq_str}", f"compression limit ({c_cite})", sigma_c_lim, "ksi")
     if sigma_t_lim is not None:
@@ -2266,6 +2306,12 @@ def _pt_row_service_check(I, load_case, P_xfr_kip, P_serv_kip, M_kipin, dp_row):
         "ref": ref,
         "P_used": P,
         "M_used": M_kipin,
+        "Ps_used": Ps_kip,
+        "fp_used": fp_used,        # fpi at transfer, fpe at service stages
+        "fpi_used": fpi_used,
+        "fpe_used": fpe_used,
+        "Aps_used": Aps_used,
+        "dp_row": dp_row,
         "e_cgs": e_cgs,
         "Ag": Ag, "Ig": Ig, "yt": yt, "yb": yb, "yb_centroid": yb_c,
         "f_top": f_top, "f_bot": f_bot,
@@ -3311,6 +3357,10 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
             P_serv_kip=fpe_row * Aps,
             M_kipin=Ms,
             dp_row=dp_row_val,
+            Ps_kip=Ps,
+            fpi_used=fpi_section,
+            fpe_used=fpe_row,
+            Aps_used=Aps,
         )
         pt_stress_status = pt_stress_result["status"]
         pt_stress_ftop = pt_stress_result["f_top"]

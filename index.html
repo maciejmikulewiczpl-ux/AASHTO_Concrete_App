@@ -866,7 +866,16 @@ canvas { width: 100% !important; height: 100% !important; }
   </div>
   <div id="ptServiceBlock" style="display:none">
     <div class="card" style="margin-top:14px"><div class="card-header orange">PT Service Stress &mdash; Per-Row Summary <small>(AASHTO LRFD 10th Ed., &sect;5.9.2.3)</small></div><div class="card-body" id="ptServiceSummary"><div style="color:#888;font-size:0.85em">Add demand rows in the Demands &amp; Results tab and pick a Load Case per row, then press Calculate.</div></div></div>
-    <div class="card" style="margin-top:14px"><div class="card-header orange">PT Service Stress &mdash; Detailed Derivation (Active Row)</div><div class="card-body" id="ptServiceDetail"></div></div>
+    <div class="grid grid-2" style="margin-top:14px">
+      <div class="card"><div class="card-header orange">PT Service Stress &mdash; Detailed Derivation (Active Row)</div><div class="card-body" id="ptServiceDetail"></div></div>
+      <div class="card"><div class="card-header orange">Stress Components &mdash; Active Row</div><div class="card-body" style="text-align:center;padding:10px;">
+        <canvas id="ptStressDiagramCanvas" width="800" height="380" style="width:100%;max-width:800px;border-radius:4px;background:#fff;"></canvas>
+        <div style="font-size:0.78em;color:#666;margin-top:4px;text-align:left">
+          Each panel shows the stress profile across the section depth (top of section at top of panel).
+          Compression is shown to the left of the zero axis (blue), tension to the right (red).
+        </div>
+      </div></div>
+    </div>
   </div>
 </div>
 
@@ -4636,15 +4645,34 @@ function renderPtServiceRows(rowResults, inp){
   }
   let d='';
   d+=`<div style="font-weight:600;margin-bottom:8px">Row ${idx+1} &mdash; <b>${pt.label}</b> ${RREF(pt.ref)}</div>`;
-  d+=R('A<sub>g</sub>',F(pt.Ag,1),'in&sup2;');
-  d+=R('I<sub>g</sub>',F(pt.Ig,1),'in&#8308;');
-  d+=R('y<sub>t</sub> (top)',F(pt.yt,2),'in');
-  d+=R('y<sub>b</sub> (bot)',F(pt.yb,2),'in');
-  d+=R('e<sub>cgs</sub> (CGS &minus; centroid)',F(pt.e_cgs,3),'in');
-  d+=R('P (used)',F(pt.P_used,1),'kip');
-  d+=R('M (used)',F(pt.M_used,1),'kip&middot;in');
-  d+=R('f<sub>top</sub>',F(pt.f_top,4),'ksi');
-  d+=R('f<sub>bot</sub>',F(pt.f_bot,4),'ksi');
+  d+=`<div class="rpt-note" style="font-size:0.85em;color:#555;margin:6px 0">
+    Sign convention: compression negative, tension positive. y<sub>t</sub> and y<sub>b</sub> are distances from the
+    section centroid to the top and bottom fibers (both positive). e<sub>cgs</sub> = d<sub>p</sub> &minus; y<sub>b,centroid</sub>,
+    positive when CGS is BELOW the section centroid. P<sub>s</sub> follows the app convention: positive = tension, negative = compression.
+  </div>`;
+  d+=SH('Section Properties (gross)');
+  d+=R('A<sub>g</sub> &mdash; gross section area',F(pt.Ag,1),'in&sup2;');
+  d+=R('I<sub>g</sub> &mdash; gross moment of inertia (centroidal axis)',F(pt.Ig,1),'in&#8308;');
+  d+=R('y<sub>b,centroid</sub> &mdash; top of section to centroid',F(pt.yb_centroid,2),'in');
+  d+=R('y<sub>t</sub> &mdash; centroid to TOP fiber',F(pt.yt,2),'in');
+  d+=R('y<sub>b</sub> &mdash; centroid to BOT fiber',F(pt.yb,2),'in');
+  d+=SH('Prestress Force at This Load Case');
+  d+=R('A<sub>ps</sub>',F(pt.Aps_used,4),'in&sup2;');
+  d+=R('d<sub>p</sub> &mdash; PT centroid from TOP of section <small>(per-row; from PT profile at row.x in Layout mode, or manual in Override mode)</small>',F(pt.dp_row,2),'in');
+  d+=R('e<sub>cgs</sub> = d<sub>p</sub> &minus; y<sub>b,centroid</sub>',
+      `${F(pt.dp_row,2)} &minus; ${F(pt.yb_centroid,2)} = ${F(pt.e_cgs,3)}`,'in');
+  const _fpLabel=pt.load_case==='temporary'?'f<sub>pi</sub> (initial, post-ES)':'f<sub>pe</sub> (effective, after losses)';
+  d+=R(_fpLabel,F(pt.fp_used,2),'ksi');
+  d+=R('P = '+(pt.load_case==='temporary'?'f<sub>pi</sub>':'f<sub>pe</sub>')+'&middot;A<sub>ps</sub>',
+      `${F(pt.fp_used,2)} &middot; ${F(pt.Aps_used,4)} = ${F(pt.P_used,1)}`,'kip');
+  d+=SH('Demands at This Row');
+  d+=R('P<sub>s</sub> &mdash; external axial demand <small>(positive = tension)</small>',F(pt.Ps_used,1),'kip');
+  d+=R('M &mdash; applied moment',F(pt.M_used,1),'kip&middot;in');
+  d+=SH('Combined Fiber Stress (gross section)');
+  d+=R('f<sub>top</sub> = &minus;P/A<sub>g</sub> + P<sub>s</sub>/A<sub>g</sub> + P&middot;e<sub>cgs</sub>&middot;y<sub>t</sub>/I<sub>g</sub> &minus; M&middot;y<sub>t</sub>/I<sub>g</sub>',
+      F(pt.f_top,4),'ksi');
+  d+=R('f<sub>bot</sub> = &minus;P/A<sub>g</sub> + P<sub>s</sub>/A<sub>g</sub> &minus; P&middot;e<sub>cgs</sub>&middot;y<sub>b</sub>/I<sub>g</sub> + M&middot;y<sub>b</sub>/I<sub>g</sub>',
+      F(pt.f_bot,4),'ksi');
   if(pt.sigma_c_lim!=null) d+=R('&sigma;<sub>c,lim</sub>',F(pt.sigma_c_lim,3),'ksi');
   if(pt.sigma_t_lim!=null) d+=R('&sigma;<sub>t,lim</sub>',F(pt.sigma_t_lim,4),'ksi');
   if(pt.ratio_c_top!=null) d+=R('|f<sub>top</sub>|/|&sigma;<sub>c,lim</sub>|',F(pt.ratio_c_top,3)+' '+BG(pt.ratio_c_top<=1.0));
@@ -4654,6 +4682,110 @@ function renderPtServiceRows(rowResults, inp){
   d+=R('Status',`<b class="${pt.status==='OK'?'dc-ok':'dc-fail'}">${pt.status}</b>`);
   if(pt.breakdown) d+=renderDetailedBreakdown(pt.breakdown,true);
   detHost.innerHTML=d;
+  // Draw the stress-components diagram for the active row
+  try{ drawPtStressDiagrams(pt); }catch(e){ console.error('drawPtStressDiagrams:',e); }
+}
+
+/* ─── Stress-components diagram (4 panels: PT, Ps axial, M moment, Total) ─── */
+function drawPtStressDiagrams(pt){
+  const cv=document.getElementById('ptStressDiagramCanvas');
+  if(!cv||!pt) return;
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  const Ag=pt.Ag||1, Ig=pt.Ig||1, yt=pt.yt||0, yb=pt.yb||0;
+  const e=pt.e_cgs||0, P=pt.P_used||0, Ps=pt.Ps_used||0, M=pt.M_used||0;
+  const ft_PT = (Ag>0?-P/Ag:0) + (Ig>0?P*e*yt/Ig:0);
+  const fb_PT = (Ag>0?-P/Ag:0) - (Ig>0?P*e*yb/Ig:0);
+  const f_ax  = Ag>0?Ps/Ag:0;
+  const ft_M  = Ig>0?-M*yt/Ig:0;
+  const fb_M  = Ig>0? M*yb/Ig:0;
+  const ft_tot=ft_PT+f_ax+ft_M;
+  const fb_tot=fb_PT+f_ax+fb_M;
+  const fmt=(v)=>(Math.abs(v)>=10?v.toFixed(2):(Math.abs(v)>=1?v.toFixed(3):v.toFixed(3)));
+  const allF=[ft_PT,fb_PT,f_ax,ft_M,fb_M,ft_tot,fb_tot];
+  let maxAbs=Math.max(0.001,...allF.map(v=>Math.abs(v)));
+  const niceMax=(x)=>{const e=Math.pow(10,Math.floor(Math.log10(x))); const m=x/e; const n=m<=1?1:m<=2?2:m<=5?5:10; return n*e;};
+  maxAbs=niceMax(maxAbs);
+  // Layout: 4 panels with operator gaps (+, +, =) between them
+  const N=4;
+  const opW=28;
+  const panelW=(W-(N-1)*opW)/N;
+  const padT=24, padB=44;
+  const sectH=H-padT-padB;
+  const panels=[
+    {title:'PT only',         fT:ft_PT,  fB:fb_PT,  note:'-P/Ag + P·e·y/Ig'},
+    {title:'Axial P_s',       fT:f_ax,   fB:f_ax,   note:'+P_s/Ag (uniform)'},
+    {title:'Moment M',        fT:ft_M,   fB:fb_M,   note:'-M·y/Ig (linear)'},
+    {title:'TOTAL',           fT:ft_tot, fB:fb_tot, note:'sum of all three'},
+  ];
+  panels.forEach((p,idx)=>{
+    const panelLeft=idx*(panelW+opW);
+    const panelCenter=panelLeft+panelW/2;
+    const zeroX=panelCenter;
+    const halfWidth=panelW/2 - 8;
+    const scale=halfWidth/maxAbs;
+    // Draw operator symbol before this panel
+    if(idx>0){
+      const opCenterX=panelLeft - opW/2;
+      ctx.font='bold 18px sans-serif';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.fillStyle='#555';
+      ctx.fillText(idx===3?'=':'+', opCenterX, padT+sectH/2);
+      ctx.textBaseline='alphabetic';
+    }
+    // Title
+    ctx.font='bold 11px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillStyle=idx===3?'#1a5276':'#333';
+    ctx.fillText(p.title, panelCenter, padT-10);
+    // Zero axis (dashed vertical)
+    ctx.strokeStyle='#999';
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(zeroX,padT-4);
+    ctx.lineTo(zeroX,padT+sectH+4);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Stress profile polygon
+    const xT=zeroX + p.fT*scale;
+    const xB=zeroX + p.fB*scale;
+    const bothNeg=(p.fT<=0 && p.fB<=0);
+    const bothPos=(p.fT>=0 && p.fB>=0);
+    const fillStyle = bothNeg ? 'rgba(52,120,200,0.32)' : bothPos ? 'rgba(220,80,80,0.32)' : 'rgba(150,100,180,0.28)';
+    const strokeStyle = bothNeg ? '#1a5276' : bothPos ? '#a04040' : '#7050a0';
+    ctx.beginPath();
+    ctx.moveTo(zeroX,padT);
+    ctx.lineTo(xT,padT);
+    ctx.lineTo(xB,padT+sectH);
+    ctx.lineTo(zeroX,padT+sectH);
+    ctx.closePath();
+    ctx.fillStyle=fillStyle;
+    ctx.fill();
+    ctx.strokeStyle=strokeStyle;
+    ctx.lineWidth=1.5;
+    ctx.stroke();
+    // Stress values at top and bot
+    ctx.font='9.5px sans-serif';
+    ctx.fillStyle='#111';
+    ctx.textAlign = p.fT>=0?'left':'right';
+    ctx.fillText(fmt(p.fT), xT + (p.fT>=0?3:-3), padT-2);
+    ctx.textAlign = p.fB>=0?'left':'right';
+    ctx.fillText(fmt(p.fB), xB + (p.fB>=0?3:-3), padT+sectH+11);
+    // Note under panel
+    ctx.font='8.5px sans-serif';
+    ctx.fillStyle='#666';
+    ctx.textAlign='center';
+    ctx.fillText(p.note, panelCenter, padT+sectH+26);
+  });
+  // Global legend at the very bottom
+  ctx.font='9px sans-serif';
+  ctx.textAlign='left';
+  ctx.fillStyle='#333';
+  ctx.fillText('Compression ←', 4, H-4);
+  ctx.textAlign='right';
+  ctx.fillText('→ Tension (all in ksi)', W-4, H-4);
 }
 
 function renderShear(sh,inp,dem){
@@ -6088,13 +6220,20 @@ function renderDetailedBreakdown(breakdown, showDetails){
   // even when the global unit switcher is set to lbf/ft. AASHTO formulas (e.g.
   // 0.0316·λ·√fc') have hardcoded coefficients calibrated to kip/in/ksi; converting
   // numeric substitutions in the breakdown would make them mathematically inconsistent.
+  // Strip trailing zeros so "15.5000000" → "15.5", "100.000000" → "100".
+  const fmtResult=(n,units)=>{
+    if(typeof n!=='number'||!isFinite(n)) return n;
+    const d=(units==='°'||units===''||units==='(dimensionless)')?4:2;
+    // toFixed then parseFloat round-trip strips trailing zeros: 15.50 → 15.5 → "15.5".
+    return parseFloat(n.toFixed(d)).toString();
+  };
   let html = `<div class="no-unit-convert" style="background:#f7f9fc; border:1px solid #e0e6ed; border-radius:4px; padding:12px; margin:12px 0; font-family:Consolas,'Courier New',monospace; font-size:9pt; line-height:1.5; color:#2c3e50;">`;
   html += `<div style="font-weight:600; color:#1a5276; margin-bottom:8px;">${breakdown.title}</div>`;
   breakdown.steps.forEach((step,i)=>{
     html += `<div style="margin:6px 0; padding:4px 0; border-bottom:1px dotted #d0d0d0;">`;
     html += `<div style="font-weight:600; color:#2c3e50;">${step.equation}</div>`;
     if(step.desc) html += `<div style="color:#555; font-size:8.5pt; margin:2px 0;">${step.desc}</div>`;
-    html += `<div style="color:#1a5276; font-weight:600;">= ${typeof step.result==='number'?step.result.toFixed(step.units==='°'||step.units===''||step.units==='(dimensionless)'?4:2):step.result}${step.units ? ' <span style="font-weight:normal;">'+step.units+'</span>' : ''}</div>`;
+    html += `<div style="color:#1a5276; font-weight:600;">= ${fmtResult(step.result, step.units)}${step.units ? ' <span style="font-weight:normal;">'+step.units+'</span>' : ''}</div>`;
     html += `</div>`;
   });
   html += `</div>`;
@@ -6430,7 +6569,15 @@ function generateReport(){
   // ===================== 5b. PT SERVICE STRESS CHECK (per row) ============
   if(ck('rpt_service') && hasPT && res.row_results && res.row_results.some(r=>r.pt_stress)){
     h2+=`<h2>5b &mdash; PT Service Stress Check ${RREF('AASHTO LRFD 10th Ed., §5.9.2.3')}</h2>`;
-    h2+=`<div class="rpt-note">One sub-section per demand row. Gross section properties used (A<sub>g</sub>, I<sub>g</sub>, y<sub>b</sub>). Sign convention: compression negative, tension positive; e<sub>cgs</sub>&gt;0 when CGS is below the section centroid; sagging M positive. References point to the specific AASHTO table/section that supplied each limit.</div>`;
+    h2+=`<div class="rpt-note">One sub-section per demand row. Gross section properties used (A<sub>g</sub>, I<sub>g</sub>).
+      <b>Symbol definitions:</b>
+      y<sub>b,centroid</sub> = distance from top of section to centroid;
+      y<sub>t</sub> = y<sub>b,centroid</sub> (centroid to top fiber);
+      y<sub>b</sub> = h &minus; y<sub>b,centroid</sub> (centroid to bottom fiber);
+      e<sub>cgs</sub> = d<sub>p</sub> &minus; y<sub>b,centroid</sub> (positive when CGS BELOW centroid);
+      P = prestress force (magnitude) = f<sub>pi</sub>&middot;A<sub>ps</sub> at transfer or f<sub>pe</sub>&middot;A<sub>ps</sub> at service stages;
+      P<sub>s</sub> = external axial demand (positive = tension);
+      Sign convention: compression negative, tension positive; sagging M positive.</div>`;
     h2+=RR('A<sub>g</sub>',F(inp.Ag,1),'in&sup2;');
     h2+=RR('I<sub>g</sub>',F(inp.Ig,1),'in&#8308;');
     h2+=RR('y<sub>b,centroid</sub>',F(inp.yb_centroid,2),'in');
@@ -6439,13 +6586,18 @@ function generateReport(){
       const pt=cap.pt_stress;
       if(!pt) return;
       h2+=`<h3>5b.${i+1} Row ${i+1} &mdash; ${pt.label} ${RREF(pt.ref)}</h3>`;
-      h2+=REQ("P = f<sub>p</sub>&middot;A<sub>ps</sub> = "+F(pt.P_used,1)+" kip");
+      const _fpSym=(pt.load_case==='temporary')?'f<sub>pi</sub>':'f<sub>pe</sub>';
+      const _fpDesc=(pt.load_case==='temporary')?'initial (post-ES, before time-dep losses)':'effective (after all losses)';
+      h2+=REQ("e<sub>cgs</sub> = d<sub>p</sub> &minus; y<sub>b,centroid</sub> = "+F(pt.dp_row,2)+" &minus; "+F(pt.yb_centroid,2)+" = "+F(pt.e_cgs,3)+" in");
+      h2+=REQ(_fpSym+" = "+F(pt.fp_used,2)+" ksi <small>("+_fpDesc+")</small>");
+      h2+=REQ("P = "+_fpSym+"&middot;A<sub>ps</sub> = "+F(pt.fp_used,2)+"&middot;"+F(pt.Aps_used,4)+" = "+F(pt.P_used,1)+" kip <small>(always treated as compressive on the section)</small>");
+      h2+=REQ("P<sub>s</sub> (axial demand, +tension) = "+F(pt.Ps_used,1)+" kip");
       h2+=REQ("M = "+F(pt.M_used,1)+" kip&middot;in");
-      h2+=REQ("f<sub>top</sub> = &minus;P/A<sub>g</sub> + P&middot;e&middot;y<sub>t</sub>/I<sub>g</sub> &minus; M&middot;y<sub>t</sub>/I<sub>g</sub>");
-      h2+=REQ("     = &minus;"+F(pt.P_used,1)+"/"+F(pt.Ag,1)+" + "+F(pt.P_used,1)+"&middot;"+F(pt.e_cgs,3)+"&middot;"+F(pt.yt,2)+"/"+F(pt.Ig,1)+" &minus; "+F(pt.M_used,1)+"&middot;"+F(pt.yt,2)+"/"+F(pt.Ig,1));
+      h2+=REQ("f<sub>top</sub> = &minus;P/A<sub>g</sub> + P<sub>s</sub>/A<sub>g</sub> + P&middot;e<sub>cgs</sub>&middot;y<sub>t</sub>/I<sub>g</sub> &minus; M&middot;y<sub>t</sub>/I<sub>g</sub>");
+      h2+=REQ("     = &minus;"+F(pt.P_used,1)+"/"+F(pt.Ag,1)+" + "+F(pt.Ps_used,1)+"/"+F(pt.Ag,1)+" + "+F(pt.P_used,1)+"&middot;"+F(pt.e_cgs,3)+"&middot;"+F(pt.yt,2)+"/"+F(pt.Ig,1)+" &minus; "+F(pt.M_used,1)+"&middot;"+F(pt.yt,2)+"/"+F(pt.Ig,1));
       h2+=REQ("     = "+F(pt.f_top,4)+" ksi");
-      h2+=REQ("f<sub>bot</sub> = &minus;P/A<sub>g</sub> &minus; P&middot;e&middot;y<sub>b</sub>/I<sub>g</sub> + M&middot;y<sub>b</sub>/I<sub>g</sub>");
-      h2+=REQ("     = &minus;"+F(pt.P_used,1)+"/"+F(pt.Ag,1)+" &minus; "+F(pt.P_used,1)+"&middot;"+F(pt.e_cgs,3)+"&middot;"+F(pt.yb,2)+"/"+F(pt.Ig,1)+" + "+F(pt.M_used,1)+"&middot;"+F(pt.yb,2)+"/"+F(pt.Ig,1));
+      h2+=REQ("f<sub>bot</sub> = &minus;P/A<sub>g</sub> + P<sub>s</sub>/A<sub>g</sub> &minus; P&middot;e<sub>cgs</sub>&middot;y<sub>b</sub>/I<sub>g</sub> + M&middot;y<sub>b</sub>/I<sub>g</sub>");
+      h2+=REQ("     = &minus;"+F(pt.P_used,1)+"/"+F(pt.Ag,1)+" + "+F(pt.Ps_used,1)+"/"+F(pt.Ag,1)+" &minus; "+F(pt.P_used,1)+"&middot;"+F(pt.e_cgs,3)+"&middot;"+F(pt.yb,2)+"/"+F(pt.Ig,1)+" + "+F(pt.M_used,1)+"&middot;"+F(pt.yb,2)+"/"+F(pt.Ig,1));
       h2+=REQ("     = "+F(pt.f_bot,4)+" ksi");
       if(pt.sigma_c_lim!=null) h2+=REQ("&sigma;<sub>c,lim</sub> = "+F(pt.sigma_c_lim,3)+" ksi &nbsp; "+RREF(pt.ref));
       if(pt.sigma_t_lim!=null) h2+=REQ("&sigma;<sub>t,lim</sub> = "+F(pt.sigma_t_lim,4)+" ksi &nbsp; "+RREF(pt.ref));

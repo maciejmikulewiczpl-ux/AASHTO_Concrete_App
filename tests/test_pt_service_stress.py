@@ -367,6 +367,56 @@ def test_load_case_label_in_breakdown_title():
         assert marker in bd["title"], f"{lc}: title missing marker '{marker}': {bd['title']}"
 
 
+def test_external_axial_demand_Ps_shifts_fibers_by_Ps_over_Ag():
+    """Per-row Ps must show up as a +Ps/Ag axial shift on both top and bottom fibers."""
+    raw = _pt_inputs()
+    # Same row twice — once Ps=0, once Ps=-100 (compression).
+    rows = [
+        _row("service_I_full", Ms=5000, Ps=0),
+        _row("service_I_full", Ms=5000, Ps=-100),
+    ]
+    res = calculate_all(raw, rows, 0)
+    pt0 = res["row_results"][0]["pt_stress"]
+    pt1 = res["row_results"][1]["pt_stress"]
+    Ag = 18 * 36
+    expected_delta = -100 / Ag
+    assert pt1["f_top"] - pt0["f_top"] == pytest.approx(expected_delta, abs=1e-6)
+    assert pt1["f_bot"] - pt0["f_bot"] == pytest.approx(expected_delta, abs=1e-6)
+    # Ps_used echoed back to the result dict
+    assert pt0["Ps_used"] == 0
+    assert pt1["Ps_used"] == -100
+
+
+def test_breakdown_defines_yt_yb_e_cgs_and_prestress():
+    """The EqBreakdown must contain plain-language definitions of yt, yb, e_cgs
+    and show how P was built from fp · Aps."""
+    raw = _pt_inputs()
+    res = calculate_all(raw, [_row("service_I_full", Ms=5000, Ps=-100)], 0)
+    pt = res["row_results"][0]["pt_stress"]
+    bd = pt["breakdown"]
+    full = "\n".join(s.get("equation", "") + " | " + s.get("desc", "") for s in bd["steps"])
+    # Symbol definitions present
+    assert "y_t" in full and "TOP fiber" in full
+    assert "y_b" in full and "BOT fiber" in full
+    assert "e_cgs" in full and "BELOW" in full
+    # Prestress force build-up shown
+    assert "P — prestress force" in full or "P — prestress force on the section" in full
+    assert "f_pe" in full or "f_pi" in full
+    # External axial demand documented
+    assert "P_s" in full and "tension" in full
+    # Combined fiber-stress equation includes the Ps/Ag term
+    assert "P_s/A_g" in full or "P_s / A_g" in full
+
+
+def test_temporary_uses_fpi_in_prestress_buildup():
+    """At Temporary stage, the breakdown's fp = fpi (not fpe)."""
+    raw = _pt_inputs()
+    res = calculate_all(raw, [_row("temporary", Ms=1200)], 0)
+    pt = res["row_results"][0]["pt_stress"]
+    assert pt["fp_used"] == pt["fpi_used"]
+    assert pt["fp_used"] != pt["fpe_used"]
+
+
 def test_unknown_load_case_falls_back_gracefully():
     """Unknown load_case → silently treated as Service I full (safe default)."""
     raw = _pt_inputs()
