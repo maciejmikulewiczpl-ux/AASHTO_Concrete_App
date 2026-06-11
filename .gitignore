@@ -10,6 +10,11 @@ env/
 .build_venv/
 .build_python/
 
+# Accidental pip install dirs (broken Python prefix resolves to CWD — see
+# REVIEW_FINDINGS_2026-06-11.md § Housekeeping)
+Lib/
+Scripts/
+
 # Build artifacts
 build/
 dist/
