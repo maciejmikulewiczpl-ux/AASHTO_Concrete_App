@@ -2,17 +2,11 @@
 
 This file is auto-loaded by GitHub Copilot. The same content is mirrored in `CLAUDE.md` at the repo root for Claude Code.
 
-## ⚠️ IN-PROGRESS WORK — read `AUDIT_2026_05_13_IN_PROGRESS.md` FIRST
+## AASHTO Citation Audit — COMPLETED 2026-05-14
 
-There is an audit-and-fix session in progress as of 2026-05-13. A consolidated decision sheet has been agreed with the user but **no implementation has happened yet**. The user is reviewing the decisions and will resume tomorrow.
-
-Before doing anything in this repo:
-1. Open `AUDIT_2026_05_13_IN_PROGRESS.md` and read it through.
-2. Understand which decisions are pending (D1–D16) and which questions are parked (Q9 Tcr/Ao for I-section, Q10 B5 tables).
-3. Do NOT start implementing those decisions until the user confirms.
-4. Do NOT re-investigate the questions that already have decisions — the answers are in the audit doc.
-
-If the audit file is gone, it means the work has been completed and committed — check `FIXES_SUMMARY.md` for the resolution record.
+The 20-decision audit (D1–D20) is complete. See `FIXES_SUMMARY.md` §
+"AASHTO Citation Audit — completed 2026-05-14" for the full change log
+and `AUDIT_2026_05_13_COMPLETED.md` for the historical Q&A walkthrough.
 
 
 ## Project at a glance
