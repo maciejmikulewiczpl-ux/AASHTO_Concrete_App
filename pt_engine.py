@@ -205,8 +205,6 @@ def _legacy_spans_to_parabolas(spans, inf_frac=0.1):
 
     return parabolas
 
-    return profile
-
 
 # ---------------------------------------------------------------------------
 # 3. Friction losses  (AASHTO 5.9.3.2.2b)

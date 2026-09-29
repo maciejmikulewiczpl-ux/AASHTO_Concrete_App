@@ -88,6 +88,13 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background
    bar-mode dropdown ("Number of top/bottom bars") pushes its right column
    out further than rows whose labels are short. */
 #tab-section .form-row label { min-width: 230px; }
+/* Circular section mode: body.circ-mode hides rect/I-only rows and shows circular rows. */
+body.circ-mode .noncirc-field { display: none !important; }
+.circ-field, .circ-block { display: none !important; }
+body.circ-mode .circ-field { display: flex !important; }
+body.circ-mode .circ-block { display: block !important; }
+.circ-info { font-size: 0.8rem; color: var(--text-light); margin: 4px 0 2px; line-height: 1.45; }
+.circ-warn { color: #c0392b; }
 /* Section Definition tab uses a 1fr / 2fr grid so the wider tiles (Flexural
    Reinforcement, Shear & Torsion) get twice the horizontal room of the
    narrower ones (Section Geometry, Bonded Prestressing). Scoped to this tab
@@ -556,20 +563,37 @@ canvas { width: 100% !important; height: 100% !important; }
           </select>
         </div>
         <div class="form-row" id="sectionShapeRow"><label>Section Shape</label>
-          <select id="sectionType" class="wide"><option value="RECTANGULAR">Rectangular</option><option value="T-SECTION">I-Section</option></select>
+          <select id="sectionType" class="wide"><option value="RECTANGULAR">Rectangular</option><option value="T-SECTION">I-Section</option><option value="CIRCULAR">Circular</option></select>
         </div>
-        <div class="form-row"><label>Flange width, b</label><input type="number" id="b_flange" value="16.38" step="any"><span class="unit">in</span></div>
-        <div class="form-row"><label>Total depth, h</label><input type="number" id="h_total" value="27.5" step="any"><span class="unit">in</span></div>
-        <div class="form-row tsection-field"><label>Web width, b<sub>w</sub></label><input type="number" id="b_web" value="12" step="any"><span class="unit">in</span><span class="note">I-section only</span></div>
-        <div class="form-row tsection-field"><label>Top flange depth</label><input type="number" id="hf_top" value="8" step="any"><span class="unit">in</span><span class="note">I-section only</span></div>
-        <div class="form-row tsection-field"><label>Bottom flange depth</label><input type="number" id="hf_bot" value="12" step="any"><span class="unit">in</span><span class="note">I-section only</span></div>
-        <div class="form-row"><label>Cover</label><input type="number" id="cover" value="2" step="any"><span class="unit">in</span></div>
+        <div class="form-row noncirc-field"><label>Flange width, b</label><input type="number" id="b_flange" value="16.38" step="any"><span class="unit">in</span></div>
+        <div class="form-row noncirc-field"><label>Total depth, h</label><input type="number" id="h_total" value="27.5" step="any"><span class="unit">in</span></div>
+        <div class="form-row tsection-field noncirc-field"><label>Web width, b<sub>w</sub></label><input type="number" id="b_web" value="12" step="any"><span class="unit">in</span><span class="note">I-section only</span></div>
+        <div class="form-row tsection-field noncirc-field"><label>Top flange depth</label><input type="number" id="hf_top" value="8" step="any"><span class="unit">in</span><span class="note">I-section only</span></div>
+        <div class="form-row tsection-field noncirc-field"><label>Bottom flange depth</label><input type="number" id="hf_bot" value="12" step="any"><span class="unit">in</span><span class="note">I-section only</span></div>
+        <div class="form-row circ-field"><label>Diameter, D</label><input type="number" id="circ_D" value="36" step="any"><span class="unit">in</span></div>
+        <div class="form-row"><label>Cover</label><input type="number" id="cover" value="2" step="any"><span class="unit">in</span><span class="note circ-field" style="margin-left:6px">clear to hoop/spiral</span></div>
       </div>
     </div>
 
     <div class="card">
       <div class="card-header blue">Flexural Reinforcement</div>
       <div class="card-body">
+        <div class="circ-block">
+          <div class="form-row"><label><b>Outer ring</b> &mdash; bar size</label>
+            <select id="circ_bar1"><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option><option value="9" selected>#9</option><option value="10">#10</option><option value="11">#11</option><option value="14">#14</option><option value="18">#18</option></select>
+          </div>
+          <div class="form-row"><label>Number of bars / bundles</label><input type="number" id="circ_n1" value="12" min="1" step="1"><span class="unit">bars</span></div>
+          <div class="form-row"><label>Bundling</label><select id="circ_bundle1"><option value="1" selected>Single bars</option><option value="2">2-bar bundles</option><option value="3">3-bar bundles</option></select></div>
+          <div class="form-row"><label><input type="checkbox" id="circ_ring2" style="width:auto;margin-right:6px"><b>Inner ring</b></label></div>
+          <div class="form-row"><label>Inner ring &mdash; bar size</label>
+            <select id="circ_bar2"><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8" selected>#8</option><option value="9">#9</option><option value="10">#10</option><option value="11">#11</option><option value="14">#14</option><option value="18">#18</option></select>
+          </div>
+          <div class="form-row"><label>Inner ring &mdash; bars / bundles</label><input type="number" id="circ_n2" value="8" min="0" step="1"><span class="unit">bars</span></div>
+          <div class="form-row"><label>Inner ring &mdash; bundling</label><select id="circ_bundle2"><option value="1" selected>Single bars</option><option value="2">2-bar bundles</option><option value="3">3-bar bundles</option></select></div>
+          <div class="form-row"><label>Inner ring centre diameter, D<sub>r2</sub></label><input type="number" id="circ_Dr2" value="20" step="any"><span class="unit">in</span></div>
+          <div id="circ_rebar_info" class="circ-info"></div>
+        </div>
+        <div class="noncirc-field">
         <div id="slabAsNote" class="slab-note" style="display:none">
           <b>Slab mode:</b> when reinforcement is entered as a <b>spacing</b> <i>s</i>, As is pro-rated across the full section width:
           <code>As = (b / s) &times; A<sub>b</sub></code>. Bars are drawn at exact spacing centered on the section.
@@ -598,6 +622,7 @@ canvas { width: 100% !important; height: 100% !important; }
         <div class="form-row"><label><select id="bar_mode_bot" class="bar-mode-sel" onchange="onBarModeChange('bot')"><option value="count" selected>Number of bottom bars</option><option value="spacing">Bottom bar spacing</option></select></label><input type="number" id="n_bars_bot" value="5" min="0" step="any" oninput="updateDerivedBars('bot')"><span class="unit" id="n_bars_bot_unit">bars</span><span class="note" id="n_bars_bot_derived" style="display:none;margin-left:6px"></span></div>
         <div class="form-row"><label>d<sub>bot</sub> <small>(from top face)</small></label><input type="number" id="d_bot_override" value="" step="any" readonly class="auto-calc"><span class="unit">in</span><label class="ovr-label"><input type="checkbox" id="d_bot_ovr" class="ovr-cb"></label><span class="note" id="dBotNote">= h &minus; cover &minus; d<sub>b</sub>/2</span></div>
         <div class="form-row"><button class="demand-btn" style="padding:3px 10px;font-size:0.75rem" onclick="openMultiRow('bot')">Multiple Rows...</button><span id="mr_badge_bot"></span></div>
+        </div>
       </div>
     </div>
 
@@ -635,13 +660,23 @@ canvas { width: 100% !important; height: 100% !important; }
           <p><strong>Shear legs:</strong> All legs resist shear. Only the 2 outer (external) legs form the closed loop and contribute to torsional resistance per AASHTO C5.7.3.6.2.</p>
           <p><strong>Additional torsional stirrup:</strong> Assumes two external legs of reinforcement working only for torsion. These optional closed-loop stirrups are added to the outer perimeter to increase torsional capacity. Area is added on top of existing stirrup external legs.</p>
         </div>
-        <div class="form-row"><label>Stirrup bar size</label>
+        <div class="form-row circ-field"><label>Transverse reinforcement type</label>
+          <select id="circ_trans_type"><option value="hoop" selected>Circular hoops</option><option value="spiral">Continuous spiral</option></select>
+        </div>
+        <div class="form-row circ-field" id="circ_hoop_closure_row"><label>Hoop closure</label>
+          <select id="circ_hoop_closure" title="AASHTO 5.6.4.4: hoops closed by welded splice / mechanical coupler / hooks use Eq. 5.6.4.4-2 (0.85); lap-spliced hoops use Eq. 5.6.4.4-3 (0.80)"><option value="lap" selected>Lap splice (treated as tie, 0.80)</option><option value="hooked">Welded / mechanical / hooks around bars (0.85)</option></select>
+        </div>
+        <div class="form-row"><label id="lbl_shear_bar">Stirrup bar size</label>
           <select id="shear_bar"><option value="0">None</option><option value="3">#3</option><option value="4" selected>#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option><option value="9">#9</option><option value="10">#10</option><option value="11">#11</option></select>
         </div>
         <div class="form-row"><span class="note" style="font-style:italic;">Note: per AASHTO 5.10.8.2.6b shear reinforcement bars should be limited to #8</span></div>
-        <div class="form-row"><label>Legs per stirrup (shear)</label><input type="number" id="shear_legs" value="2" min="1"></div>
-        <div class="form-row"><label>Stirrup spacing, s</label><input type="number" id="shear_s" value="4" step="any"><span class="unit">in</span></div>
-        <div class="form-row"><label>Add. torsional stirrup size</label>
+        <div class="form-row noncirc-field"><label>Legs per stirrup (shear)</label><input type="number" id="shear_legs" value="2" min="1"></div>
+        <div class="form-row"><label id="lbl_shear_s">Stirrup spacing, s</label><input type="number" id="shear_s" value="4" step="any"><span class="unit">in</span></div>
+        <div class="form-row circ-field"><label>Interior cross-tie legs (crossing shear plane)</label><input type="number" id="circ_tie_legs" value="0" min="0" step="1"></div>
+        <div class="form-row circ-field"><label>Cross-tie bar size</label>
+          <select id="circ_tie_bar"><option value="3">#3</option><option value="4" selected>#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option></select>
+        </div>
+        <div class="form-row noncirc-field"><label>Add. torsional stirrup size</label>
           <select id="at_add_bar" onchange="document.getElementById('at_add_spacing_row').style.display=this.value==='0'?'none':'flex'">
             <option value="0" selected>None</option>
             <option value="3">#3</option>
@@ -655,11 +690,12 @@ canvas { width: 100% !important; height: 100% !important; }
             <option value="11">#11</option>
           </select>
         </div>
-        <div class="form-row" id="at_add_spacing_row" style="display:none">
+        <div class="form-row noncirc-field" id="at_add_spacing_row" style="display:none">
           <label>Add. torsional stirrup spacing</label>
           <input type="number" id="at_add_s" value="12" step="any"><span class="unit">in</span>
         </div>
-        <div class="rpt-note" style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">Stirrups resist both shear (all legs) and torsion (2 external legs only). Additional torsion bars provide extra capacity.</div>
+        <div class="rpt-note noncirc-field" style="font-size:0.78rem;color:var(--text-light);margin-top:2px;">Stirrups resist both shear (all legs) and torsion (2 external legs only). Additional torsion bars provide extra capacity.</div>
+        <div class="circ-block circ-info" id="circ_trans_info">A hoop or spiral crosses the shear plane twice: A<sub>v</sub> = 2&middot;A<sub>hoop</sub> + n<sub>ties</sub>&middot;A<sub>tie</sub>. Only the closed hoop counts as torsion reinforcement (AASHTO 5.7.2.3 lists closed stirrups, closed WWR cages, ties or hoops &mdash; not spirals); cross-ties never are. (Remaining unverified circular items are listed in the report.)</div>
       </div>
     </div>
 
@@ -1174,7 +1210,21 @@ function saveCurrentSectionState(){
     shear_legs: V('shear_legs'),
     shear_s: V('shear_s'),
     at_add_bar_N: parseInt(document.getElementById('at_add_bar').value),
-    at_add_s: V('at_add_s')
+    at_add_s: V('at_add_s'),
+    // Circular section
+    circ_D: V('circ_D'),
+    circ_bar1: parseInt(document.getElementById('circ_bar1').value),
+    circ_n1: V('circ_n1'),
+    circ_bundle1: parseInt(document.getElementById('circ_bundle1').value),
+    circ_ring2: document.getElementById('circ_ring2').checked,
+    circ_bar2: parseInt(document.getElementById('circ_bar2').value),
+    circ_n2: V('circ_n2'),
+    circ_bundle2: parseInt(document.getElementById('circ_bundle2').value),
+    circ_Dr2: V('circ_Dr2'),
+    circ_trans_type: document.getElementById('circ_trans_type').value,
+    circ_hoop_closure: document.getElementById('circ_hoop_closure').value,
+    circ_tie_legs: V('circ_tie_legs'),
+    circ_tie_bar: parseInt(document.getElementById('circ_tie_bar').value)
   };
 
   // Demand rows
@@ -1304,6 +1354,21 @@ function loadSectionState(name){
   document.getElementById('at_add_bar').value = inp.at_add_bar_N != null ? inp.at_add_bar_N : 0;
   setV('at_add_s', inp.at_add_s != null ? inp.at_add_s : 12);
   document.getElementById('at_add_spacing_row').style.display = (inp.at_add_bar_N > 0) ? 'flex' : 'none';
+
+  // Circular section (older saves have none of these keys → defaults)
+  setV('circ_D', inp.circ_D != null ? inp.circ_D : 36);
+  document.getElementById('circ_bar1').value = inp.circ_bar1 || 9;
+  setV('circ_n1', inp.circ_n1 != null ? inp.circ_n1 : 12);
+  document.getElementById('circ_bundle1').value = inp.circ_bundle1 || 1;
+  document.getElementById('circ_ring2').checked = !!inp.circ_ring2;
+  document.getElementById('circ_bar2').value = inp.circ_bar2 || 8;
+  setV('circ_n2', inp.circ_n2 != null ? inp.circ_n2 : 8);
+  document.getElementById('circ_bundle2').value = inp.circ_bundle2 || 1;
+  setV('circ_Dr2', inp.circ_Dr2 != null ? inp.circ_Dr2 : 20);
+  document.getElementById('circ_trans_type').value = inp.circ_trans_type || 'hoop';
+  document.getElementById('circ_hoop_closure').value = inp.circ_hoop_closure || 'lap';
+  setV('circ_tie_legs', inp.circ_tie_legs != null ? inp.circ_tie_legs : 0);
+  document.getElementById('circ_tie_bar').value = inp.circ_tie_bar || 4;
 
   // Multi-row rebar data
   mrData.top = state.mrData && state.mrData.top ? JSON.parse(JSON.stringify(state.mrData.top)) : null;
@@ -1659,6 +1724,7 @@ function setupAutoCalculate(){
 function drawCrossSection(){
   const cv=document.getElementById('xsecCanvas');
   if(!cv) return;
+  if(isCircUI()){ drawCircCrossSection(cv); return; }
   /* ---- HiDPI sharp rendering ---- */
   const dpr=window.devicePixelRatio||1;
   /* pre-scan warnings count to size canvas */
@@ -2187,7 +2253,9 @@ function drawServiceDiagram(fl, inp){
   const secW=colW*0.55;  /* full flange width on canvas */
   const sx0=x0+(colW-secW)/2;
   ctx.fillStyle='#eaeaea'; ctx.strokeStyle='#555'; ctx.lineWidth=1.5;
-  if(isRect){
+  if(inp.isCirc){
+    ctx.beginPath(); ctx.ellipse(sx0+secW/2,yTop+secH/2,Math.min(secW,secH)/2,secH/2,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  } else if(isRect){
     ctx.fillRect(sx0,yTop,secW,secH); ctx.strokeRect(sx0,yTop,secW,secH);
   } else {
     /* T-section: draw flanges + web */
@@ -2949,11 +3017,12 @@ function buildInputsFromState(state){
     As_bot_ovr=(b/num(inp.spacing_bot,0))*bar_bot.a;
   }
   const concType=inp.concType||'NORMAL';
-  return {fc,fy,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override:!!inp.ecl_ovr,etl_override:!!inp.etl_ovr,
+  return Object.assign({fc,fy,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override:!!inp.ecl_ovr,etl_override:!!inp.etl_ovr,
     ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,
     nStrands,strand_area,dp,fpe,ductDia,
-    shN:shN_eff===0?4:shN_eff,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top};
+    shN:shN_eff===0?4:shN_eff,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top},
+    secType==='CIRCULAR'?circPayload(circParamsFromState(inp)):{});
 }
 
 /* Draw a simplified cross-section to a small canvas from a section state. */
@@ -2967,6 +3036,24 @@ function drawMiniCrossSection(canvas, state){
   const ctx=canvas.getContext('2d');
   ctx.scale(dpr,dpr);
   ctx.clearRect(0,0,cssW,cssH);
+  if(inp.secType==='CIRCULAR'){
+    const p=circParamsFromState(inp);
+    if(!(p.D>0)) return;
+    const L=circLayoutJS(p);
+    const R=p.D/2, scC=Math.min(cssW,cssH)*0.9/p.D, cx=cssW/2, cy=cssH/2;
+    ctx.fillStyle='#e0e0e0'; ctx.strokeStyle='#444'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(cx,cy,R*scC,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    if(p.d_tr>0){
+      ctx.save(); ctx.strokeStyle='#27ae60'; ctx.lineWidth=Math.max(p.d_tr*scC,1.2);
+      if(p.trans==='spiral') ctx.setLineDash([5,3]);
+      ctx.beginPath(); ctx.arc(cx,cy,(R-p.cover-p.d_tr/2)*scC,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    }
+    L.bars.forEach(b=>{
+      ctx.fillStyle=b.ring===1?'#2c3e50':'#8e44ad';
+      ctx.beginPath(); ctx.arc(cx+b.x*scC,cy-(R-b.d_top)*scC,Math.max(b.bar.d/2*scC*Math.sqrt(b.nb),1.6),0,Math.PI*2); ctx.fill();
+    });
+    return;
+  }
   const isRect=(inp.secType||'RECTANGULAR')==='RECTANGULAR';
   const b=num(inp.b,16), h=num(inp.h,27);
   const bw=isRect?b:num(inp.bw_input,12);
@@ -3083,6 +3170,16 @@ function drawMiniCrossSection(canvas, state){
 function summarizeReinf(state){
   const inp=state.inputs||{};
   const parts=[];
+  if(inp.secType==='CIRCULAR'){
+    const p=circParamsFromState(inp);
+    const L=circLayoutJS(p);
+    L.rings.forEach(rg=>parts.push('<div class="ps-reinf-line"><b>Ring '+rg.ring+':</b> '+rg.n+'-'+(rg.nb>1?rg.nb+'&times;':'')+'#'+rg.barN+' (A<sub>s</sub> = '+rg.As.toFixed(2)+' in&sup2;)</div>'));
+    if(p.shN>0) parts.push('<div class="ps-reinf-line"><b>'+(p.trans==='spiral'?'Spiral':'Hoops')+':</b> #'+p.shN+' @ '+p.s.toFixed(1)+'"'+(p.tie_legs>0?' + '+p.tie_legs+' tie leg(s) #'+p.tie_bar:'')+'</div>');
+    else parts.push('<div class="ps-reinf-line"><b>Transverse:</b> <em>none</em></div>');
+    const nS=parseInt(inp.nStrands)||0;
+    if(nS>0) parts.push('<div class="ps-reinf-line"><b>PT:</b> '+nS+' strands (A<sub>ps</sub> = '+(nS*(parseFloat(inp.strand_area)||0.217)).toFixed(3)+' in&sup2;)</div>');
+    return parts.join('');
+  }
   // Bottom
   const mrBot=state.mrData&&state.mrData.bot;
   const barN_bot=parseInt(inp.barN_bot)||7;
@@ -3145,6 +3242,12 @@ function summarizeReinf(state){
 
 function summarizeGeom(state){
   const inp=state.inputs||{};
+  if(inp.secType==='CIRCULAR'){
+    return '<div><b>Circular</b></div><div>D = '+(parseFloat(inp.circ_D)||0).toFixed(1)+'"</div>'
+      +'<div>cover = '+(parseFloat(inp.cover)||0).toFixed(2)+'"</div>'
+      +'<div>f\'<sub>c</sub> = '+(parseFloat(inp.fc)||0).toFixed(1)+' ksi</div>'
+      +'<div>f<sub>y</sub> = '+(parseFloat(inp.fy)||0).toFixed(0)+' ksi</div>';
+  }
   const isRect=(inp.secType||'RECTANGULAR')==='RECTANGULAR';
   const parts=[];
   parts.push('<div><b>'+(isRect?'Rect':'I-Sec')+'</b></div>');
@@ -3535,6 +3638,130 @@ function applyShearToState(state, result){
   state.inputs.shear_s = result.config.s;
 }
 
+/* ----- Circular-section optimizer (outer ring + hoops/spiral; inner ring kept as entered) ----- */
+// Like computeDCsForState, but a row whose Pu lies outside the P-M curve (Mr = 0, NG) counts as D/C = ∞.
+async function computeDCsCirc(state){
+  const empty = {dcMsag:NaN, dcMhog:NaN, dcV:NaN, dcT:NaN};
+  if(!(window.pywebview && window.pywebview.api)) return empty;
+  const demandRows=(state.demandRows||[]).map(d=>({
+    Pu:+d.Pu||0, Mu:+d.Mu||0, Vu:+d.Vu||0, Tu:+d.Tu||0, Vp:+d.Vp||0,
+    Ps:+d.Ps||0, Ms:+d.Ms||0,
+    x:d.x==null?null:+d.x, dp:d.dp==null?null:+d.dp, fpe:d.fpe==null?null:+d.fpe
+  }));
+  if(demandRows.length===0) return empty;
+  let res;
+  try{
+    res=JSON.parse(await window.pywebview.api.calculate(JSON.stringify({inputs:buildInputsFromState(state), demandRows, activeRow:0})));
+  }catch(e){ return Object.assign({},empty,{error:String(e)}); }
+  if(!res || res.error) return Object.assign({},empty,{error:res&&res.error});
+  const rows=res.row_results||[];
+  let wMsag=-1, wMhog=-1, wV=-1, wT=-1;
+  demandRows.forEach((d,i)=>{
+    const c=rows[i]; if(!c) return;
+    const MrAbs=Math.abs(c.Mr);
+    let dcM=null;
+    if(c.flexStatus==='NG' && MrAbs<1e-9 && (Math.abs(d.Mu)>1e-9 || Math.abs(d.Pu)>1e-9)) dcM=Infinity;
+    else if(MrAbs>0 && Math.abs(d.Mu)>1e-9) dcM=Math.abs(d.Mu)/MrAbs;
+    if(dcM!=null){ if(d.Mu>=0){ if(dcM>wMsag) wMsag=dcM; } else { if(dcM>wMhog) wMhog=dcM; } }
+    const Vcap = shearCapacityMethod==='simp'?c.Vr1 : (shearCapacityMethod==='b5'?c.Vr3 : c.Vr2);
+    if(Math.abs(d.Vu)>0) { const dc=Vcap>0?Math.abs(d.Vu)/Vcap:Infinity; if(dc>wV) wV=dc; }
+    if(Math.abs(d.Tu)>0 && c.torsionConsider) { const dc=c.Tr>0?Math.abs(d.Tu)/c.Tr:Infinity; if(dc>wT) wT=dc; }
+  });
+  return { dcMsag:wMsag<0?NaN:wMsag, dcMhog:wMhog<0?NaN:wMhog, dcV:wV<0?NaN:wV, dcT:wT<0?NaN:wT };
+}
+function circMaxBarsInRing(inp, barN, nb, minClear){
+  const p=circParamsFromState(Object.assign({}, inp, {circ_bar1:barN, circ_bundle1:nb, circ_n1:6, circ_ring2:false}));
+  const L=circLayoutJS(p); const rg=L.rings[0];
+  if(!rg || rg.r<=0) return 0;
+  const w=nb<=1?rg.bar.d:2*rg.bar.d;
+  // chord clear spacing 2r·sin(π/n) − w ≥ minClear
+  const x=(minClear+w)/(2*rg.r);
+  return x>=1?0:Math.floor(Math.PI/Math.asin(x));
+}
+// Smallest-A_st outer ring (bar size × count, then 2- and 3-bar bundles) meeting both moment targets.
+async function optimizeFlexureCirc(state, tgtPos, tgtNeg, params, setStatus){
+  const trial = JSON.parse(JSON.stringify(state));
+  const inp = trial.inputs;
+  const ag = parseFloat(inp.ag)||0.75;
+  const sizes = [5,6,7,8,9,10,11,14,18].filter(n=>n>=params.flex.minBar && n<=params.flex.maxBar);
+  const N_MIN = 6;  // practical minimum bars in a circular arrangement
+  let bestDC = Infinity;
+  const evalCfg = async (barN, n, nb)=>{
+    inp.circ_bar1=barN; inp.circ_n1=n; inp.circ_bundle1=nb;
+    const dcs=await computeDCsCirc(trial); await yieldFrame();
+    const v=x=>isNaN(x)?0:x;
+    const worst=Math.max(v(dcs.dcMsag), v(dcs.dcMhog));
+    if(worst<bestDC) bestDC=worst;
+    const pass=(isNaN(dcs.dcMsag)||dcs.dcMsag<=tgtPos) && (isNaN(dcs.dcMhog)||dcs.dcMhog<=tgtNeg);
+    return {pass, dcs};
+  };
+  for(const nb of [1,2,3]){
+    const cands=[];
+    const minAs=()=>cands.length?Math.min(...cands.map(c=>c.As)):Infinity;
+    for(const barN of sizes){
+      if(setStatus) setStatus('Circular ring: '+(nb>1?nb+'-bar bundles of ':'')+'#'+barN+'...');
+      const bar=BARS[barN]; const d_eq=bar.d*Math.sqrt(nb);
+      const minClear=Math.max(params.flex.minSpacing, 1.5*d_eq, 1.5*ag);
+      const nMax=circMaxBarsInRing(inp, barN, nb, minClear);
+      if(nMax<N_MIN) continue;
+      if(N_MIN*nb*bar.a>=1.05*minAs()) continue;
+      const top=await evalCfg(barN, nMax, nb);
+      if(!top.pass) continue;
+      // capacity rises with bar count → bisect for the fewest bars that pass
+      let lo=N_MIN-1, hi=nMax, hiRes=top;
+      while(hi-lo>1){
+        const mid=Math.floor((lo+hi)/2);
+        const r=await evalCfg(barN, mid, nb);
+        if(r.pass){ hi=mid; hiRes=r; } else lo=mid;
+      }
+      cands.push({barN, n:hi, nb, As:hi*nb*bar.a, dcs:hiRes.dcs});
+    }
+    if(cands.length){
+      // Within 5 % of the least steel, prefer fewer (larger) bars
+      const lim=1.05*minAs();
+      const best=cands.filter(c=>c.As<=lim).sort((p,q)=>p.n-q.n||p.As-q.As)[0];
+      inp.circ_bar1=best.barN; inp.circ_n1=best.n; inp.circ_bundle1=best.nb;
+      return { ok:true, config:{ kind:'circ', barN:best.barN, nBars:best.n, bundle:best.nb, As:best.As }, dc:Math.max(best.dcs.dcMsag||0,best.dcs.dcMhog||0), allDCs:best.dcs };
+    }
+  }
+  return { ok:false, config:null, dc:bestDC };
+}
+// Hoop/spiral bar (smallest first), cross-tie legs (fewest first, same bar as hoop), spacing (largest first).
+async function optimizeShearCirc(state, tgtV, tgtT, params){
+  const trial = JSON.parse(JSON.stringify(state));
+  let bestV = Infinity, bestT = Infinity;
+  const maxTies = Math.max(0, params.stir.maxLegs-2);
+  for(let shN = params.stir.minBar; shN <= params.stir.maxBar; shN++){
+    if(!BARS[shN]) continue;
+    for(let ties = 0; ties <= maxTies; ties++){
+      const step = Math.max(0.25, params.stir.sStep);
+      for(let s = params.stir.sMax; s >= params.stir.sMin - 1e-6; s -= step){
+        Object.assign(trial.inputs, {shN, shear_s:+s.toFixed(2), circ_tie_legs:ties, circ_tie_bar:shN});
+        const dcs = await computeDCsCirc(trial);
+        await yieldFrame();
+        if(isFinite(dcs.dcV) && dcs.dcV < bestV) bestV = dcs.dcV;
+        if(isFinite(dcs.dcT) && dcs.dcT < bestT) bestT = dcs.dcT;
+        const passV = isNaN(dcs.dcV) || dcs.dcV <= tgtV;
+        const passT = isNaN(dcs.dcT) || dcs.dcT <= tgtT;
+        if(passV && passT) return { ok:true, config:{ shN, ties, s:+s.toFixed(2) }, dc:{ v:dcs.dcV, t:dcs.dcT }, allDCs:dcs };
+      }
+    }
+  }
+  return { ok:false, config:null, dc:{ v:bestV, t:bestT } };
+}
+function describeCircFlexure(state){
+  const L=circLayoutJS(circParamsFromState(state.inputs||{}));
+  if(!L.rings.length) return { summary:'<em>none</em>', As:0 };
+  return { summary: L.rings.map(rg=>(rg.ring===1?'Outer':'Inner')+' ring '+rg.n+'-'+(rg.nb>1?rg.nb+'&times;':'')+'#'+rg.barN).join(', ')+' (A<sub>st</sub>='+L.Ast.toFixed(2)+' in&sup2;)', As:L.Ast };
+}
+function describeCircShear(state){
+  const p=circParamsFromState(state.inputs||{});
+  if(!p.shN) return { summary:'<em>none</em>', Av:0 };
+  const tb=BARS[p.tie_bar]||BARS[4];
+  const Av=2*(BARS[p.shN]||BARS[4]).a+p.tie_legs*tb.a;
+  return { summary:(p.trans==='spiral'?'Spiral':'Hoops')+' #'+p.shN+' @ '+p.s.toFixed(1)+'&quot;'+(p.tie_legs>0?' + '+p.tie_legs+' tie leg(s) #'+p.tie_bar:'')+' (A<sub>v</sub>='+Av.toFixed(2)+' in&sup2;)', Av };
+}
+
 /* Orchestrator: run flexure (bot/top as needed) and shear/torsion, then preview. */
 async function optimizeSection(idx){
   if(_optInFlight.has(idx)) return;
@@ -3558,6 +3785,10 @@ async function optimizeSection(idx){
     const state = sections[name];
     if(!state || !(state.demandRows||[]).length){
       setStatus('No demand rows G�� nothing to optimize.', 'fail');
+      return;
+    }
+    if((state.inputs||{}).secType==='CIRCULAR'){
+      await optimizeSectionCirc(name, state, params, setStatus);
       return;
     }
     setStatus('Analyzing demands...');
@@ -3638,6 +3869,60 @@ async function optimizeSection(idx){
 }
 
 /* ----- Preview modal ----- */
+async function optimizeSectionCirc(name, state, params, setStatus){
+  const hasMpos = state.demandRows.some(d=>+d.Mu>0);
+  const hasMneg = state.demandRows.some(d=>+d.Mu<0);
+  const hasP    = state.demandRows.some(d=>Math.abs(+d.Pu)>0);
+  const hasV    = state.demandRows.some(d=>Math.abs(+d.Vu)>0);
+  const hasT    = state.demandRows.some(d=>Math.abs(+d.Tu)>0);
+  if(!(hasMpos||hasMneg||hasP||hasV||hasT)){
+    setStatus('All demands are zero — nothing to optimize.', 'fail');
+    return;
+  }
+  setStatus('Baseline D/C...');
+  const beforeDCs = await computeDCsCirc(state);
+  const trial = JSON.parse(JSON.stringify(state));
+  const results = { flexBot:null, flexTop:null, shear:null };
+  if(hasMpos||hasMneg||hasP){
+    results.flexBot = await optimizeFlexureCirc(trial, params.tgt.mpos, params.tgt.mneg, params, setStatus);
+    if(results.flexBot.ok){
+      const c=results.flexBot.config;
+      Object.assign(trial.inputs, {circ_bar1:c.barN, circ_n1:c.nBars, circ_bundle1:c.bundle});
+    }
+  }
+  if(hasV || hasT){
+    setStatus('Optimizing hoops/spiral...');
+    results.shear = await optimizeShearCirc(trial, params.tgt.v, params.tgt.t, params);
+    if(results.shear.ok){
+      const c=results.shear.config;
+      Object.assign(trial.inputs, {shN:c.shN, shear_s:c.s, circ_tie_legs:c.ties, circ_tie_bar:c.shN});
+    }
+  }
+  setStatus('Finalizing...');
+  const afterDCs = await computeDCsCirc(trial);
+  setStatus('');
+  openOptPreview({
+    sectionName: name,
+    labels: { bot:'Longitudinal (outer ring optimized)', top:null, shear:'Transverse' },
+    before: { config: {bot:describeCircFlexure(state), shear:describeCircShear(state)}, dcs: beforeDCs, state: state },
+    after:  { config: {bot:describeCircFlexure(trial), shear:describeCircShear(trial)}, dcs: afterDCs, state: trial },
+    results: results,
+    targets: params.tgt,
+    active: { hasMpos:hasMpos||hasMneg||hasP, hasMneg:false, hasV, hasT },
+    extraWarn: (trial.inputs.circ_trans_type==='spiral' && results.shear && !results.shear.ok && hasT)
+      ? 'Spiral is not counted as torsion reinforcement — switch to circular hoops if torsion must be considered.' : null,
+    onApply: ()=>{
+      sections[name] = JSON.parse(JSON.stringify(trial));
+      markDirty();
+      if(name === activeSection){
+        try{ loadSectionState(name); }catch(e){ console.error('reload after optimize failed:',e); }
+      }
+      refreshProjectSummary();
+      setStatus('Applied.', 'ok');
+    },
+    onCancel: ()=>{ setStatus(''); }
+  });
+}
 function openOptPreview(data){
   const fmtDC = (dc, tgt) => {
     if(!isFinite(dc) || dc<0) return { cls:'na', txt:'&mdash;', tgtTxt: 'n/a' };
@@ -3649,14 +3934,13 @@ function openOptPreview(data){
   if(title) title.textContent = 'Optimization result G�� ' + data.sectionName;
   if(sub)   sub.innerHTML = 'Proposed changes shown below. Click <b>Apply</b> to write them into this section or <b>Cancel</b> to discard.';
 
-  const beforeHtml =
-    '<div class="opt-line"><b>Bottom flexure:</b> '+data.before.config.bot.summary+'</div>'+
-    '<div class="opt-line"><b>Top flexure:</b> '+data.before.config.top.summary+'</div>'+
-    '<div class="opt-line"><b>Stirrups:</b> '+data.before.config.shear.summary+'</div>';
-  const afterHtml =
-    '<div class="opt-line"><b>Bottom flexure:</b> '+data.after.config.bot.summary+'</div>'+
-    '<div class="opt-line"><b>Top flexure:</b> '+data.after.config.top.summary+'</div>'+
-    '<div class="opt-line"><b>Stirrups:</b> '+data.after.config.shear.summary+'</div>';
+  const lb = data.labels || { bot:'Bottom flexure', top:'Top flexure', shear:'Stirrups' };
+  const cfgHtml = cfg =>
+    '<div class="opt-line"><b>'+lb.bot+':</b> '+cfg.bot.summary+'</div>'+
+    (lb.top?'<div class="opt-line"><b>'+lb.top+':</b> '+cfg.top.summary+'</div>':'')+
+    '<div class="opt-line"><b>'+lb.shear+':</b> '+cfg.shear.summary+'</div>';
+  const beforeHtml = cfgHtml(data.before.config);
+  const afterHtml = cfgHtml(data.after.config);
   document.getElementById('optPreviewBefore').innerHTML = beforeHtml;
   document.getElementById('optPreviewAfter').innerHTML  = afterHtml;
 
@@ -3673,7 +3957,7 @@ function openOptPreview(data){
 
   const warns = [];
   if(data.active.hasMpos && data.results.flexBot && !data.results.flexBot.ok){
-    warns.push('Bottom flexure: target M<sup>+</sup> &le; '+data.targets.mpos.toFixed(2)+' not reached. Best D/C = '+(isFinite(data.results.flexBot.dc)?data.results.flexBot.dc.toFixed(2):'&infin;')+' within constraints (max bar #'+optParams.flex.maxBar+', up to '+optParams.flex.maxRows+' rows).');
+    warns.push((data.labels?lb.bot+': moment targets (M<sup>+</sup> &le; '+data.targets.mpos.toFixed(2)+', M<sup>&minus;</sup> &le; '+data.targets.mneg.toFixed(2)+')':'Bottom flexure: target M<sup>+</sup> &le; '+data.targets.mpos.toFixed(2))+' not reached. Best D/C = '+(isFinite(data.results.flexBot.dc)?data.results.flexBot.dc.toFixed(2):'&infin;')+' within constraints (max bar #'+optParams.flex.maxBar+(data.labels?', up to 3-bar bundles':', up to '+optParams.flex.maxRows+' rows')+').');
   }
   if(data.active.hasMneg && data.results.flexTop && !data.results.flexTop.ok){
     warns.push('Top flexure: target M<sup>&minus;</sup> &le; '+data.targets.mneg.toFixed(2)+' not reached. Best D/C = '+(isFinite(data.results.flexTop.dc)?data.results.flexTop.dc.toFixed(2):'&infin;')+' within constraints.');
@@ -3682,6 +3966,7 @@ function openOptPreview(data){
     const v = data.results.shear.dc.v, t = data.results.shear.dc.t;
     warns.push('Shear/torsion: targets not reached. Best Shear D/C = '+(isFinite(v)?v.toFixed(2):'&infin;')+', Torsion D/C = '+(isFinite(t)?t.toFixed(2):'&mdash;')+'.');
   }
+  if(data.extraWarn) warns.push(data.extraWarn);
   document.getElementById('optPreviewWarnings').innerHTML = warns.length ? '<div class="opt-warn">'+warns.join('<br>')+'</div>' : '';
 
   _optPreviewApply = data.onApply;
@@ -3830,6 +4115,7 @@ const INPUT_FIELD_KINDS = {
   // Geometry — length
   b_flange:'length', h_total:'length', b_web:'length',
   hf_top:'length', hf_bot:'length', cover:'length',
+  circ_D:'length', circ_Dr2:'length',
   ag:'length',
   // Materials — stress
   fc:'stress', fy:'stress', fy_trans:'stress',
@@ -3910,7 +4196,7 @@ function convertRenderedOutputs(root) {
     }
     const display = fromEngine(engineV, kind);
     valueNode.textContent = display.toFixed(decimals);
-    unitSpan.textContent = unitLabel(kind);
+    unitSpan.innerHTML = unitLabel(kind);
   });
 }
 
@@ -4207,11 +4493,11 @@ function gatherInputs(){
   // f'ci: prefer the new Checks-panel input, else PT loss-card input, else f'c
   const fci=pickF('pt_fci_chk',null)??pickF('pt_fci',fc);
 
-  return {fc,fci,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
+  return Object.assign({fc,fci,fy,fy_trans,Ec,wc,K1,concType,Es,fpu,fpy,Ept,ecl,etl,ecl_override,etl_override,ag,lam,phi_v,gamma_e,codeEdition,sectionClass,secType,memberType,
     astm_spec,factor_overrides,
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,nStrands,strand_area,dp,fpe,ductDia:ductDia,
     shN:(shN===0)?4:shN,shear_legs,s_shear,tN,s_torsion,at_add_bar_N,s_at_add,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top,
-    crack_mode, pt_flags, pt_profile, pt_loss_summary};
+    crack_mode, pt_flags, pt_profile, pt_loss_summary}, secType==='CIRCULAR'?circPayload(circParamsFromDOM()):{});
 }
 
 function runAllCalculations(){
@@ -4417,6 +4703,7 @@ function updateFactorsDisplay(res){
 }
 
 function renderFlexure(fl,inp,dem){
+  if(inp.isCirc){ renderFlexureCirc(fl,inp,dem); return; }
   const Pu=dem.Pu, Mu=dem.Mu, Ms=dem.Ms, Ps=dem.Ps;
   const isRect=inp.isRect, hasPT=inp.hasPT;
   const b=parseFloat(document.getElementById('b_flange').value), h=parseFloat(document.getElementById('h_total').value);
@@ -4580,6 +4867,137 @@ function renderFlexure(fl,inp,dem){
   if(hasPT){o+=R('A<sub>ps</sub>',F(Aps,3),'in&sup2;');o+=R('d<sub>p</sub> (from comp. face)',F(fl.dp_cf!=null?fl.dp_cf:dp,2),'in');}
   o+=R('E<sub>c</sub>',F(Ec,1),'ksi');
   o+=R('d<sub>e</sub> (effective depth)',F(fl.de,4),'in');
+  document.getElementById('sectionProps').innerHTML=o;
+}
+
+/* ─── Circular section: flexure / crack control / service / properties panels ─── */
+function circBarTableHTML(bars, c, title){
+  let t=`<div style="margin-top:6px;font-weight:bold;">${title}</div>`;
+  t+='<table style="font-size:0.85em;border-collapse:collapse;margin:4px 0;width:100%;"><tr style="border-bottom:1px solid #ccc;"><th style="padding:2px 6px;">d (in)</th><th>n</th><th>A<sub>s</sub> (in&sup2;)</th><th>&epsilon;<sub>s</sub></th><th>f<sub>s</sub> (ksi)</th><th>F (kip)</th><th>zone</th></tr>';
+  (bars||[]).forEach(b=>{
+    t+=`<tr><td style="padding:2px 6px;text-align:center;">${F(b.d_cf,3)}</td><td style="text-align:center;">${b.n!=null?b.n:''}</td><td style="text-align:center;">${F(b.As,3)}</td><td style="text-align:center;">${F(b.es,6)}</td><td style="text-align:center;">${F(b.fs,1)}</td><td style="text-align:center;">${F(b.F,1)}</td><td style="text-align:center;">${b.d_cf<c?'comp.':'tens.'}</td></tr>`;
+  });
+  return t+'</table>';
+}
+function circTorsionNoteHTML(tor, inp){
+  let s=`<div class="rpt-note" style="margin-top:8px;border-left:3px solid #c0392b;padding-left:8px;"><b>Circular-section torsion geometry</b> (AASHTO 5.7.2.1, 5.7.3.6.2: for solid sections A<sub>o</sub> = area enclosed by the centreline of b<sub>e</sub> = A<sub>cp</sub>/p<sub>c</sub>; 5.7.3.6.3: p<sub>h</sub> = perimeter of the centreline of the closed transverse torsion reinforcement):<ul style="margin:4px 0 0 18px;padding:0;">
+    <li>A<sub>cp</sub> = &pi;D&sup2;/4, p<sub>c</sub> = &pi;D; b<sub>e</sub> = A<sub>cp</sub>/p<sub>c</sub> = D/4; A<sub>o</sub> = &pi;(D&minus;b<sub>e</sub>)&sup2;/4 (same b<sub>e</sub> approach as the rectangular section).</li>
+    <li>p<sub>h</sub> = &pi;D<sub>h</sub>, D<sub>h</sub> = hoop centreline diameter = ${F(tor.circ_Dh!=null?tor.circ_Dh:0,3)} in.</li>
+    <li>Only the closed circular hoop is counted as torsion reinforcement (A<sub>t</sub> = one hoop leg); interior cross-ties are not counted.</li>`;
+  if(inp.circ_spiral) s+=`<li style="color:#c0392b"><b>Spiral:</b> not listed as torsion reinforcement in AASHTO 5.7.2.3 &rarr; T<sub>n</sub> = 0. ${tor.consider?'Torsion must be considered for this row &mdash; provide closed hoops.':''}</li>`;
+  return s+'</ul></div>';
+}
+function renderFlexureCirc(fl,inp,dem){
+  const Pu=dem.Pu, Mu=dem.Mu, Ms=dem.Ms, Ps=dem.Ps;
+  const ci=fl.circ||{}, hasPT=inp.hasPT, D=inp.D;
+  const compFace=fl.comp_face||'top';
+  let o='';
+  o+=`<div class="rpt-note" style="margin-bottom:6px;">Circular section: M<sub>n</sub> by <b>strain compatibility</b> at every bar group (no single d); compression block = circular segment of depth a = &beta;<sub>1</sub>c.</div>`;
+  o+=R('Compression face',BI(compFace==='top'?'TOP (M<sub>u</sub> &ge; 0, sagging)':'BOTTOM (M<sub>u</sub> &lt; 0, hogging)'));
+  o+=R('Diameter, D',F(D,2),'in');
+  o+=R('Total longitudinal steel, A<sub>st</sub>',F(ci.Ast,3),'in&sup2;');
+  o+=R('&alpha;<sub>1</sub> (stress block factor)',F(fl.alpha1,4));
+  o+=R('&beta;&#8321;',F(fl.beta1,4));
+  o+=R('Neutral axis, c <small>(pure bending)</small>',F(fl.c,4),'in');
+  o+=R('Stress block, a = &beta;&#8321;&middot;c',F(fl.a,4),'in');
+  o+=R('Compression segment area, A<sub>comp</sub>',F(ci.A_comp,2),'in&sup2;');
+  o+=R('Segment centroid from comp. face, &#562;<sub>c</sub>',F(ci.y_cc,3),'in');
+  o+=R('C<sub>c</sub> = &alpha;<sub>1</sub>f\'<sub>c</sub>A<sub>comp</sub>',F(ci.Cc,1),'kip');
+  o+=R('d<sub>t</sub> (extreme tension bar'+(hasPT?' / tendon':'')+')',F(fl.dt,4),'in');
+  o+=R('Net tensile strain, &epsilon;<sub>t</sub> = 0.003(d<sub>t</sub>&minus;c)/c',F(fl.eps_t,6));
+  o+=R('Section status',fl.sec_status+' '+(fl.sec_status==='TENSION CONTROLLED'?BI('TC'):fl.sec_status==='COMPRESSION CONTROLLED'?BW('CC'):BW('TR')));
+  o+=R('&phi; (flexure)',F(fl.phi_f,4));
+  if(hasPT) o+=R('f<sub>ps</sub>',F(fl.fps_calc,2),'ksi');
+  o+=circBarTableHTML(ci.flex_bars,fl.c,'Bar groups at pure-bending equilibrium');
+  o+=SH('Moment Capacity');
+  o+=R('M<sub>n</sub> <small>(pure bending, P<sub>u</sub>=0)</small>',F(fl.Mn,1),'kip-in');
+  o+=R('M<sub>r</sub> = &phi;M<sub>n</sub> <small>(P<sub>u</sub>=0)</small>',F(fl.Mr,1),'kip-in');
+  o+=SH('Combined Flexure + Axial (P-M Interaction)');
+  o+=R('P<sub>u</sub> (coexistent axial)',F(Pu,1),'kip');
+  o+=R('M<sub>r</sub> at P<sub>u</sub> <small>(from P-M curve)</small>',F(fl.Mr_atPu,1),'kip-in');
+  o+=R('M<sub>u</sub> (demand)',F(Mu,1),'kip-in');
+  const Mr_gov=Math.abs(Pu)>0.01?fl.Mr_atPu:fl.Mr;
+  o+=R('M<sub>r</sub> &ge; M<sub>u</sub>',BG(Mr_gov>=Math.abs(Mu))+' &nbsp;('+F(Mr_gov/Math.abs(Mu)*100,1)+'%)');
+  o+=R('P<sub>n,max</sub> factor',F(ci.pn_factor,2)+' '+BI(inp.circ_spiral?'spiral, Eq. 5.6.4.4-2':(inp.circ_confined?'hoops (welded/mech./hooked), Eq. 5.6.4.4-2':'lap-spliced hoops/ties, Eq. 5.6.4.4-3')));
+  o+=R('d<sub>v</sub> = max(0.9d<sub>e</sub>, 0.72D)',F(fl.dv,4),'in');
+  document.getElementById('flexResults').innerHTML=o;
+
+  o=SH('Minimum Flexure Reinforcement (5.6.3.3)');
+  o+=R('&gamma;&#8321; <small>(cracking variability)</small>',F(fl.gamma1,2));
+  o+=R('&gamma;&#8322; <small>(prestress, bonded)</small>',F(fl.gamma2,2));
+  o+=R('&gamma;&#8323; <small>(reinf. ratio, '+document.getElementById('astm_spec').value+')</small>',F(fl.gamma3,2));
+  o+=R('f<sub>r</sub> = 0.24&radic;f\'c',F(fl.fr,4),'ksi');
+  o+=R('f<sub>cpe</sub> <small>(prestress at tension fiber)</small>',F(fl.fcpe,4),'ksi');
+  o+=R('S<sub>c</sub> = &pi;D&sup3;/32',F(fl.Sc,1),'in&sup3;');
+  o+=R('M<sub>cr</sub> = &gamma;&#8323;(&gamma;&#8321;f<sub>r</sub> + &gamma;&#8322;f<sub>cpe</sub>)S<sub>c</sub>',F(fl.Mcr,1),'kip-in');
+  o+=R('1.33M<sub>u</sub>',F(1.33*Math.abs(Mu),1),'kip-in');
+  o+=R('Governing',F(fl.Mcond,1),'kip-in');
+  o+=R('M<sub>r</sub> &ge; min(1.33M<sub>u</sub>, M<sub>cr</sub>)',BG(fl.min_flex_ok));
+  o+=SH('Crack Control Spacing (5.6.7)');
+  o+=R('d<sub>c</sub> = D &minus; d<sub>ext</sub>',F(fl.dc,4),'in');
+  o+=R('&beta;<sub>s</sub>',F(fl.beta_s,4));
+  o+=R('Crack-control mode',BI(fl.crack_mode||'capped'));
+  o+=R('f<sub>ss</sub> capped (0.6f<sub>y</sub>)',F(fl.fss_simp,1),'ksi');
+  o+=R('f<sub>ss</sub> actual (cracked section)',F(fl.fss,2),'ksi');
+  o+=R('s<sub>crack</sub> (capped)',F(fl.s_crack_capped,2),'in');
+  o+=R('s<sub>crack</sub> (actual)',F(fl.s_crack_actual,2),'in');
+  o+=R('s<sub>crack</sub> governing',BI(F(fl.s_crack,2)+' in'));
+  o+=R('Outer-ring bar spacing (c/c arc) <small>information</small>',F(ci.s_bar,2)+' '+(ci.crack_spacing_ok?BI('&le; s<sub>crack</sub>'):BW('&gt; s<sub>crack</sub>')),'');
+  o+=SH('Spacing of Reinforcement (5.10.3)');
+  o+=R('s<sub>min</sub> (clear)',F(fl.s_min_ck,3),'in');
+  o+=R('Outer-ring clear spacing',F(ci.s_clear,3)+' '+BG(ci.s_clear>=fl.s_min_ck-1e-3),'');
+  o+=R('s<sub>max</sub>',F(fl.s_max_ck,1),'in');
+  const tr=ci.trans||{};
+  if(tr.confined&&tr.rho_s!=null){
+    o+=SH('Volumetric Ratio (Eq. 5.6.4.6-1)');
+    o+=R('&rho;<sub>s</sub> = 4A<sub>sp</sub>/(D<sub>c</sub>s)',F(tr.rho_s,5));
+    o+=R('&rho;<sub>s,min</sub> = 0.45(A<sub>g</sub>/A<sub>c</sub>&minus;1)f\'<sub>c</sub>/f<sub>yh</sub> <small>(f<sub>yh</sub> = '+F(tr.fyh,1)+' ksi &le; 75)</small>',F(tr.rho_s_min,5));
+    o+=R('&rho;<sub>s</sub> &ge; &rho;<sub>s,min</sub>',BG(tr.rho_s_ok));
+  }
+  if(tr.detailing&&tr.detailing.length){
+    o+=SH('Compression-Member Detailing <small>(information)</small>');
+    tr.detailing.forEach(d=>{ o+=R(d.item+' <small>('+d.ref+')</small>',d.value+' '+(d.ok?BI(d.limit):BW(d.limit))); });
+  }
+  document.getElementById('rebarChecks').innerHTML=o;
+
+  o=SH('Cracked Section Analysis (circular)');
+  const servCompFace=fl.serv_comp_face||'top';
+  o+=R('Service comp. face',BI(servCompFace==='top'?'TOP (M<sub>s</sub> &ge; 0, sagging)':'BOTTOM (M<sub>s</sub> &lt; 0, hogging)'));
+  o+=`<div class="rpt-note">Concrete: circular segment of depth c<sub>cr</sub>; bars below NA transformed as n&middot;A<sub>s</sub>, above NA as (n&minus;1)&middot;A<sub>s</sub>.</div>`;
+  o+=R('Modular ratio, n <small>(E<sub>s</sub>/E<sub>c</sub>)</small>',F(fl.n_mod,3));
+  if(hasPT) o+=R('n<sub>pt</sub>A<sub>ps</sub>',F(fl.nAps,3),'in&sup2;');
+  o+=R('Cracked NA depth',F(fl.c_cr,3),'in');
+  o+=R('I<sub>cr</sub>',F(fl.Icr,1),'in&#8308;');
+  o+=R('I<sub>g</sub> = &pi;D&#8308;/64',F(fl.Ig,1),'in&#8308;');
+  o+=R('I<sub>cr</sub> / I<sub>g</sub>',F(fl.Icr/fl.Ig,4));
+  o+=SH('Service Stresses');
+  o+=R('M<sub>s</sub>',F(Ms,1),'kip-in');
+  o+=R('P<sub>s</sub>',F(Ps,1),'kip');
+  o+=R('Additional BM from axial',F(fl.addlBM,1),'kip-in');
+  o+=R('f<sub>ss</sub> (extreme tension bar)',F(fl.fss,2),'ksi');
+  if(hasPT) o+=R('f<sub>ps,serv</sub> (strand stress)',F(fl.fps_serv,2),'ksi');
+  o+=R('Rebar strain',F(fl.eps_rb,6));
+  o+=R('Section curvature',F(fl.curv,8),'1/in');
+  o+=SH('Effective Moment of Inertia <small>(AASHTO 5.6.3.5.2)</small>');
+  o+=R('I<sub>eff</sub>',F(fl.Ieff,1),'in&#8308;');
+  o+=R('I<sub>eff</sub> / I<sub>g</sub>',F(fl.Ieff/fl.Ig,4));
+  document.getElementById('serviceResults').innerHTML=o;
+  drawServiceDiagram(fl, inp);
+
+  o='';
+  o+=R('Section type','Circular');
+  o+=R('Diameter, D',F(D,2),'in');
+  o+=R('A<sub>g</sub> = &pi;D&sup2;/4',F(inp.Ag,2),'in&sup2;');
+  o+=R('I<sub>g</sub> = &pi;D&#8308;/64',F(inp.Ig,1),'in&#8308;');
+  o+=R('Cover (clear to transverse)',F(inp.cover,2),'in');
+  (ci.rings||[]).forEach(rg=>{
+    o+=R('Ring '+rg.ring,rg.n+' &times; '+(rg.bundle>1?rg.bundle+'-':'')+'#'+rg.barN+', D<sub>r</sub> = '+F(rg.Dr,3)+' in, A<sub>s</sub> = '+F(rg.As,3)+' in&sup2;');
+  });
+  o+=R('&rho;<sub>g</sub> = A<sub>st</sub>/A<sub>g</sub>',F(100*(ci.rho_g||0),2)+' %');
+  o+=R('A<sub>s</sub> tension half (for &epsilon;<sub>s</sub>, long. check)',F(fl.As,3),'in&sup2;');
+  if(hasPT){o+=R('A<sub>ps</sub>',F(inp.Aps,3),'in&sup2;');o+=R('d<sub>p</sub> (from comp. face)',F(fl.dp_cf,2),'in');}
+  o+=R('E<sub>c</sub>',F(inp.Ec,1),'ksi');
+  o+=R('d<sub>e</sub> = D/2 + D<sub>r</sub>/&pi;'+(hasPT?' (PT-weighted)':''),F(fl.de,4),'in');
   document.getElementById('sectionProps').innerHTML=o;
 }
 
@@ -4793,16 +5211,17 @@ function renderShear(sh,inp,dem){
   const Aps=inp.Aps,hasPT=inp.hasPT;
   const Aps_t=sh.Aps_tens!==undefined?sh.Aps_tens:Aps;
   const shearBarIdx=parseInt(document.getElementById('shear_bar').value);
-  const Av=(shearBarIdx===0)?0:parseFloat(document.getElementById('shear_legs').value)*(BARS[shearBarIdx]||BARS[4]).a;
+  const Av=inp.isCirc?inp.Av:((shearBarIdx===0)?0:parseFloat(document.getElementById('shear_legs').value)*(BARS[shearBarIdx]||BARS[4]).a);
   const s_shear=parseFloat(document.getElementById('shear_s').value);
   const ductDia=parseFloat(document.getElementById('duct_dia').value);
   const fpo=sh.fpo, dv=sh.dv, bv=sh.bv;
 
   let o=SH('Method 1 &mdash; Simplified (5.7.3.4.1)');
+  if(sh.m1_applicable===false) o+=`<div class="vnmax-cap-warn">&#9888; Method 1 is outside the scope of AASHTO 5.7.3.4.1 for this section (${sh.m1_na_reason}). Use Method 2 or 3.</div>`;
   o+=R('&theta;','45','&deg;');
   o+=R('&beta;','2.0');
   o+=R('V<sub>c</sub> = 0.0316&beta;&lambda;&radic;f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub> <small>(5.7.3.3-3)</small>',F(sh.Vc1,2),'kip');
-  o+=R('V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot&theta;/s&middot;&lambda;<sub>duct</sub> <small>(C5.7.3.3-1)</small>',F(sh.Vs1,2),'kip');
+  o+=R('V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot&theta;/s&middot;&lambda;<sub>duct</sub> <small>(5.7.3.3-4, &alpha;=90&deg;)</small>',F(sh.Vs1,2),'kip');
   o+=R('V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> (calculated)',F(sh.Vn1_uncapped,2),'kip');
   o+=R('V<sub>n,max</sub> = 0.25f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub>+V<sub>p</sub> <small>(5.7.3.3-2)</small>',F(sh.Vnmax,2),'kip');
   if(sh.Vn1_capped){
@@ -4864,7 +5283,7 @@ function renderShear(sh,inp,dem){
   o+=R('&beta; (used)',F(sh.bt2,4));
   o+=R('&theta; = 29+3500&epsilon;<sub>s</sub> <small>(5.7.3.4.2-3)</small>',F(sh.th2,2),'&deg;');
   o+=R('V<sub>c</sub> <small>(5.7.3.3-3)</small>',F(sh.Vc2,2),'kip');
-  o+=R('V<sub>s</sub> <small>(C5.7.3.3-1)</small>',F(sh.Vs2,2),'kip');
+  o+=R('V<sub>s</sub> <small>(5.7.3.3-4, &alpha;=90&deg;)</small>',F(sh.Vs2,2),'kip');
   o+=R('V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> (calculated)',F(sh.Vn2_uncapped,2),'kip');
   o+=R('V<sub>n,max</sub> = 0.25f\'c&middot;b<sub>v</sub>&middot;d<sub>v</sub>+V<sub>p</sub> <small>(5.7.3.3-2)</small>',F(sh.Vnmax,2),'kip');
   if(sh.Vn2_capped){
@@ -4891,7 +5310,7 @@ function renderShear(sh,inp,dem){
   o+=R('v<sub>u</sub>/f\'<sub>c</sub>',F(sh.vufc,4));
   o+=R('s<sub>xe</sub> (capped &le; 80 in.)',F(sh.sxe,2),'in');
   const exLim=sh.b5_max_ex;
-  o+=R('Table limit (&epsilon;<sub>x</sub> &le; '+F(exLim,3)+')',sh.b5_valid?BG(true):BG(false,'&epsilon;<sub>x</sub> = '+F(sh.ex_b5,6)+' &gt; '+F(exLim,3)+' &mdash; METHOD NOT VALID',''));
+  o+=R('Method 3 validity',sh.b5_valid?BG(true):BG(false,(sh.b5_invalid_reason||('&epsilon;<sub>x</sub> = '+F(sh.ex_b5,6)+' &gt; '+F(exLim,3)))+' &mdash; METHOD NOT VALID',''));
   if(sh.b5_valid) o+=R('Iterations',sh.n_iter);
   if(sh.b5_valid){
     o+=SH('Table Selection');
@@ -4954,7 +5373,7 @@ function renderShear(sh,inp,dem){
     o='<h4>'+torsLabel+'</h4>';
     o+=R('A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub> (capacity)',F(sh.long_cap,1),'kip');
     o+=R('|M<sub>u</sub>|/(d<sub>v</sub>&phi;<sub>f</sub>)',F(sh.ld_M,1),'kip');
-    o+=R('0.5N<sub>u</sub>/&phi;<sub>c</sub> <small>(+tension)</small>',F(sh.ld_N,1),'kip');
+    o+=R('0.5N<sub>u</sub>/&phi;<sub>N</sub> <small>(+tension; &phi;<sub>c</sub> compression, &phi;<sub>f</sub> tension)</small>',F(sh.ld_N,1),'kip');
     if(sh.torsion_consider){
       o+=R('Torsion term: 0.45p<sub>h</sub>T<sub>u</sub>/(2A<sub>o</sub>&phi;)',F(sh.ld_T_tors,1),'kip');
     }
@@ -5019,12 +5438,25 @@ function renderShear(sh,inp,dem){
   o='';
   o+=SH('d<sub>v</sub> Effective Shear Depth (5.7.2.8)');
   const fl2=window._lastFlex||{};
+  if(inp.isCirc){
+    const ci2=fl2.circ||{};
+    o+=`<div class="rpt-note">Circular section: b<sub>v</sub> = D (5.7.2.8), d<sub>v</sub> = max(0.9d<sub>e</sub>, 0.72D) (5.7.2.8 / C5.7.2.8), d<sub>e</sub> = D/2 + D<sub>r</sub>/&pi; (C5.7.2.8).</div>`;
+    o+=R('D<sub>r</sub> (bar-circle diameter'+((ci2.rings||[]).length>1?', A<sub>s</sub>-weighted':'')+')',F(ci2.Dr_eff||0,4),'in');
+    o+=R('d<sub>e</sub>',F(fl2.de||0,4),'in');
+    o+=R('0.9d<sub>e</sub>',F(fl2.dv3||0,4),'in');
+    o+=R('0.72D',F(fl2.dv2||0,4),'in');
+    o+=R('<b>d<sub>v</sub> = max of above</b>',F(dv,4),'in');
+    o+=R('b<sub>v</sub> = D',F(bv,2),'in');
+    o+=R('A<sub>v</sub> = 2A<sub>'+(inp.circ_spiral?'sp':'hoop')+'</sub> + n<sub>ties</sub>A<sub>tie</sub>',F(Av,3),'in&sup2;');
+    o+=R('A<sub>s</sub> in &epsilon;<sub>s</sub> (tension half of bars)',F(fl2.As||0,3),'in&sup2;');
+  } else {
   o+=R('d<sub>e</sub>',F(fl2.de||0,4),'in');
   o+=R('M<sub>n</sub>/(A<sub>s</sub>f<sub>y</sub>+A<sub>ps</sub>f<sub>ps</sub>)',F(fl2.dv1||0,4),'in');
   o+=R('0.72h',F(fl2.dv2||0,4),'in');
   o+=R('0.9d<sub>e</sub>',F(fl2.dv3||0,4),'in');
   o+=R('<b>d<sub>v</sub> = max of above</b>',F(dv,4),'in');
   o+=R('b<sub>v</sub> (effective web width)',F(bv,2),'in');
+  }
   if(sh.lambda_duct<1){
     o+=SH('PT Duct Reduction (5.7.3.3-5)');
     o+=R('&delta; (grouted duct)','2.0');
@@ -5072,9 +5504,9 @@ function renderTorsion(tor,inp,dem){
   o=SH('Interaction Check');
   o+=R('Torsion shear comp. (0.9p<sub>h</sub>T<sub>u</sub>/2A<sub>o</sub>)',F(tor.tors_shear,2),'kip');
   o+=R('Effective shear, V<sub>eff</sub>',F(tor.Veff,2),'kip');
-  o+=R('Combined stress',F(tor.comb_stress,4),'ksi');
+  o+=R('Combined stress <small>(supplementary, not an AASHTO eq.)</small>',F(tor.comb_stress,4),'ksi');
   o+=R('Limit (0.25f\'c)',F(tor.comb_lim,2),'ksi');
-  o+=R('Combined check',BG(tor.comb_ok));
+  o+=R('Combined check <small>(information)</small>',BG(tor.comb_ok));
   o+=SH('Modified Transverse Reinforcement');
   o+=R('A<sub>v</sub>/s for shear',F(tor.Av_s_shear,5),'in&sup2;/in');
   o+=R('2A<sub>t</sub>/s for torsion',F(2*tor.At_s_tors,5),'in&sup2;/in');
@@ -5095,7 +5527,9 @@ function renderTorsion(tor,inp,dem){
   //   D18 — Tcr uses full cross-section Acp/pc; Tn (post-cracking) uses
   //         Ao based on the web rectangle only (not the full envelope).
   const isRect_lr=(inp.secType||'RECTANGULAR')==='RECTANGULAR';
-  if(!isRect_lr && tor.consider){
+  if(inp.isCirc){
+    o+=circTorsionNoteHTML(tor, inp);
+  } else if(!isRect_lr && tor.consider){
     o+=`<div class="rpt-note" style="margin-top:8px;border-left:3px solid #c0392b;padding-left:8px;"><b>I-section torsion assumptions:</b><ul style="margin:4px 0 0 18px;padding:0;">
       <li><b>T<sub>cr</sub> (cracking torque):</b> computed from the FULL cross-section A<sub>cp</sub> and outer perimeter p<sub>c</sub>.</li>
       <li><b>T<sub>n</sub> (post-cracking nominal torsion):</b> A<sub>o</sub> is based on the WEB rectangle only (treated as its own sub-section: A<sub>cp,web</sub>=b<sub>w</sub>·h, p<sub>c,web</sub>=2(b<sub>w</sub>+h), b<sub>e,web</sub>=A<sub>cp,web</sub>/p<sub>c,web</sub>, A<sub>o</sub>=(b<sub>w</sub>−b<sub>e,web</sub>)·(h−b<sub>e,web</sub>)). p<sub>h</sub> is the centerline perimeter of the web stirrups.</li>
@@ -5109,8 +5543,8 @@ function renderTorsion(tor,inp,dem){
   o+=R('Min transverse (A<sub>v</sub>+2A<sub>t</sub>) req\'d',F(tor.min_trans,4),'in&sup2;');
   // D16 (audit 2026-05-14): provided side must include 2·At from additional
   // torsion stirrups, normalized to s_shear so it's comparable to min_trans.
-  const Av_t=parseFloat(document.getElementById('shear_legs').value)*(BARS[parseInt(document.getElementById('shear_bar').value)]||BARS[4]).a;
-  const at_add_N_lr=parseInt(document.getElementById('at_add_bar').value)||0;
+  const Av_t=inp.isCirc?inp.Av:parseFloat(document.getElementById('shear_legs').value)*(BARS[parseInt(document.getElementById('shear_bar').value)]||BARS[4]).a;
+  const at_add_N_lr=inp.isCirc?0:(parseInt(document.getElementById('at_add_bar').value)||0);
   const at_add_s_lr=parseFloat(document.getElementById('at_add_s').value)||0;
   const s_shear_lr=parseFloat(document.getElementById('shear_s').value)||0;
   const At_add_lr=(at_add_N_lr>0 && at_add_s_lr>0) ? 2*((BARS[at_add_N_lr]||{a:0}).a)*(s_shear_lr/at_add_s_lr) : 0;
@@ -5350,7 +5784,10 @@ function drawPMStrainStress(fl, inp, Pu, Mu){
   const sx0=x0+(colW-secW)/2;
   const secCx=sx0+secW/2;
   ctx.fillStyle='#eaeaea'; ctx.strokeStyle='#555'; ctx.lineWidth=1.5;
-  if(isRect){
+  const _circPath=()=>{ctx.beginPath(); ctx.ellipse(secCx,yTop+secH/2,Math.min(secW,secH)/2,secH/2,0,0,Math.PI*2);};
+  if(inp.isCirc){
+    _circPath(); ctx.fill(); ctx.stroke();
+  } else if(isRect){
     ctx.fillRect(sx0,yTop,secW,secH); ctx.strokeRect(sx0,yTop,secW,secH);
   } else {
     const webW=secW*(bw/bFlange); const wx0=sx0+(secW-webW)/2;
@@ -5367,8 +5804,10 @@ function drawPMStrainStress(fl, inp, Pu, Mu){
     ctx.closePath(); ctx.fill(); ctx.stroke();
   }
   if(a_val>0&&a_val<h){
+    ctx.save(); if(inp.isCirc){ _circPath(); ctx.clip(); }
     ctx.fillStyle='rgba(52,152,219,0.15)';
     ctx.fillRect(sx0,dy(aTopPhys),secW,dy(aBotPhys)-dy(aTopPhys));
+    ctx.restore();
   }
   if(c_val>0&&c_val<h*10){
     ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#c0392b'; ctx.lineWidth=1;
@@ -5767,7 +6206,7 @@ function removePtParabolaN(n){
 }
 /* Highlight parabola y inputs that exceed section bounds */
 function validatePtYBounds(){
-  const h=V('h_total');
+  const h=_secDepthUI();
   if(!h||h<=0)return;
   const warn=[];
   for(let i=1;i<=ptSpanCount;i++){
@@ -5819,7 +6258,7 @@ function runPtCalc(){
   if(spans.length===0){document.getElementById('ptLossSummary').innerHTML='<span style="color:red">Add at least one parabola</span>';_ptCalcRunning=false;return;}
   // Gather section properties from PT tab inputs
   const Aps=V('pt_Aps')||0;
-  const h=V('h_total'),b=V('b_flange');
+  const h=_secDepthUI(),b=isCircUI()?V('circ_D'):V('b_flange');
   // Get Ag, Ig, yb from last calc result if available
   let Ag=b*h, Ig=b*h*h*h/12, yb=h/2;
   if(_lastRes && _lastRes.inputs){
@@ -6240,6 +6679,82 @@ function renderDetailedBreakdown(breakdown, showDetails){
   return html;
 }
 
+/* ─── Report: circular-section blocks (sections 1.2–1.4 and 2) ─── */
+function circReportInputs(fl,inp,Av,s_sh,cover){
+  const ci=fl.circ||{}, tr=ci.trans||{};
+  let h='';
+  h+=RR('Section type','Circular');
+  h+=RR('Diameter, D',F(inp.D,2),'in');
+  h+=RR('Gross area, A<sub>g</sub> = &pi;D&sup2;/4',F(inp.Ag,2),'in&sup2;');
+  h+=RR('Gross inertia, I<sub>g</sub> = &pi;D&#8308;/64',F(inp.Ig,1),'in&#8308;');
+  h+=RR('Clear cover (to hoop/spiral)',F(cover,2),'in');
+  h+=`<h3>1.3 Longitudinal Reinforcement</h3>`;
+  (ci.rings||[]).forEach(rg=>{
+    h+=RR('Ring '+rg.ring+(rg.ring===1?' (outer)':' (inner)'),rg.n+' &times; '+(rg.bundle>1?rg.bundle+'-bar bundles of ':'')+'#'+rg.barN+' = '+F(rg.As,3),'in&sup2;');
+    h+=RR('&nbsp;&nbsp;Bar-circle diameter, D<sub>r</sub>'+(rg.ring===1?' = D &minus; 2(cover + d<sub>b,tr</sub>) &minus; d<sub>b</sub>':''),F(rg.Dr,3),'in');
+    h+=RR('&nbsp;&nbsp;Clear spacing between adjacent bars/bundles (chord)',F(rg.s_clear,3),'in');
+  });
+  h+=RR('Total A<sub>st</sub>',F(ci.Ast,3),'in&sup2;');
+  h+=RR('&rho;<sub>g</sub> = A<sub>st</sub>/A<sub>g</sub>',F(100*(ci.rho_g||0),3),'%');
+  h+=`<div class="rpt-note">Bars are equally spaced around each ring starting at the top; bundles are modelled as one bar at the bundle centroid. Tension/compression is determined by strain compatibility for every bar group.</div>`;
+  h+=`<h3>1.4 Transverse Reinforcement</h3>`;
+  const typ=tr.type==='spiral'?'Continuous spiral':'Circular hoops';
+  h+=RR('Type',typ);
+  h+=RR(tr.type==='spiral'?'Spiral bar / pitch':'Hoop bar / spacing',(tr.barN?'#'+tr.barN:'none')+' @ '+F(s_sh,2)+' in');
+  if(tr.tie_legs>0) h+=RR('Interior cross-tie legs',tr.tie_legs+' legs, A<sub>tie</sub> = '+F(tr.A_tie,2)+' in&sup2;');
+  h+=RR('A<sub>v</sub> = 2A<sub>bar</sub> + n<sub>ties</sub>A<sub>tie</sub>',F(Av,3),'in&sup2;');
+  h+=`<div class="rpt-note" style="border-left:3px solid #c0392b;padding-left:8px;"><b>Circular-section items not fully verified</b> (interpretations where AASHTO LRFD 10th Ed. Chapter 5 has no circular-specific rule, or pending decisions):<ul style="margin:4px 0 0 18px;padding:0;">${(ci.unverified||[]).map(u=>'<li>'+u+'</li>').join('')}</ul></div>`;
+  return h;
+}
+function circReportFlexure(fl,inp,dem,hasPT,showDetails,fy,fpu,fpy){
+  const ci=fl.circ||{}, D=inp.D, Mu=dem.Mu, Pu=dem.Pu;
+  let h='', sn=1;
+  h+=`<h2>2 &mdash; Flexural Strength ${RREF('AASHTO 5.6.3')}</h2>`;
+  h+=`<div class="rpt-note">Circular section: nominal moment capacity from the equivalent rectangular stress block acting on the circular compression segment (${RREF('5.6.2.2')}) and <b>strain compatibility</b> at every bar group (${RREF('5.6.2.1')}). There is no single flexural depth d; the extreme tension bar depth d<sub>t</sub> governs &epsilon;<sub>t</sub> and &phi;.</div>`;
+  h+=`<h3>2.${sn} Stress Block Parameters</h3>`;sn++;
+  h+=RR("&alpha;<sub>1</sub>",F(fl.alpha1,4));
+  h+=RR("&beta;<sub>1</sub>",F(fl.beta1,4));
+  h+=`<h3>2.${sn} Neutral Axis Depth (strain compatibility, P<sub>u</sub> = 0)</h3>`;sn++;
+  h+=REQ("&epsilon;<sub>s,i</sub> = 0.003(d<sub>i</sub> &minus; c)/c; &nbsp; f<sub>s,i</sub> = min(|&epsilon;<sub>s,i</sub>|E<sub>s</sub>, f<sub>y</sub>)&middot;sign");
+  h+=REQ("a = &beta;<sub>1</sub>c; &nbsp; &theta; = arccos((R &minus; a)/R); &nbsp; A<sub>comp</sub> = R&sup2;(&theta; &minus; sin&theta;cos&theta;); &nbsp; &#562;<sub>c</sub> = R &minus; 2R sin&sup3;&theta;/(3(&theta; &minus; sin&theta;cos&theta;))");
+  h+=REQ("Equilibrium: &alpha;<sub>1</sub>f'<sub>c</sub>A<sub>comp</sub> = &Sigma;A<sub>s,i</sub>f<sub>s,i</sub>"+(hasPT?" + A<sub>ps</sub>f<sub>ps</sub>":"")+" &nbsp; (solved for c by bisection)");
+  h+=RR('Neutral axis depth, c',F(fl.c,4),'in');
+  h+=RR('Stress block depth, a = &beta;<sub>1</sub>&middot;c',F(fl.a,4),'in');
+  h+=RR('A<sub>comp</sub>',F(ci.A_comp,3),'in&sup2;');
+  h+=RR('&#562;<sub>c</sub> (from compression face)',F(ci.y_cc,4),'in');
+  h+=RR('C<sub>c</sub> = &alpha;<sub>1</sub>f\'<sub>c</sub>A<sub>comp</sub>',F(ci.Cc,1),'kip');
+  h+=RR('&Sigma;A<sub>s</sub>f<sub>s</sub> (tension +)',F(ci.F_steel,1),'kip');
+  if(hasPT) h+=RR('T<sub>ps</sub> = A<sub>ps</sub>f<sub>ps</sub>',F(ci.Tps,1),'kip');
+  h+=circBarTableHTML(ci.flex_bars,fl.c,'Bar groups at equilibrium (d from compression face)');
+  h+=renderDetailedBreakdown(fl.breakdown_na, showDetails);
+  if(hasPT){
+    const k_val=2*(1.04-fpy/fpu);
+    h+=`<h3>2.${sn} Prestressing Steel Stress at Ultimate ${RREF('5.6.3.1.1-1')}</h3>`;sn++;
+    if(fl.pt_in_compression){
+      h+=`<div class="rpt-note" style="color:#c00"><b>PT tendon is within compression zone (d<sub>p</sub> &le; c) &mdash; A<sub>ps</sub> excluded. f<sub>ps</sub> = 0</b></div>`;
+    } else {
+      h+=REQ("f<sub>ps</sub> = f<sub>pu</sub>(1 &minus; k&middot;c/d<sub>p</sub>) = "+F(fpu,0)+"(1 &minus; "+F(k_val,4)+"&times;"+F(fl.c,4)+"/"+F(fl.dp_cf,2)+") = "+F(fl.fps_calc,2)+" ksi &nbsp; "+RREF('Eq. 5.6.3.1.1-1'));
+    }
+  }
+  h+=`<h3>2.${sn} Strain &amp; Resistance Factor ${RREF('5.5.4.2')}</h3>`;sn++;
+  h+=RR('d<sub>t</sub> (extreme tension bar'+(hasPT?' / tendon':'')+')',F(fl.dt,4),'in');
+  h+=REQ("&epsilon;<sub>t</sub> = 0.003(d<sub>t</sub> &minus; c)/c = 0.003("+F(fl.dt,4)+" &minus; "+F(fl.c,4)+")/"+F(fl.c,4)+" = "+F(fl.eps_t,6));
+  h+=RR('Section status',fl.sec_status);
+  h+=REQ("&phi; = 0.75 + "+F(fl.phi_k,2)+"(&epsilon;<sub>t</sub> &minus; &epsilon;<sub>cl</sub>)/(&epsilon;<sub>tl</sub> &minus; &epsilon;<sub>cl</sub>), &nbsp; 0.75 &le; &phi; &le; "+F(fl.phi_tc,2)+" &nbsp; "+RREF('Eq. 5.5.4.2-1'));
+  h+=RR('<b>&phi; (flexure)</b>',F(fl.phi_f,4));
+  h+=renderDetailedBreakdown(fl.breakdown_phi, showDetails);
+  h+=`<h3>2.${sn} Nominal &amp; Factored Moment</h3>`;sn++;
+  h+=REQ("M<sub>n</sub> = C<sub>c</sub>(D/2 &minus; &#562;<sub>c</sub>) + &Sigma;A<sub>s,i</sub>f<sub>s,i</sub>(d<sub>i</sub> &minus; D/2)"+(hasPT?" + A<sub>ps</sub>f<sub>ps</sub>(d<sub>p</sub> &minus; D/2)":"")+" &nbsp; (moments about the section centre)");
+  h+=RR('M<sub>n</sub> (pure bending)',F(fl.Mn,1),'kip-in');
+  h+=RR('<b>M<sub>r</sub> = &phi;M<sub>n</sub></b>','<b>'+F(fl.Mr,1)+'</b>','kip-in');
+  h+=renderDetailedBreakdown(fl.breakdown_mn, showDetails);
+  const Mr_gov=Math.abs(Pu)>0.01?fl.Mr_atPu:fl.Mr;
+  h+=RR('M<sub>u</sub> (demand)',F(Math.abs(Mu),1),'kip-in');
+  h+=RR('M<sub>r</sub> &ge; M<sub>u</sub>'+(Math.abs(Pu)>0.01?' <small>(M<sub>r</sub> at P<sub>u</sub> from P-M)</small>':''),RCHK(Mr_gov>=Math.abs(Mu),'D/C = '+F(Math.abs(Mu)/Mr_gov,3),'D/C = '+F(Math.abs(Mu)/Mr_gov,3)));
+  h+=`<hr>`;
+  return h;
+}
+
 function generateReport(){
   if(!_lastRes){alert('Please run Calculate first.');return;}
   const res=_lastRes;
@@ -6247,17 +6762,19 @@ function generateReport(){
   const ck=id=>document.getElementById(id).checked;
 
   // Gather UI inputs not in Python result
-  const fc=V('fc'), fy=V('fy'), Es=V('Es'), fpu=V('fpu'), Ept=V('Ept');
-  const b=V('b_flange'), h=V('h_total'), bw=inp.bw;
-  const hf_top=V('hf_top')||0, hf_bot=V('hf_bot')||0;
-  const cover=V('cover'), dp=V('dp_input');
+  // Engine units (kip/in/ksi) regardless of the display-unit switcher (R4)
+  const fc=VE('fc'), fy=VE('fy'), Es=VE('Es'), fpu=VE('fpu'), Ept=VE('Ept');
+  const isCirc=!!inp.isCirc, circ=fl.circ||{};
+  const b=isCirc?inp.D:VE('b_flange'), h=isCirc?inp.D:VE('h_total'), bw=inp.bw;
+  const hf_top=VE('hf_top')||0, hf_bot=VE('hf_bot')||0;
+  const cover=VE('cover'), dp=VE('dp_input');
   const dp_cf=fl.dp_cf!==undefined?fl.dp_cf:dp;  // dp from compression face (flipped for hogging)
   const As_top=fl.As_top, As_bot=fl.As_bot, d_top_val=fl.d_top, d_bot_val=fl.d_bot;
   const As=fl.As, As_comp=fl.As_comp, ds=fl.ds;
   const Aps=inp.Aps;
   const Aps_tens=fl.Aps_tens!==undefined?fl.Aps_tens:Aps;
   const pt_in_comp=fl.pt_in_compression||false;
-  const Ec=V('Ec'), fpy=V('fpy');
+  const Ec=VE('Ec'), fpy=VE('fpy');
   const isRect=inp.isRect, hasPT=inp.hasPT;
   const phi_v=V('phi_v'), lam=V('lambda');
   const barN_top=parseInt(document.getElementById('top_bar').value);
@@ -6268,16 +6785,16 @@ function generateReport(){
   const shBarN=parseInt(document.getElementById('shear_bar').value);
   const shBar=(shBarN===0)?null:(BARS[shBarN]||BARS[4]);
   const shLegs=V('shear_legs');
-  const Av=(shBarN===0)?0:shLegs*shBar.a;
-  const s_sh=V('shear_s');
+  const Av=isCirc?inp.Av:((shBarN===0)?0:shLegs*shBar.a);
+  const s_sh=VE('shear_s');
   const tBarN=shBarN;
   const s_tor=s_sh;
-  const nStrands=V('n_strands'), strandA=V('strand_area');
-  const ductDia=V('duct_dia');
+  const nStrands=V('n_strands'), strandA=VE('strand_area');
+  const ductDia=VE('duct_dia');
   const Pu=dem.Pu, Mu=dem.Mu, Vu=dem.Vu, Tu=dem.Tu, Vpd=dem.Vp, Ms=dem.Ms, Ps=dem.Ps;
   const codeEd=document.getElementById('codeEdition').value;
   const secCls=document.getElementById('sectionClass').value;
-  const codeLbl=codeEd==='CA'?'AASHTO LRFD w/ California Amendments':'AASHTO LRFD 9th Edition';
+  const codeLbl=codeEd==='CA'?'AASHTO LRFD w/ California Amendments':'AASHTO LRFD 10th Edition (2024)';
   const clsLbl=secCls==='PP'?'Precast Prestressed':secCls==='CIP_PT'?'CIP Post-Tensioned':'Non-Prestressed';
 
   // Date
@@ -6319,6 +6836,9 @@ function generateReport(){
       h2+=RR('PT modulus, E<sub>pt</sub>',F(Ept,0),'ksi');
     }
     h2+=`<h3>1.2 Section Geometry</h3>`;
+    if(isCirc){
+      h2+=circReportInputs(fl,inp,Av,s_sh,cover);
+    } else {
     h2+=RR('Section type',isRect?'Rectangular':'I-Section');
     h2+=RR('Total width, b',F(b,2),'in');
     h2+=RR('Total height, h',F(h,2),'in');
@@ -6349,6 +6869,13 @@ function generateReport(){
     h2+=RR('Shear stirrups','#'+shBarN+' &times; '+F(shLegs,0)+' legs = A<sub>v</sub> = '+F(Av,3),'in&sup2;');
     h2+=RR('Stirrup spacing, s',F(s_sh,2),'in');
     h2+=`<div class="rpt-note">Stirrups are assumed to resist both shear and torsion per C5.7.3.6.2.</div>`;
+    }
+    if(isCirc&&hasPT){
+      h2+=RR('PT strands',F(nStrands,0)+' &times; '+F(strandA,3)+' in&sup2; = A<sub>ps</sub> = '+F(Aps,3),'in&sup2;');
+      h2+=RR('PT depth from top, y<sub>p</sub>',F(dp,2),'in');
+      h2+=RR('d<sub>p</sub> (from comp. face)',F(dp_cf,2),'in');
+      h2+=RR('Duct diameter',F(ductDia,2),'in');
+    }
     h2+=`<h3>1.5 Applied Loads (Active Row)</h3>`;
     h2+=RR('P<sub>u</sub> (factored axial, +tension)',F(Pu,1),'kip');
     h2+=RR('M<sub>u</sub> (factored moment)',F(Mu,1),'kip-in');
@@ -6362,6 +6889,9 @@ function generateReport(){
 
   // ===================== 2. FLEXURE =====================
   if(ck('rpt_flexure')){
+    if(isCirc){
+      h2+=circReportFlexure(fl,inp,dem,hasPT,showDetails,fy,fpu,fpy);
+    } else {
     let sn=1; // subsection counter
     h2+=`<h2>2 &mdash; Flexural Strength ${RREF('AASHTO 5.6.3')}</h2>`;
     h2+=`<div class="rpt-note">Determine nominal and factored moment capacity using equivalent rectangular stress block per AASHTO 5.6.3.2.</div>`;
@@ -6376,7 +6906,7 @@ function generateReport(){
     if(As_comp>0){
       // Show trial c WITH A's first
       h2+=`<div class="rpt-note"><b>Step 1:</b> Trial c assuming compression steel yields (f'<sub>s</sub> = f<sub>y</sub>).</div>`;
-      if(isRect||fl.a<=hf_top){
+      if(isRect||fl.a<=fl.hf){
         h2+=REQ("c = (A<sub>s</sub>f<sub>y</sub>"+(hasPT?" + A<sub>ps</sub>f<sub>pu</sub>":"")+" &minus; A'<sub>s</sub>f<sub>y</sub>) / (&alpha;<sub>1</sub>f'<sub>c</sub>&beta;<sub>1</sub>b"+(hasPT?" + kA<sub>ps</sub>f<sub>pu</sub>/d<sub>p</sub>":"")+") &nbsp; "+RREF('Eq. 5.6.3.1.1-4'));
       } else {
         h2+=REQ("c = (A<sub>s</sub>f<sub>y</sub>"+(hasPT?" + A<sub>ps</sub>f<sub>pu</sub>":"")+" &minus; A'<sub>s</sub>f<sub>y</sub> &minus; &alpha;<sub>1</sub>f'<sub>c</sub>(b&minus;b<sub>w</sub>)h<sub>f</sub>) / (&alpha;<sub>1</sub>f'<sub>c</sub>&beta;<sub>1</sub>b<sub>w</sub>"+(hasPT?" + kA<sub>ps</sub>f<sub>pu</sub>/d<sub>p</sub>":"")+") &nbsp; "+RREF('Eq. 5.6.3.1.1-4'));
@@ -6395,7 +6925,7 @@ function generateReport(){
       } else {
         h2+=RR('Compression steel yields?',BG(false,'<b>NO</b> &mdash; A\'<sub>s</sub> excluded per AASHTO'));
         h2+=`<div class="rpt-note"><b>Step 3:</b> A'<sub>s</sub> does not yield &mdash; re-solve c <b>without</b> compression steel. P-M interaction (strain compatibility) always captures compression steel correctly regardless.</div>`;
-        if(isRect||fl.a<=hf_top){
+        if(isRect||fl.a<=fl.hf){
           h2+=REQ("c = (A<sub>s</sub>f<sub>y</sub>"+(hasPT?" + A<sub>ps</sub>f<sub>pu</sub>":"")+") / (&alpha;<sub>1</sub>f'<sub>c</sub>&beta;<sub>1</sub>b"+(hasPT?" + kA<sub>ps</sub>f<sub>pu</sub>/d<sub>p</sub>":"")+") &nbsp; "+RREF('Eq. 5.6.3.1.1-4'));
         } else {
           h2+=REQ("c = (A<sub>s</sub>f<sub>y</sub>"+(hasPT?" + A<sub>ps</sub>f<sub>pu</sub>":"")+" &minus; &alpha;<sub>1</sub>f'<sub>c</sub>(b&minus;b<sub>w</sub>)h<sub>f</sub>) / (&alpha;<sub>1</sub>f'<sub>c</sub>&beta;<sub>1</sub>b<sub>w</sub>"+(hasPT?" + kA<sub>ps</sub>f<sub>pu</sub>/d<sub>p</sub>":"")+") &nbsp; "+RREF('Eq. 5.6.3.1.1-4'));
@@ -6406,7 +6936,7 @@ function generateReport(){
       }
     } else {
       // No compression steel — single equation
-      if(isRect||fl.a<=hf_top){
+      if(isRect||fl.a<=fl.hf){
         h2+=REQ("c = (A<sub>s</sub>f<sub>y</sub>"+(hasPT?" + A<sub>ps</sub>f<sub>pu</sub>":"")+") / (&alpha;<sub>1</sub>f'<sub>c</sub>&beta;<sub>1</sub>b"+(hasPT?" + kA<sub>ps</sub>f<sub>pu</sub>/d<sub>p</sub>":"")+") &nbsp; "+RREF('Eq. 5.6.3.1.1-4'));
       } else {
         h2+=`<div class="rpt-note">Stress block extends below flange (a &gt; h<sub>f</sub>) &mdash; I-section formula used.</div>`;
@@ -6454,7 +6984,7 @@ function generateReport(){
     h2+=renderDetailedBreakdown(fl.breakdown_phi, showDetails);
     // --- Mn ---
     h2+=`<h3>2.${sn} Nominal &amp; Factored Moment ${RREF('5.6.3.2.2')}</h3>`;sn++;
-    if(!isRect&&fl.a>hf_top){
+    if(!isRect&&fl.a>fl.hf){
       h2+=`<div class="rpt-note">I-section: stress block extends below flange. M<sub>n</sub> computed from flange and web compression components.</div>`;
       h2+=REQ("C<sub>f</sub> = &alpha;<sub>1</sub>f'<sub>c</sub>(b&minus;b<sub>w</sub>)h<sub>f</sub> &nbsp; (overhanging flanges)");
       h2+=REQ("C<sub>w</sub> = &alpha;<sub>1</sub>f'<sub>c</sub>&middot;b<sub>w</sub>&middot;a &nbsp; (web)");
@@ -6469,6 +6999,7 @@ function generateReport(){
     h2+=RR('M<sub>u</sub> (demand)',F(Math.abs(Mu),1),'kip-in');
     h2+=RR('M<sub>r</sub> &ge; M<sub>u</sub>',RCHK(Mr_gov>=Math.abs(Mu),'D/C = '+F(Math.abs(Mu)/Mr_gov,3),'D/C = '+F(Math.abs(Mu)/Mr_gov,3)));
     h2+=`<hr>`;
+    }
   }
 
   // ===================== 3. P-M INTERACTION =====================
@@ -6505,12 +7036,18 @@ function generateReport(){
       h2+=RR('M<sub>r</sub> = &phi;M<sub>n</sub>',F(eq.Mr,1),'kip-in');
       h2+=`<h3>3.4 Reinforcement Strains &amp; Stresses at Equilibrium</h3>`;
       h2+=`<div class="rpt-note">Strains and stresses in each reinforcement layer at the equilibrium NA depth c = ${F(eq.c,4)} in.</div>`;
+      if(isCirc){
+        h2+=circBarTableHTML([...(eq.rows_comp||[]),...(eq.rows_tens||[])].sort((p,q)=>p.d_cf-q.d_cf),eq.c,'Bar groups (depth from compression face)');
+        if(hasPT) h2+=RR('PT tendon: &epsilon;<sub>ps</sub> / f<sub>ps</sub> / F',F(eq.eps_pt,6)+' / '+F(eq.fps_pt,1)+' ksi / '+F(eq.F_pt,1)+' kip');
+        h2+=`<div class="rpt-note">P<sub>n,max</sub> factor = ${F(circ.pn_factor,2)} (${inp.circ_spiral?'spiral, Eq. 5.6.4.4-2':(inp.circ_confined?'hoops closed by welded splice / mechanical coupler / hooks, Eq. 5.6.4.4-2':'lap-spliced hoops / ties, Eq. 5.6.4.4-3')}).</div>`;
+      } else {
       let tbl='<table class="rpt-tbl" style="width:auto;margin:6px 0;border-collapse:collapse"><thead><tr><th style="padding:4px 16px;text-align:left">Layer</th><th style="padding:4px 16px;text-align:right">d (in)</th><th style="padding:4px 16px;text-align:right">&epsilon;</th><th style="padding:4px 16px;text-align:right">f (ksi)</th><th style="padding:4px 16px;text-align:right">F (kip)</th></tr></thead><tbody>';
       tbl+=`<tr><td style="padding:4px 16px">Tension steel</td><td style="padding:4px 16px;text-align:right">${F(fl.ds,3)}</td><td style="padding:4px 16px;text-align:right">${F(eq.es_tens,6)}</td><td style="padding:4px 16px;text-align:right">${F(eq.fs_tens,1)}</td><td style="padding:4px 16px;text-align:right">${F(eq.F_tens,1)}</td></tr>`;
       tbl+=`<tr><td style="padding:4px 16px">Compression steel</td><td style="padding:4px 16px;text-align:right">${F(fl.d_s_comp,3)}</td><td style="padding:4px 16px;text-align:right">${F(eq.es_comp,6)}</td><td style="padding:4px 16px;text-align:right">${F(eq.fs_comp,1)}</td><td style="padding:4px 16px;text-align:right">${F(eq.F_comp,1)}</td></tr>`;
       if(hasPT) tbl+=`<tr><td style="padding:4px 16px">PT tendon</td><td style="padding:4px 16px;text-align:right">${F(dp_cf,3)}</td><td style="padding:4px 16px;text-align:right">${F(eq.eps_pt,6)}</td><td style="padding:4px 16px;text-align:right">${F(eq.fps_pt,1)}</td><td style="padding:4px 16px;text-align:right">${F(eq.F_pt,1)}</td></tr>`;
       tbl+='</tbody></table>';
       h2+=tbl;
+      }
     }
     h2+=`<hr>`;
   }
@@ -6526,7 +7063,7 @@ function generateReport(){
     }
     h2+=RR('&gamma;<sub>1</sub>',F(fl.gamma1,2));
     if(hasPT && fl.fcpe>0) h2+=RR('&gamma;<sub>2</sub> <small>(prestress factor, bonded tendons)</small>',F(fl.gamma2,2));
-    h2+=RR('&gamma;<sub>3</sub> <small>(Table 5.6.3.3-1: '+( fy<=60?'Grade 60':'Grade &ge; 75')+')</small>',F(fl.gamma3,2));
+    h2+=RR('&gamma;<sub>3</sub> <small>(Table 5.6.3.3-1, reinforcement spec '+document.getElementById('astm_spec').value+')</small>',F(fl.gamma3,2));
     h2+=RR("f<sub>r</sub> = 0.24&radic;f'<sub>c</sub>",F(fl.fr,4),'ksi');
     h2+=REQ("f<sub>r</sub> = 0.24&radic;"+F(fc,1)+" = "+F(fl.fr,4)+" ksi &nbsp; "+RREF('5.4.2.6'));
     if(hasPT && fl.fcpe>0){
@@ -6534,6 +7071,7 @@ function generateReport(){
       h2+=REQ("f<sub>cpe</sub> = P<sub>e</sub>/A<sub>g</sub> + P<sub>e</sub>&middot;e&middot;y<sub>t</sub>/I<sub>g</sub> = "+F(fl.fcpe,4)+" ksi");
     }
     h2+=RR('S<sub>c</sub> (section modulus)',F(fl.Sc,1),'in&sup3;');
+    if(isCirc) h2+=REQ("S<sub>c</sub> = &pi;D&sup3;/32 = &pi;&middot;"+F(h,2)+"&sup3;/32 = "+F(fl.Sc,1)+" in&sup3;");
     if(hasPT && fl.fcpe>0){
       h2+=REQ("M<sub>cr</sub> = "+F(fl.gamma3,2)+"("+F(fl.gamma1,2)+"&times;"+F(fl.fr,4)+" + "+F(fl.gamma2,2)+"&times;"+F(fl.fcpe,4)+")&times;"+F(fl.Sc,1)+" = "+F(fl.Mcr,1)+" kip-in");
     }
@@ -6548,7 +7086,9 @@ function generateReport(){
   if(ck('rpt_crack')){
     h2+=`<h2>5 &mdash; Crack Control &amp; Reinforcement Spacing</h2>`;
     h2+=`<h3>5.1 Crack Control ${RREF('AASHTO 5.6.7')}</h3>`;
-    h2+=REQ("d<sub>c</sub> = cover + d<sub>bar</sub>/2 = "+F(cover,2)+" + "+F(fl.bar_d_tens,3)+"/2 = "+F(fl.dc,2)+" in &nbsp; "+RREF('5.6.7'));
+    if(isCirc) h2+=REQ("d<sub>c</sub> = D &minus; d<sub>ext</sub> = "+F(h,2)+" &minus; "+F(fl.ds,3)+" = "+F(fl.dc,2)+" in &nbsp; (extreme tension fibre to centre of closest bar) &nbsp; "+RREF('5.6.7'));
+    else
+    h2+=REQ("d<sub>c</sub> = cover + d<sub>b,stirrup</sub> + d<sub>bar</sub>/2 = "+F(cover,2)+" + "+F(Av>0&&shBar?shBar.d:0,3)+" + "+F(fl.bar_d_tens,3)+"/2 = "+F(fl.dc,2)+" in &nbsp; (extreme tension fibre to centre of closest bar) &nbsp; "+RREF('5.6.7'));
     h2+=REQ("&beta;<sub>s</sub> = 1 + d<sub>c</sub>/(0.7(h&minus;d<sub>c</sub>)) = 1 + "+F(fl.dc,2)+"/(0.7&middot;("+F(h,2)+"&minus;"+F(fl.dc,2)+")) = "+F(fl.beta_s,3)+" &nbsp; "+RREF('Eq. 5.6.7-2'));
     h2+=REQ("f<sub>ss,capped</sub> = 0.6&middot;f<sub>y</sub> = 0.6&middot;"+F(fy,1)+" = "+F(fl.fss_simp,1)+" ksi &nbsp; "+RREF('5.6.7 (simplified)'));
     h2+=REQ("f<sub>ss,actual</sub> = M&middot;(d<sub>s</sub>&minus;c<sub>cr</sub>)/I<sub>cr</sub>&middot;n + P<sub>s</sub>&middot;n/(transformed area) = "+F(fl.fss,2)+" ksi &nbsp; "+RREF('cracked section'));
@@ -6563,6 +7103,11 @@ function generateReport(){
     h2+=`<h3>5.2 Spacing Limits ${RREF('AASHTO 5.10.3')}</h3>`;
     h2+=RR('Min clear spacing',F(fl.s_min_ck,3),'in');
     h2+=RR('Max allowable spacing',F(fl.s_max_ck,1),'in');
+    if(isCirc){
+      h2+=RR('Outer-ring clear spacing (chord)',F(circ.s_clear,3),'in');
+      h2+=RR('Clear spacing &ge; s<sub>min</sub>',RCHK(circ.s_clear>=fl.s_min_ck-1e-3));
+      h2+=RR('Outer-ring bar spacing (c/c arc) vs s<sub>crack</sub> <small>information &mdash; 5.6.7 s for the layer closest to the tension face; circular arc spacing is an interpretation</small>',F(circ.s_bar,2)+' in '+(circ.crack_spacing_ok?'&le;':'&gt;')+' '+F(fl.s_crack,2)+' in');
+    }
     h2+=`<hr>`;
   }
 
@@ -6623,6 +7168,7 @@ function generateReport(){
     h2+=RR('b<sub>e</sub> = A<sub>cp</sub>/p<sub>c</sub> (eff. wall thickness)',F(tor.be,3),'in');
     h2+=RR('A<sub>o</sub> (shear flow area)',F(tor.Ao,2),'in&sup2;');
     h2+=RR('p<sub>h</sub> (stirrup centerline perimeter)',F(tor.ph,2),'in');
+    if(isCirc) h2+=circTorsionNoteHTML(tor,inp);
     h2+=`<h3>6.2 Torsion Threshold ${RREF('5.7.2.1')}</h3>`;
     h2+=REQ("T<sub>cr</sub> = 0.126K&lambda;&radic;f'<sub>c</sub>&middot;A<sub>cp</sub>&sup2;/p<sub>c</sub> &nbsp; "+RREF('5.7.2.1-4'));
     h2+=RR('K (stress variable)','1.0');
@@ -6646,6 +7192,16 @@ function generateReport(){
   // ===================== EFFECTIVE SHEAR DEPTH =====================
   if(ck('rpt_shear1')||ck('rpt_shear2')||ck('rpt_shear3')){
     h2+=`<h2>Effective Shear Depth ${RREF('5.7.2.8')}</h2>`;
+    if(isCirc){
+      h2+=`<div class="rpt-note" style="border-left:3px solid #c0392b;padding-left:8px;">Circular section: b<sub>v</sub> = D (5.7.2.8: &ldquo;for circular sections, the diameter of the section&rdquo;); d<sub>v</sub> = 0.9d<sub>e</sub> alternative for circular members (C5.7.2.8), not less than 0.72h (5.7.2.8); d<sub>e</sub> = D/2 + D<sub>r</sub>/&pi; (C5.7.2.8). For two rings D<sub>r</sub> is the A<sub>s</sub>-weighted bar-circle diameter.</div>`;
+      h2+=RR('D<sub>r</sub>',F(circ.Dr_eff,4),'in');
+      h2+=REQ("d<sub>e,s</sub> = D/2 + D<sub>r</sub>/&pi; = "+F(h/2,3)+" + "+F(circ.Dr_eff,3)+"/&pi; = "+F(circ.de_s,4)+" in");
+      if(hasPT&&Aps_tens>0) h2+=REQ("d<sub>e</sub> = (A<sub>ps</sub>f<sub>ps</sub>d<sub>p</sub> + A<sub>s</sub>f<sub>y</sub>d<sub>e,s</sub>)/(A<sub>ps</sub>f<sub>ps</sub> + A<sub>s</sub>f<sub>y</sub>) = "+F(fl.de,4)+" in &nbsp; (A<sub>s</sub> = tension-half bars)");
+      h2+=REQ("0.9d<sub>e</sub> = "+F(fl.dv3,4)+" in; &nbsp; 0.72D = "+F(fl.dv2,4)+" in");
+      h2+=RR('<b>d<sub>v</sub></b>','<b>'+F(fl.dv,4)+'</b>','in');
+      h2+=RR('b<sub>v</sub> = D',F(sh.bv,2),'in');
+      h2+=`<hr>`;
+    } else {
     h2+=`<div class="rpt-note">The effective shear depth d<sub>v</sub> is taken as the greater of three conditions per ${RREF('Eq. 5.7.2.8-1')}.</div>`;
     // de
     h2+=`<h3>Effective Depth d<sub>e</sub></h3>`;
@@ -6672,19 +7228,21 @@ function generateReport(){
     h2+=REQ("d<sub>v</sub> = max("+F(fl.dv1,4)+", "+F(fl.dv2,4)+", "+F(fl.dv3,4)+") = "+F(fl.dv,4)+" in &nbsp; &larr; governed by "+dv_gov);
     h2+=RR('<b>d<sub>v</sub></b>','<b>'+F(fl.dv,4)+'</b>','in');
     h2+=`<hr>`;
+    }
   }
 
   // ===================== 7. SHEAR METHOD 1 =====================
   if(ck('rpt_shear1')){
     h2+=`<h2>7 &mdash; Shear: Simplified Method ${RREF('AASHTO 5.7.3.4.1')}</h2>`;
-    h2+=`<div class="rpt-note">Simplified method uses &theta; = 45&deg; and &beta; = 2.0.</div>`;
+    h2+=`<div class="rpt-note">Simplified method uses &theta; = 45&deg; and &beta; = 2.0. Scope (5.7.3.4.1): nonprestressed sections not subjected to axial tension, with at least the minimum transverse reinforcement of 5.7.2.5 or an overall depth less than 16.0 in.</div>`;
+    if(sh.m1_applicable===false) h2+=`<div class="rpt-note" style="color:#c00">&#9888; Method 1 is NOT applicable to this section: ${sh.m1_na_reason}. Results shown for information only.</div>`;
     h2+=RR('d<sub>v</sub>',F(sh.dv,4),'in');
     h2+=RR('b<sub>v</sub> (effective web width)',F(sh.bv,2),'in');
     h2+=RR('&theta;','45','&deg;');
     h2+=RR('&beta;','2.0');
     h2+=REQ("V<sub>c</sub> = 0.0316&beta;&lambda;&radic;f'<sub>c</sub>&middot;b<sub>v</sub>&middot;d<sub>v</sub> &nbsp; "+RREF('5.7.3.3-3'));
     h2+=REQ("V<sub>c</sub> = 0.0316 &times; 2.0 &times; "+F(lam,2)+" &times; &radic;"+F(fc,1)+" &times; "+F(sh.bv,2)+" &times; "+F(sh.dv,4)+" = "+F(sh.Vc1,2)+" kip");
-    h2+=REQ("V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot(&theta;)&lambda;<sub>duct</sub>/s &nbsp; "+RREF('C5.7.3.3-1'));
+    h2+=REQ("V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot(&theta;)&lambda;<sub>duct</sub>/s &nbsp; "+RREF('5.7.3.3-4, &alpha;=90&deg;'));
     h2+=REQ("V<sub>s</sub> = "+F(Av,3)+" &times; "+F(fy,0)+" &times; "+F(sh.dv,4)+" &times; cot(45&deg;) &times; "+F(sh.lambda_duct,4)+" / "+F(s_sh,2)+" = "+F(sh.Vs1,2)+" kip");
     h2+=REQ("V<sub>n</sub> = V<sub>c</sub> + V<sub>s</sub> + V<sub>p</sub> = "+F(sh.Vc1,2)+" + "+F(sh.Vs1,2)+" + "+F(Vpd,2)+" = "+F(sh.Vn1,2)+" kip &nbsp; "+RREF('5.7.3.3-1'));
     h2+=REQ("V<sub>n,max</sub> = 0.25f'<sub>c</sub>&middot;b<sub>v</sub>&middot;d<sub>v</sub> + V<sub>p</sub> = "+F(sh.Vnmax,2)+" kip &nbsp; "+RREF('5.7.3.3-2'));
@@ -6714,7 +7272,8 @@ function generateReport(){
     h2+=RR('A<sub>ps</sub>f<sub>po</sub>',F(Aps_tens*sh.fpo,2),'kip');
     h2+=RR('E<sub>s</sub>A<sub>s</sub> + E<sub>p</sub>A<sub>ps</sub>',F(sh.denom,1),'kip');
     if(pt_in_comp) h2+=`<div class="rpt-note" style="color:#c00">PT tendon in compression zone &mdash; A<sub>ps</sub> = 0 in strain equation.</div>`;
-    if(sh.eps_s_neg_recalc) h2+=`<div class="rpt-note">Note: &epsilon;<sub>s</sub> was negative, recalculated with E<sub>c</sub>A<sub>ct</sub> in denominator per 5.7.3.4.2.</div>`;
+    if(sh.dbl_eps) h2+=`<div class="rpt-note">Axial tension cracks the flexural compression face (gross-section stress ${F(sh.flex_compr,3)} ksi &gt; f<sub>r</sub> = ${F(sh.fr,3)} ksi) &rarr; &epsilon;<sub>s</sub> from Eq. 5.7.3.4.2-4 doubled per 5.7.3.4.2.</div>`;
+    if(sh.eps_s_neg_recalc) h2+=`<div class="rpt-note">Note: &epsilon;<sub>s</sub> was negative, recalculated with denominator (E<sub>s</sub>A<sub>s</sub> + E<sub>p</sub>A<sub>ps</sub> + E<sub>c</sub>A<sub>ct</sub>) per 5.7.3.4.2, not less than &minus;0.40&times;10<sup>&minus;3</sup>.</div>`;
     h2+=RR('&epsilon;<sub>s</sub>',F(sh.eps_s,6));
     h2+=`<h3>8.2 &beta; and &theta;</h3>`;
     h2+=REQ("&theta; = 29 + 3500&epsilon;<sub>s</sub> = 29 + 3500("+F(sh.eps_s,6)+") = "+F(sh.th2,2)+"&deg; &nbsp; "+RREF('5.7.3.4.2-3'));
@@ -6737,20 +7296,21 @@ function generateReport(){
   if(ck('rpt_shear3')){
     h2+=`<h2>9 &mdash; Shear: Appendix B5 (Table Method) ${RREF('AASHTO Appendix B5')}</h2>`;
     if(!sh.b5_valid){
-      h2+=`<div class="rpt-note">Method is NOT VALID for this section — &epsilon;<sub>x</sub> = ${F(sh.ex_b5,6)} exceeds the table range limit of ${F(sh.b5_max_ex,3)}.</div>`;
+      h2+=`<div class="rpt-note">Method is NOT VALID for this section &mdash; ${sh.b5_invalid_reason||('&epsilon;<sub>x</sub> = '+F(sh.ex_b5,6)+' exceeds the table range limit of '+F(sh.b5_max_ex,3))}.</div>`;
     } else {
       h2+=`<div class="rpt-note">Iterative table lookup using v<sub>u</sub>/f'<sub>c</sub> and &epsilon;<sub>x</sub> to find &theta; and &beta; from AASHTO Tables B5.2-1 or B5.2-2. Unlike the General Procedure, the B5 strain uses 0.5|V&minus;V<sub>p</sub>|cot&theta; and iterates until &theta;/&beta; converge.</div>`;
       const V_rpt3=sh.torsion_consider?sh.Veff:Math.abs(Vu);
       const V_lbl3=sh.torsion_consider?'V<sub>eff</sub>':'V<sub>u</sub>';
       h2+=`<h3>9.1 Shear Stress Ratio</h3>`;
-      h2+=REQ("v<sub>u</sub> = |V<sub>u</sub> &minus; &phi;<sub>v</sub>V<sub>p</sub>| / (&phi;<sub>v</sub>b<sub>v</sub>d<sub>v</sub>) &nbsp; "+RREF('B5.2-1'));
+      h2+=REQ("v<sub>u</sub> = |V<sub>u</sub> &minus; &phi;<sub>v</sub>V<sub>p</sub>| / (&phi;<sub>v</sub>b<sub>v</sub>d<sub>v</sub>) &nbsp; "+RREF('5.7.2.8'));
       h2+=REQ("v<sub>u</sub> = |"+F(Math.abs(Vu),2)+" &minus; "+F(phi_v,2)+"&times;"+F(Vpd,2)+"| / ("+F(phi_v,2)+"&times;"+F(sh.bv,2)+"&times;"+F(sh.dv,4)+") = "+F(sh.vu_b5,4)+" ksi");
       h2+=RR('v<sub>u</sub>/f\'<sub>c</sub>',F(sh.vufc,4));
       h2+=`<h3>9.2 Longitudinal Strain &epsilon;<sub>x</sub></h3>`;
       if(sh.torsion_consider) h2+=`<div class="rpt-note">Torsion considered (see Section 6) &mdash; V<sub>eff</sub> = ${F(sh.Veff,2)} kip used in strain.</div>`;
       h2+=`<div class="rpt-note">Strain &epsilon;<sub>x</sub> is computed iteratively &mdash; the equation includes cot&theta;, which depends on the table result. Values shown are from the converged iteration (${sh.n_iter} iterations).</div>`;
       h2+=REQ("&epsilon;<sub>x</sub> = (|M<sub>u</sub>|/d<sub>v</sub> + 0.5N<sub>u</sub> + 0.5|"+V_lbl3+"&minus;V<sub>p</sub>|cot&theta; &minus; A<sub>ps</sub>f<sub>po</sub>) / ("+
-        (sh.has_min_av?"2":"")+"(E<sub>s</sub>A<sub>s</sub> + E<sub>p</sub>A<sub>ps</sub>)) &nbsp; "+RREF('Eq. B5.2-1'));
+        (sh.has_min_av?"2":"")+"(E<sub>s</sub>A<sub>s</sub> + E<sub>p</sub>A<sub>ps</sub>)) &nbsp; "+RREF(sh.has_min_av?'Eq. B5.2-3':'Eq. B5.2-4'));
+      if(sh.dbl_eps&&!sh.b5_ex_neg_recalc) h2+=`<div class="rpt-note">Axial tension cracks the flexural compression face &rarr; &epsilon;<sub>x</sub> doubled (B5.2).</div>`;
       h2+=RR('|M<sub>u</sub>|/d<sub>v</sub>',F(sh.Mu_c/sh.dv,2),'kip');
       h2+=RR('0.5N<sub>u</sub>',F(0.5*Pu,2),'kip');
       h2+=RR('&theta; (converged)',F(sh.th3,2),'&deg;');
@@ -6773,7 +7333,7 @@ function generateReport(){
       h2+=`<h3>9.4 Capacity</h3>`;
       h2+=REQ("V<sub>c</sub> = 0.0316&beta;&lambda;&radic;f'<sub>c</sub>&middot;b<sub>v</sub>&middot;d<sub>v</sub> &nbsp; "+RREF('5.7.3.3-3'));
       h2+=REQ("V<sub>c</sub> = 0.0316 &times; "+F(sh.bt3,4)+" &times; "+F(lam,2)+" &times; &radic;"+F(fc,1)+" &times; "+F(sh.bv,2)+" &times; "+F(sh.dv,4)+" = "+F(sh.Vc3,2)+" kip");
-      h2+=REQ("V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot(&theta;)&lambda;<sub>duct</sub>/s &nbsp; "+RREF('C5.7.3.3-1'));
+      h2+=REQ("V<sub>s</sub> = A<sub>v</sub>f<sub>y</sub>d<sub>v</sub>cot(&theta;)&lambda;<sub>duct</sub>/s &nbsp; "+RREF('5.7.3.3-4, &alpha;=90&deg;'));
       h2+=REQ("V<sub>s</sub> = "+F(Av,3)+" &times; "+F(fy,0)+" &times; "+F(sh.dv,4)+" &times; cot("+F(sh.th3,2)+"&deg;) &times; "+F(sh.lambda_duct,4)+" / "+F(s_sh,2)+" = "+F(sh.Vs3,2)+" kip");
       h2+=REQ("V<sub>n</sub> = min(V<sub>c</sub>+V<sub>s</sub>+V<sub>p</sub>, V<sub>n,max</sub>) = min("+F(sh.Vc3,2)+"+"+F(sh.Vs3,2)+"+"+F(Vpd,2)+", "+F(sh.Vnmax,2)+") = "+F(sh.Vn3,2)+" kip");
       h2+=RR('&phi;<sub>v</sub>',F(phi_v,2));
@@ -6802,6 +7362,7 @@ function generateReport(){
     h2+=`<h3>10.1 Minimum Transverse Reinforcement ${RREF('5.7.2.5')}</h3>`;
     h2+=REQ("A<sub>v,min</sub> = 0.0316&radic;f'<sub>c</sub>&middot;b<sub>v</sub>&middot;s/f<sub>y</sub> = "+F(sh.Av_min,4)+" in&sup2; &nbsp; "+RREF('5.7.2.5-1'));
     h2+=RR('A<sub>v</sub> provided',F(Av,3),'in&sup2;');
+    if(isCirc) h2+=`<div class="rpt-note">A<sub>v</sub> = 2&middot;A<sub>${inp.circ_spiral?'spiral':'hoop'}</sub> + n<sub>ties</sub>&middot;A<sub>tie</sub> = 2&times;${F((circ.trans||{}).A_bar,2)} + ${(circ.trans||{}).tie_legs||0}&times;${F((circ.trans||{}).A_tie,2)} = ${F(Av,3)} in&sup2; (hoop/spiral crosses the shear plane twice; interpretation &mdash; AASHTO 5.7.3.3 defines A<sub>v</sub> only as the transverse reinforcement within s).</div>`;
     h2+=RR('A<sub>v</sub> &ge; A<sub>v,min</sub>',RCHK(sh.has_min_av));
     h2+=`<h3>10.2 Maximum Spacing ${RREF('5.7.2.6')}</h3>`;
     h2+=RR('v<sub>u</sub> = |V<sub>u</sub>&minus;&phi;V<sub>p</sub>|/(&phi;b<sub>v</sub>d<sub>v</sub>)',F(sh.vu,4),'ksi');
@@ -6813,6 +7374,19 @@ function generateReport(){
     if(sh.lambda_duct<1){
       h2+=`<h3>10.3 PT Duct Reduction ${RREF('5.7.3.3-5')}</h3>`;
       h2+=REQ("&lambda;<sub>duct</sub> = 1 &minus; &delta;(&phi;<sub>duct</sub>/b<sub>w</sub>)&sup2; = 1 &minus; 2("+F(ductDia,2)+"/"+F(sh.bv,2)+")&sup2; = "+F(sh.lambda_duct,4));
+    }
+    const trR=circ.trans||{};
+    if(isCirc&&trR.confined&&trR.rho_s!=null){
+      h2+=`<h3>10.4 Volumetric Ratio of Spiral / Hoop Reinforcement ${RREF('Eq. 5.6.4.6-1')}</h3>`;
+      h2+=REQ("&rho;<sub>s</sub> = 4A<sub>sp</sub>/(D<sub>c</sub>s) = 4&times;"+F(trR.A_bar,3)+"/("+F(trR.Dc,3)+"&times;"+F(trR.s,3)+") = "+F(trR.rho_s,5));
+      h2+=REQ("&rho;<sub>s,min</sub> = 0.45(A<sub>g</sub>/A<sub>c</sub> &minus; 1)f'<sub>c</sub>/f<sub>yh</sub> = 0.45("+F(inp.Ag,1)+"/"+F(trR.Ac,1)+" &minus; 1)&times;"+F(fc,2)+"/"+F(trR.fyh,1)+" = "+F(trR.rho_s_min,5)+" &nbsp; (f<sub>yh</sub> &le; 75.0 ksi)");
+      h2+=RR('&rho;<sub>s</sub> &ge; &rho;<sub>s,min</sub>',RCHK(trR.rho_s_ok));
+      h2+=RR('Clear pitch',F(trR.clear_pitch,3),'in');
+    }
+    if(isCirc&&trR.detailing&&trR.detailing.length){
+      h2+=`<h3>10.5 Compression-Member Detailing ${RREF('5.6.4.2 / 5.10.3.1.5 / 5.10.4')}</h3>`;
+      h2+=`<div class="rpt-note">Information &mdash; these limits apply where the member is detailed as a compression member (column/pile). They do not drive the status lights.</div>`;
+      trR.detailing.forEach(d=>{ h2+=RR(d.item+' <small>('+d.ref+')</small>',d.value+' &nbsp; '+RCHK(d.ok,d.limit,d.limit)); });
     }
     h2+=`<hr>`;
   }
@@ -6827,8 +7401,9 @@ function generateReport(){
       h2+=REQ("A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub> &ge; |M<sub>u</sub>|/(d<sub>v</sub>&phi;<sub>f</sub>) + 0.5N<sub>u</sub>/&phi;<sub>c</sub> + (|V<sub>u</sub>/&phi;<sub>v</sub> &minus; V<sub>p</sub>| &minus; 0.5V<sub>s</sub>)cot&theta; &nbsp; "+RREF('5.7.3.5-1'));
     }
     h2+=RR('Capacity = A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub>',F(sh.long_cap,1),'kip');
+    if(isCirc) h2+=`<div class="rpt-note">Circular section: A<sub>s</sub> = bars on the flexural-tension half = ${F(fl.As,3)} in&sup2; (5.7.3.4.2: flexural tension side = half-depth containing the flexural tension zone).</div>`;
     h2+=RR('|M<sub>u</sub>|/(d<sub>v</sub>&phi;<sub>f</sub>)',F(sh.ld_M,1),'kip');
-    h2+=RR('0.5N<sub>u</sub>/&phi;<sub>c</sub>',F(sh.ld_N,1),'kip');
+    h2+=RR('0.5N<sub>u</sub>/&phi;<sub>N</sub> <small>(&phi;<sub>c</sub> for compression, &phi;<sub>f</sub> for tension)</small>',F(sh.ld_N,1),'kip');
     if(sh.torsion_consider){
       h2+=RR('Torsion term: 0.45p<sub>h</sub>T<sub>u</sub>/(2A<sub>o</sub>&phi;)',F(sh.ld_T_tors,1),'kip');
     }
@@ -6905,8 +7480,8 @@ function generateReport(){
     h2+=RR('T<sub>r</sub> &ge; T<sub>u</sub>',RCHK(tor.Tr>=Math.abs(Tu),'D/C = '+F(Math.abs(Tu)/(tor.Tr||1),3),'D/C = '+F(Math.abs(Tu)/(tor.Tr||1),3)));
     h2+=renderDetailedBreakdown(tor.breakdown_torsion_tcr, showDetails);
     h2+=renderDetailedBreakdown(tor.breakdown_torsion_tn, showDetails);
-    h2+=`<h3>12.2 Combined Shear + Torsion Stress ${RREF('5.7.3.6.1')}</h3>`;
-    h2+=`<div class="rpt-note">For solid sections, the combined shear stress from V<sub>u</sub> and T<sub>u</sub> must not exceed the concrete limit.</div>`;
+    h2+=`<h3>12.2 Combined Shear + Torsion Stress <small>(supplementary check &mdash; not an AASHTO LRFD equation)</small></h3>`;
+    h2+=`<div class="rpt-note">Supplementary ACI-318-style stress check, shown for information. AASHTO LRFD 5.7.3.6.1 only requires the transverse reinforcement to be the sum of that for shear and concurrent torsion (see 12.3); web crushing is governed by V<sub>n</sub> &le; 0.25f'<sub>c</sub>b<sub>v</sub>d<sub>v</sub> + V<sub>p</sub> (Eq. 5.7.3.3-2).</div>`;
     h2+=REQ("V<sub>u</sub>/(b<sub>v</sub>d<sub>v</sub>) + T<sub>u</sub>p<sub>h</sub>/(1.7A<sub>oh</sub>&sup2;) &le; 0.25f'<sub>c</sub>");
     h2+=RR('V<sub>u</sub>/(b<sub>v</sub>d<sub>v</sub>)',F(Math.abs(Vu)/(sh.bv*sh.dv),4),'ksi');
     h2+=RR('T<sub>u</sub>p<sub>h</sub>/(1.7A<sub>oh</sub>&sup2;)',F(tor.comb_stress-Math.abs(Vu)/(sh.bv*sh.dv),4),'ksi');
@@ -6915,7 +7490,7 @@ function generateReport(){
     h2+=RR('Combined check',RCHK(tor.comb_ok));
     h2+=`<h3>12.3 Transverse Reinforcement ${RREF('5.7.3.6.2')}</h3>`;
     h2+=`<div class="rpt-note">Combined transverse reinforcement demand: shear stirrups (A<sub>v</sub>/s) plus torsion stirrups (2A<sub>t</sub>/s).</div>`;
-    h2+=REQ("(A<sub>v</sub>/s)<sub>req'd</sub> = V<sub>steel</sub>/(f<sub>y</sub>d<sub>v</sub>cot&theta;) &nbsp; "+RREF('C5.7.3.3-1'));
+    h2+=REQ("(A<sub>v</sub>/s)<sub>req'd</sub> = V<sub>steel</sub>/(f<sub>y</sub>d<sub>v</sub>cot&theta;) &nbsp; "+RREF('from 5.7.3.3-4'));
     h2+=RR('A<sub>v</sub>/s for shear',F(tor.Av_s_shear,5),'in&sup2;/in');
     h2+=REQ("(A<sub>t</sub>/s)<sub>req'd</sub> = T<sub>u</sub>/(&phi;2A<sub>o</sub>f<sub>y</sub>cot&theta;) &nbsp; "+RREF('5.7.3.6.2-1'));
     h2+=RR('A<sub>t</sub>/s required for torsion',F(tor.At_s_tors,5),'in&sup2;/in');
@@ -6926,8 +7501,8 @@ function generateReport(){
     h2+=RR('Adequate?',RCHK(tor.comb_reinf_ok));
     h2+=RR('Min transverse = 0.0316&middot;&lambda;&middot;&radic;f\'<sub>c</sub>&middot;b<sub>v</sub>&middot;s/f<sub>y</sub>',F(tor.min_trans,4),'in&sup2;');
     // D16 (audit 2026-05-14): provided (A_v + 2A_t) at s_shear spacing
-    const Av_t_pdf=parseFloat(document.getElementById('shear_legs').value)*(BARS[parseInt(document.getElementById('shear_bar').value)]||BARS[4]).a;
-    const at_add_N_pdf=parseInt(document.getElementById('at_add_bar').value)||0;
+    const Av_t_pdf=isCirc?inp.Av:parseFloat(document.getElementById('shear_legs').value)*(BARS[parseInt(document.getElementById('shear_bar').value)]||BARS[4]).a;
+    const at_add_N_pdf=isCirc?0:(parseInt(document.getElementById('at_add_bar').value)||0);
     const at_add_s_pdf=parseFloat(document.getElementById('at_add_s').value)||0;
     const s_shear_pdf=parseFloat(document.getElementById('shear_s').value)||0;
     const At_add_pdf=(at_add_N_pdf>0 && at_add_s_pdf>0) ? 2*((BARS[at_add_N_pdf]||{a:0}).a)*(s_shear_pdf/at_add_s_pdf) : 0;
@@ -6942,7 +7517,9 @@ function generateReport(){
     h2+=RR('Capacity &ge; Demand',RCHK(tor.long_comb_ok));
     if(!tor.long_comb_ok) h2+=RR('Additional A<sub>s</sub> needed',F((tor.long_dem_comb-tor.long_cap_val)/fy,3),'in&sup2;');
     // I-section torsion notes (audit 2026-05-14, decisions D8 + D18)
-    if(!isRect && tor.consider){
+    if(isCirc){
+      h2+=circTorsionNoteHTML(tor,inp);
+    } else if(!isRect && tor.consider){
       h2+=`<div class="rpt-note" style="border-left:3px solid #c0392b; padding-left:8px; margin-top:6px;"><b>I-section torsion assumptions:</b><ul style="margin:4px 0 0 18px;padding:0;">
         <li><b>T<sub>cr</sub>:</b> computed from FULL cross-section A<sub>cp</sub> and outer perimeter p<sub>c</sub>.</li>
         <li><b>T<sub>n</sub>:</b> A<sub>o</sub> based on WEB rectangle only (A<sub>cp,web</sub>=b<sub>w</sub>·h, p<sub>c,web</sub>=2(b<sub>w</sub>+h), b<sub>e,web</sub>=A<sub>cp,web</sub>/p<sub>c,web</sub>, A<sub>o</sub>=(b<sub>w</sub>−b<sub>e,web</sub>)·(h−b<sub>e,web</sub>)). Engineers should verify this matches the detailing intent.</li>
@@ -6970,6 +7547,7 @@ function generateReport(){
       h2+=RR('n<sub>pt</sub>A<sub>ps</sub>',F(fl.nAps,3),'in&sup2;');
     }
     h2+=`<div class="rpt-note">Cracked neutral axis found by solving equilibrium of first moments about the NA, considering transformed steel areas.</div>`;
+    if(isCirc) h2+=`<div class="rpt-note">Circular section: concrete in compression = circular segment of depth c<sub>cr</sub>; every bar is transformed (n&middot;A<sub>s</sub> below the NA, (n&minus;1)&middot;A<sub>s</sub> above); c<sub>cr</sub> solved numerically. f<sub>ss</sub> is evaluated at the extreme tension bar (d = ${F(fl.serv_ds,3)} in from the service compression face); A<sub>tr</sub> = ${F((circ.cracked||{}).A_tr,1)} in&sup2;.</div>`;
     h2+=RR('Cracked NA depth, c<sub>cr</sub>',F(fl.c_cr,3),'in');
     h2+=RR('I<sub>cr</sub> (cracked moment of inertia)',F(fl.Icr,1),'in&#8308;');
     h2+=RR('I<sub>g</sub> (gross moment of inertia)',F(fl.Ig,1),'in&#8308;');
@@ -7192,6 +7770,152 @@ function updateSectionFields(){
     el.classList.toggle('disabled',isRect);
     el.querySelector('input').disabled=isRect;
   });
+  const isCirc=isCircUI();
+  document.body.classList.toggle('circ-mode',isCirc);
+  const lb=document.getElementById('lbl_shear_bar'), ls=document.getElementById('lbl_shear_s');
+  if(isCirc){
+    const sp=document.getElementById('circ_trans_type').value==='spiral';
+    if(lb) lb.textContent=sp?'Spiral bar size':'Hoop bar size';
+    if(ls) ls.textContent=sp?'Spiral pitch, s':'Hoop spacing, s';
+    const hc=document.getElementById('circ_hoop_closure_row'); if(hc) hc.style.display=sp?'none':'';
+    updateCircInfo();
+  } else {
+    if(lb) lb.textContent='Stirrup bar size';
+    if(ls) ls.textContent='Stirrup spacing, s';
+  }
+}
+
+/* ====== CIRCULAR SECTION — UI helpers (engine: circ_engine.py) ====== */
+function isCircUI(){ const el=document.getElementById('sectionType'); return !!el&&el.value==='CIRCULAR'; }
+function _secDepthUI(){ return isCircUI()?V('circ_D'):V('h_total'); }
+// Mirrors circ_engine.circ_layout (engine units: in). Bundles are placed at the bundle centroid.
+function circLayoutJS(p){
+  const R=p.D/2, rings=[], bars=[];
+  const specs=[[1,p.bar1,p.n1,p.bundle1,null]];
+  if(p.ring2&&p.n2>0) specs.push([2,p.bar2,p.n2,p.bundle2,p.Dr2]);
+  specs.forEach(([ring,barN,n,nb,Dr])=>{
+    const bar=BARS[barN]||BARS[8];
+    n=Math.max(0,Math.round(n||0)); nb=Math.max(1,Math.min(3,Math.round(nb||1)));
+    if(n<=0) return;
+    const r=ring===1?R-p.cover-p.d_tr-bar.d/2-(nb===3?bar.d*Math.sqrt(3)/6:0):(Dr||0)/2;
+    const chord=n>1?2*r*Math.sin(Math.PI/n):0;
+    rings.push({ring,barN,n,nb,bar,r,Dr:2*r,As:n*nb*bar.a,s_arc:2*Math.PI*r/n,s_clear:n>1?chord-(nb<=1?bar.d:2*bar.d):0,d_eq:bar.d*Math.sqrt(nb)});
+    for(let i=0;i<n;i++){const ang=2*Math.PI*i/n;bars.push({ring,ang,r,x:r*Math.sin(ang),d_top:R-r*Math.cos(ang),bar,nb,As:nb*bar.a});}
+  });
+  return {rings,bars,Ast:bars.reduce((s,b)=>s+b.As,0)};
+}
+function circParamsFromDOM(){
+  const shN=parseInt(document.getElementById('shear_bar').value);
+  const trBar=(shN===0)?null:(BARS[shN]||BARS[4]);
+  return {D:VE('circ_D'),cover:VE('cover'),d_tr:trBar?trBar.d:0,
+    bar1:parseInt(document.getElementById('circ_bar1').value)||9,n1:V('circ_n1'),
+    bundle1:parseInt(document.getElementById('circ_bundle1').value)||1,
+    ring2:document.getElementById('circ_ring2').checked,
+    bar2:parseInt(document.getElementById('circ_bar2').value)||8,n2:V('circ_n2'),
+    bundle2:parseInt(document.getElementById('circ_bundle2').value)||1,Dr2:VE('circ_Dr2'),
+    trans:document.getElementById('circ_trans_type').value,closure:document.getElementById('circ_hoop_closure').value,shN:shN,s:VE('shear_s'),
+    tie_legs:Math.max(0,Math.round(V('circ_tie_legs')||0)),
+    tie_bar:parseInt(document.getElementById('circ_tie_bar').value)||4};
+}
+function circParamsFromState(inp){
+  const num=(v,d=0)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
+  const shN=parseInt(inp.shN); const shN_eff=isNaN(shN)?4:shN;
+  const trBar=(shN_eff===0)?null:(BARS[shN_eff]||BARS[4]);
+  return {D:num(inp.circ_D,36),cover:num(inp.cover,2),d_tr:trBar?trBar.d:0,
+    bar1:parseInt(inp.circ_bar1)||9,n1:num(inp.circ_n1,12),bundle1:parseInt(inp.circ_bundle1)||1,
+    ring2:!!inp.circ_ring2,bar2:parseInt(inp.circ_bar2)||8,n2:num(inp.circ_n2,0),
+    bundle2:parseInt(inp.circ_bundle2)||1,Dr2:num(inp.circ_Dr2,0),
+    trans:inp.circ_trans_type||'hoop',closure:inp.circ_hoop_closure||'lap',shN:shN_eff,s:num(inp.shear_s,4),
+    tie_legs:Math.max(0,Math.round(num(inp.circ_tie_legs,0))),tie_bar:parseInt(inp.circ_tie_bar)||4};
+}
+// Engine payload keys for a circular section (merged over the rect-style payload)
+function circPayload(p){
+  return {secType:'CIRCULAR',memberType:'BEAM',D:p.D,b:p.D,h:p.D,bw_input:p.D,hf_top:0,hf_bot:0,
+    circ_bar1:p.bar1,circ_n1:Math.round(p.n1||0),circ_bundle1:p.bundle1,
+    circ_ring2:!!p.ring2,circ_bar2:p.bar2,circ_n2:Math.round(p.n2||0),circ_bundle2:p.bundle2,circ_Dr2:p.Dr2,
+    circ_trans_type:p.trans,circ_hoop_closure:p.closure||'lap',circ_tie_legs:p.tie_legs,circ_tie_bar:p.tie_bar,
+    shear_legs:(p.shN===0)?0:2,at_add_bar_N:0,s_at_add:0,
+    As_top_ovr:null,As_bot_ovr:null,mr_rows_top:null,mr_rows_bot:null};
+}
+function updateCircInfo(){
+  const el=document.getElementById('circ_rebar_info');
+  if(!el||!isCircUI()) return;
+  const p=circParamsFromDOM();
+  if(!(p.D>0)){ el.innerHTML='<span class="circ-warn">Enter a diameter D &gt; 0.</span>'; return; }
+  const L=circLayoutJS(p);
+  const Ag=Math.PI*p.D*p.D/4;
+  const ag=VE('ag')||0.75;
+  let s='';
+  L.rings.forEach(rg=>{
+    const s_min=Math.max(1.5*rg.d_eq,1.5*ag,1.5);
+    const bad=rg.n>1&&rg.s_clear<s_min-0.001;
+    s+=`Ring ${rg.ring}: ${rg.n}&times;${rg.nb>1?rg.nb+'-':''}#${rg.barN}, D<sub>r</sub> = ${rg.Dr.toFixed(2)} in, A<sub>s</sub> = ${rg.As.toFixed(2)} in&sup2;, `
+      +`clear spacing = <span class="${bad?'circ-warn':''}">${rg.s_clear.toFixed(2)} in${bad?' &lt; s<sub>min</sub> = '+s_min.toFixed(2)+' in':''}</span><br>`;
+    if(rg.r<=0) s+='<span class="circ-warn">Ring '+rg.ring+' diameter must be &gt; 0.</span><br>';
+  });
+  if(L.rings.length===2&&L.rings[1].Dr>=L.rings[0].Dr) s+='<span class="circ-warn">Inner ring must be inside the outer ring.</span><br>';
+  s+=`A<sub>st</sub> = ${L.Ast.toFixed(2)} in&sup2;, &rho;<sub>g</sub> = A<sub>st</sub>/A<sub>g</sub> = ${(100*L.Ast/Ag).toFixed(2)}%`;
+  el.innerHTML=s;
+}
+function drawCircCrossSection(cv){
+  const dpr=window.devicePixelRatio||1;
+  const cssW=560, cssH=520;
+  cv.width=cssW*dpr; cv.height=cssH*dpr;
+  cv.style.width=cssW+'px'; cv.style.height=cssH+'px';
+  const ctx=cv.getContext('2d');
+  ctx.scale(dpr,dpr); ctx.clearRect(0,0,cssW,cssH);
+  updateCircInfo();
+  const p=circParamsFromDOM();
+  if(!(p.D>0)) return;
+  const L=circLayoutJS(p);
+  const R=p.D/2, sc=Math.min(cssW-120,cssH-130)/p.D;
+  const cx=cssW/2, cy=40+R*sc;
+  ctx.fillStyle='#e8e8e8'; ctx.strokeStyle='#444'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(cx,cy,R*sc,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  // Transverse reinforcement (hoop solid, spiral dashed)
+  if(p.d_tr>0){
+    const rh=(R-p.cover-p.d_tr/2)*sc;
+    ctx.save(); ctx.strokeStyle='#27ae60'; ctx.lineWidth=Math.max(p.d_tr*sc,1.5);
+    if(p.trans==='spiral') ctx.setLineDash([10,5]);
+    ctx.beginPath(); ctx.arc(cx,cy,rh,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    if(p.tie_legs>0&&L.rings.length){
+      const tb=BARS[p.tie_bar]||BARS[4];
+      ctx.save(); ctx.strokeStyle='#16a085'; ctx.lineWidth=Math.max(tb.d*sc,1.2);
+      for(let i=0;i<p.tie_legs;i++){
+        const xo=(p.tie_legs===1)?0:(-0.5+i/(p.tie_legs-1))*rh*1.1;
+        const yo=Math.sqrt(Math.max(rh*rh-xo*xo,0));
+        ctx.beginPath(); ctx.moveTo(cx+xo,cy-yo); ctx.lineTo(cx+xo,cy+yo); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  // Bars (bundles drawn around the bundle centroid)
+  const ringCol=['#2c3e50','#8e44ad'];
+  L.bars.forEach(b=>{
+    const rr=Math.max(b.bar.d/2*sc,2);
+    ctx.fillStyle=ringCol[b.ring-1]||'#2c3e50';
+    const ux=Math.sin(b.ang), uy=-Math.cos(b.ang), tx=Math.cos(b.ang), ty=Math.sin(b.ang);
+    const pts=b.nb===1?[[0,0]]:b.nb===2?[[-0.5,0],[0.5,0]]:[[-0.5,Math.sqrt(3)/6],[0.5,Math.sqrt(3)/6],[0,-Math.sqrt(3)/3]];
+    pts.forEach(([t,n])=>{
+      const px=cx+b.x*sc+(t*tx+n*ux)*b.bar.d*sc, py=cy-(R-b.d_top)*sc+(t*ty+n*uy)*b.bar.d*sc;
+      ctx.beginPath(); ctx.arc(px,py,rr,0,Math.PI*2); ctx.fill();
+    });
+  });
+  // PT tendon centroid
+  const nS=V('n_strands'), dpv=VE('dp_input');
+  if(document.getElementById('sectionClass').value!=='NP'&&nS>0&&dpv>0){
+    ctx.fillStyle='#e74c3c'; ctx.beginPath(); ctx.arc(cx,cy-R*sc+dpv*sc,5,0,Math.PI*2); ctx.fill();
+  }
+  // Dimension D
+  ctx.strokeStyle='#666'; ctx.fillStyle='#444'; ctx.lineWidth=1;
+  const yd=cy+R*sc+22;
+  ctx.beginPath(); ctx.moveTo(cx-R*sc,yd); ctx.lineTo(cx+R*sc,yd); ctx.stroke();
+  ctx.font='12px "Segoe UI",sans-serif'; ctx.textAlign='center';
+  ctx.fillText('D = '+fromEngine(p.D,'length').toFixed(2)+' '+unitLabel('length'),cx,yd+16);
+  const lines=L.rings.map(rg=>`Ring ${rg.ring}: ${rg.n} × ${rg.nb>1?rg.nb+'-':''}#${rg.barN}  (Dr = ${rg.Dr.toFixed(2)} in)`);
+  lines.push((p.trans==='spiral'?'Spiral':'Hoops')+(p.d_tr>0?` #${p.shN} @ ${p.s.toFixed(2)} in`:' — none')+(p.tie_legs>0?`, ${p.tie_legs} cross-tie leg(s) #${p.tie_bar}`:''));
+  ctx.textAlign='left'; ctx.font='11px "Segoe UI",sans-serif';
+  lines.forEach((t,i)=>ctx.fillText(t,12,cssH-8-(lines.length-1-i)*15));
 }
 // Beam vs Slab: in Slab mode the section is locked to RECTANGULAR (no T-section
 // flange/web) and pro-rated As applies when reinforcement is entered as spacing.
@@ -7312,6 +8036,9 @@ document.querySelectorAll('#tab-inputs input:not(.ovr-cb), #tab-inputs select').
 // When section depth h changes, re-validate PT y-bounds and re-run PT calc
 document.getElementById('h_total').addEventListener('change',()=>{validatePtYBounds();debouncedPtCalc();});
 document.getElementById('h_total').addEventListener('input',()=>validatePtYBounds());
+document.getElementById('circ_D').addEventListener('change',()=>{validatePtYBounds();debouncedPtCalc();});
+document.getElementById('circ_D').addEventListener('input',()=>validatePtYBounds());
+document.getElementById('circ_trans_type').addEventListener('change',()=>updateSectionFields());
 /* ====== MULTI-ROW REINFORCEMENT ====== */
 let mrSide='top'; // 'top' or 'bot'
 let mrRowCount=0;
@@ -7319,6 +8046,7 @@ let mrRowCount=0;
 const mrData={top:null, bot:null};
 
 function resolveMRRows(side){
+  if(isCircUI()) return null;
   const data=mrData[side];
   if(!data||data.length===0) return null;
   const b=parseFloat(document.getElementById('b_flange').value)||16;

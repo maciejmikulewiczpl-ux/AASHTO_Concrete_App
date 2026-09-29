@@ -1174,7 +1174,8 @@ def compute_pm_key_points(I, pm_curve, comp_face="top", Pu=0):
         steps_pt.append(f"  M = F×arm = {F_ps:.1f}×{arm_ps:.3f} = {M_ps:.1f} kip-in")
 
     Pn_t = F_tens_total + F_comp_total + F_pt_total
-    Mn_pt = (M_tens_total + M_comp_total + M_pt_total) * m_sign
+    # d_top_pos is already from the top face: no m_sign here, matching the plotted curve (F6)
+    Mn_pt = (M_tens_total + M_comp_total + M_pt_total)
 
     steps_pt.append(f"")
     steps_pt.append(f"--- Moment about geometric centroid (h/2 = {pc_y:.3f} in) ---")
@@ -1183,7 +1184,7 @@ def compute_pm_key_points(I, pm_curve, comp_face="top", Pu=0):
     steps_pt.append(f"  Mn_steel(comp) = ΣF·arm = {M_comp_total:.1f} kip-in")
     if Aps > 0:
         steps_pt.append(f"  Mn_pt = {M_pt_total:.1f} kip-in")
-    steps_pt.append(f"  Mn = (0 + {M_tens_total:.1f} + {M_comp_total:.1f} + {M_pt_total:.1f}) × {m_sign}")
+    steps_pt.append(f"  Mn = 0 + {M_tens_total:.1f} + {M_comp_total:.1f} + {M_pt_total:.1f}  (bar positions measured from the top face)")
     steps_pt.append(f"     = {Mn_pt:.1f} kip-in")
 
     steps_pt.append(f"")
@@ -1724,7 +1725,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     #   1.0  → unbonded tendons (override via factor_overrides if applicable)
     gamma1 = fo.get("gamma1_f", 1.6)
     gamma2 = fo.get("gamma2_f", 1.1)
-    # γ3 per Table 5.6.3.3-1: depends on ASTM spec of reinforcement
+    # γ3 per Table 5.6.3.3: depends on ASTM spec of the nonprestressed reinforcement;
+    # "For prestressing steel, γ3 shall be taken as 1.0" → 1.0 when tension-side PT (F2)
     astm_spec = I.get("astm_spec", "A615_60")
     astm_gamma3_map = {
         "A615_60": 0.67, "A615_75": 0.75, "A615_80": 0.76,
@@ -1732,7 +1734,7 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
         "A1035_100": 0.67,
         "A615": 0.67, "A706": 0.75  # Legacy values
     }
-    gamma3_default = astm_gamma3_map.get(astm_spec, 0.67)
+    gamma3_default = 1.0 if Aps_tens > 0 else astm_gamma3_map.get(astm_spec, 0.67)
     gamma3 = fo.get("gamma3_f", gamma3_default)
     # AASHTO 5.4.2.6: fr = 0.24·λ·√fc' (λ from 5.4.2.8 for lightweight concrete)
     fr = 0.24 * lam * math.sqrt(fc) if fc > 0 else 0
@@ -1748,7 +1750,7 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
         It = (b * hf_top ** 3 / 12 + A1 * (yb - y1) ** 2
               + bw * hw ** 3 / 12 + A2 * (yb - y2) ** 2
               + b * hf_bot ** 3 / 12 + A3 * (yb - y3) ** 2)
-        Sc = It / max(yb, h - yb) if max(yb, h - yb) > 0 else 0
+        Sc = It / ((h - yb) if Mu >= 0 else yb) if min(yb, h - yb) > 0 else 0  # tension-fibre S (F4)
     # fcpe: compressive stress at extreme tension fiber due to effective prestress (5.6.3.3)
     # fcpe = P/A + P*e*yt/I  where P = Aps*fpe, e = eccentricity from centroid to PT
     Aps_mcr = I.get("Aps", 0)
@@ -1768,7 +1770,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     else:
         yt_mcr = yb_c
     if Ag_mcr > 0 and Ig_mcr > 0 and P_eff > 0:
-        fcpe = P_eff / Ag_mcr + P_eff * e_pt * yt_mcr / Ig_mcr
+        # Tendon below centroid (e > 0) compresses the bottom fibre and decompresses the top (F3)
+        fcpe = P_eff / Ag_mcr + (1 if Mu >= 0 else -1) * P_eff * e_pt * yt_mcr / Ig_mcr
         fcpe = max(fcpe, 0)  # fcpe is compressive stress, must be >= 0
     else:
         fcpe = 0
@@ -1779,7 +1782,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
     min_flex_ok = Mr >= Mcond
 
     # ── Crack control (5.6.7) ──
-    dc = cover + bar_d_tens / 2
+    # dc to the bar centre: cover is clear to the stirrup, as in the UI's auto d (M1)
+    dc = cover + (I["shBar_d"] if I["Av"] > 0 else 0) + bar_d_tens / 2
     beta_s = 1 + dc / (0.7 * (h - dc)) if (h - dc) > 0 else 1
     fss_simp = 0.6 * fy_long
     s_crack = (700 * gamma_e) / (beta_s * fss_simp) - 2 * dc if (beta_s * fss_simp) > 0 else 0
@@ -1857,7 +1861,8 @@ def do_flexure(I, Pu, Mu, Ms, Ps):
                           f"secondary moment from axial offset", addlBM, "kip-in")
         serv_breakdown.add(f"Ms_total = Ms + addl_BM", f"", M_total_serv, "kip-in")
     
-    fss = (M_total_serv * (s_ds - c_cr) / Icr * n_mod + Ps / (nAs + nAps + c_cr * b) * n_mod) if Icr > 0 else 0
+    A_conc_cr = c_cr * b if (is_rect or c_cr <= s_hf) else b * s_hf + bw * (c_cr - s_hf)  # M2
+    fss = (M_total_serv * (s_ds - c_cr) / Icr * n_mod + Ps / (nAs + nAps + A_conc_cr) * n_mod) if Icr > 0 else 0
     serv_breakdown.add(f"fss = M·(ds-c_cr)/Icr·n + Ps·n/(transformed area)",
                       f"service rebar stress = {fmt_num(M_total_serv, 1)}·{fmt_num(s_ds - c_cr, 2)}/{fmt_num(Icr, 1)}·{fmt_num(n_mod, 2)}",
                       fss, "ksi")
@@ -2358,6 +2363,9 @@ def compute_torsion_threshold(I, Tu):
         be = Acp_web / pc_web if pc_web > 0 else 0  # be from web sub-section, used in Ao
         Ao = (bw - be) * (h - be)
         ph = (bw - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
+    if I.get("isCirc"):
+        g = I["circ_tors"]  # set by circ_engine.derive_circular
+        Acp, pc, be, Ao, ph = g["Acp"], g["pc"], g["be"], g["Ao"], g["ph"]
 
     K = 1
     Tcr = 0.126 * K * lam * math.sqrt(fc) * Acp * Acp / pc if pc > 0 and fc > 0 else 0
@@ -2439,6 +2447,8 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Ig = (b * hf_top ** 3 / 12 + A1 * (ybar - y1) ** 2
               + bw * hw ** 3 / 12 + A2 * (ybar - y2) ** 2
               + b * hf_bot ** 3 / 12 + A3 * (ybar - y3) ** 2)
+    if I.get("isCirc"):
+        Ag, Ig, ybar = I["Ag"], I["Ig"], I["yb_centroid"]
     # Positive Mu: top in compression, bottom in tension
     # stress = P/A ± M*y/I  (sign convention: +Mu causes compression at top)
     yt = ybar         # distance from centroid to top fiber
@@ -2459,6 +2469,8 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Act_gp = b * hf_bot + bw * max(h / 2 - hf_bot, 0)
     else:
         Act_gp = b * hf_top + bw * max(h / 2 - hf_top, 0)
+    if I.get("isCirc"):
+        Act_gp = I["Ag"] / 2
     Ec_gp = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
 
     # Min Av (needed before eps_s for denominator factor)
@@ -2471,15 +2483,17 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Av_min = 0.0316 * lam * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
         has_min_av = Av >= Av_min
 
-    # Strain eps_s — Eq. 5.7.3.4.2-4 (with min Av) or -5 (without)
-    # Denominator: 2*(Es*As + Ep*Aps) when min Av present, else Es*As + Ep*Aps
-    eps_denom = 2 * denom if has_min_av else denom
+    # Strain eps_s — AASHTO LRFD 10th Ed Eq. 5.7.3.4.2-4, one equation for sections
+    # with and without min Av; denominator (EsAs + EpAps). The factor 2 belongs to
+    # Appendix B5 Eq. B5.2-3 only (F1, verified 2026-09-29 against §5.7.3.4.2 text).
+    eps_denom = denom
     eps_s = ((Mu_c / dv + 0.5 * Pu + abs(V_strain - Vp) - Aps_tens * fpo) / eps_denom) if eps_denom > 0 else 0.006
     if dbl_eps:
         eps_s *= 2
     eps_s_neg_recalc = False
     if eps_s < 0:
-        denom_neg = (2 * (Es * As + Ept * Aps_tens) + Ec_gp * Act_gp) if has_min_av else (Es * As + Ept * Aps_tens + Ec_gp * Act_gp)
+        # §5.7.3.4.2: εs < 0 → recalculate with denominator (EsAs + EpAps + EcAct), ≥ −0.40e-3
+        denom_neg = Es * As + Ept * Aps_tens + Ec_gp * Act_gp
         eps_s = ((Mu_c / dv + 0.5 * Pu + abs(V_strain - Vp) - Aps_tens * fpo) / denom_neg) if denom_neg > 0 else 0
         eps_s = max(eps_s, -0.0004)
         eps_s_neg_recalc = True
@@ -2520,6 +2534,8 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
         Act = b * hf_bot + bw * max(h / 2 - hf_bot, 0)
     else:
         Act = b * hf_top + bw * max(h / 2 - hf_top, 0)
+    if I.get("isCirc"):
+        Act = I["Ag"] / 2
     b5_max_ex = 0.001 if has_min_av else 0.002
     th3, bt3, ex_b5, n_iter, b5_valid = 30, 2, 0, 0, True
     b5_invalid_reason = ""  # populated when b5_valid becomes False
@@ -2546,6 +2562,9 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
             ex = ex_num / b5denom_neg if b5denom_neg > 0 else 0
             b5_ex_neg_recalc_iter = True
             denom_used = b5denom_neg
+        elif dbl_eps:
+            # §B5.2: axial tension cracks the compression face → increase εx (doubled, M4)
+            ex *= 2
         ex_b5 = ex
         b5_ex_num = ex_num
         b5_denom_used = denom_used
@@ -2795,8 +2814,20 @@ def do_shear(I, flex, Pu, Mu, Vu, Tu, Vp, tors_info=None):
     sh_reqd_shear = abs(Vu) > 0.5 * phi_v * (Vc2 + Vp)
     sh_reqd = sh_reqd_shear or torsion_consider
 
+    # AASHTO 5.7.3.4.1 scope (M3): nonprestressed, no axial tension, and either at least
+    # min Av (5.7.2.5) or overall depth < 16.0 in. (Footing case not modelled.) Info only.
+    m1_na = []
+    if Aps > 0:
+        m1_na.append("prestressed section")
+    if Pu > 0:
+        m1_na.append("axial tension")
+    if not has_min_av and h >= 16.0:
+        m1_na.append("less than min Av and h ≥ 16 in.")
+    m1_applicable = not m1_na
+
     return {
         # Common
+        "m1_applicable": m1_applicable, "m1_na_reason": "; ".join(m1_na),
         "Mu_c": Mu_c, "dv": dv, "bv": bv, "Vnmax": Vnmax,
         "lambda_duct": lambda_duct, "fpo": fpo,
         "Veff": Veff, "tors_shear_comp": tors_shear_comp,
@@ -2924,6 +2955,9 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
         be = Acp_web / pc_web if pc_web > 0 else 0
         Ao = (bw - be) * (h - be)
         ph = (bw - 2 * cover - shBar_d) * 2 + (h - 2 * cover - shBar_d) * 2
+    if I.get("isCirc"):
+        g = I["circ_tors"]  # set by circ_engine.derive_circular
+        Acp, pc, be, Ao, ph = g["Acp"], g["pc"], g["be"], g["Ao"], g["ph"]
 
     # Tcr (5.7.2.1-4) — consistent with compute_torsion_threshold
     K = 1
@@ -2948,6 +2982,8 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
     Av_ext_s = 2 * shBar_a / s_shear if s_shear > 0 else 0  # 2 external legs capacity
     Av_s_shear_ext = Av_s_shear * (2 / shear_legs_val)  # shear demand from external legs
     At_s_avail = max(Av_ext_s - Av_s_shear_ext, 0) / 2  # available per leg after shear demand
+    if I.get("isCirc") and I.get("circ_spiral"):
+        At_s_avail = 0  # spiral not counted as closed torsion reinforcement (see circ_engine)
 
     # Additional torsional stirrups (closed loops, 2 external legs, outer perimeter only)
     At_s_additional = I.get("at_add_bar_a", 0) / I.get("s_at_add", 1) if I.get("s_at_add", 0) > 0 else 0
@@ -3010,6 +3046,8 @@ def do_torsion(I, flex, shear, Pu, Mu, Vu, Tu, Vp):
     At_s_tors = abs(Tu) / (phi_v * 2 * Ao * fy_trans * cott) if consider and (phi_v * 2 * Ao * fy_trans * cott) > 0 else 0
     Av_s_comb = Av_s_shear + 2 * At_s_tors
     comb_reinf_ok = Av_ext_s >= Av_s_comb
+    if I.get("isCirc") and I.get("circ_spiral") and consider:
+        comb_reinf_ok = False
 
     # AASHTO 5.7.2.5-1: min transverse = 0.0316·λ·√fc'·bv·s/fy (combined shear+torsion stirrups)
     min_trans = 0.0316 * lam * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
@@ -3142,7 +3180,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         Cw = alpha1 * fc * bw * a
         Mn = (Cf * (ds - hf / 2) + Cw * (ds - a / 2)
               + (Aps_tens * fps_calc * (dp - a / 2) if Aps_tens > 0 else 0)
-              - (As_comp * fy_long * (ds - cover) if As_comp > 0 else 0))
+              + (As_comp * fy_long * (ds - d_s_comp) if As_comp > 0 else 0))
 
     tot_tens = As * fy_long + (Aps_tens * fps_calc if Aps_tens > 0 else 0)
     if Aps_tens > 0 and As > 0:
@@ -3185,9 +3223,19 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         Av_min = 0.0316 * lam * math.sqrt(fc) * bv * s_shear / fy_trans if fy_trans > 0 and fc > 0 else 0
         has_min_av = Av >= Av_min
 
-    # Strain eps_s — Eq. 5.7.3.4.2-4 (with min Av) or -5 (without)
-    eps_denom = 2 * denom if has_min_av else denom
+    # Axial tension cracking the compression face (same gross-section test as do_shear)
+    Ag_r, Ig_r, yt_r = I["Ag"], I["Ig"], I["yb_centroid"]
+    if Ag_r > 0 and Ig_r > 0:
+        flex_compr_row = min(Pu / Ag_r - Mu * yt_r / Ig_r, Pu / Ag_r + Mu * (h - yt_r) / Ig_r)
+    else:
+        flex_compr_row = 0
+    dbl_eps_row = flex_compr_row > 0.24 * lam * math.sqrt(fc) if fc > 0 else False
+
+    # Strain eps_s — Eq. 5.7.3.4.2-4, single denominator (EsAs + EpAps) (F1)
+    eps_denom = denom
     eps_s = (Mu_c / dv + 0.5 * Pu + abs(V_strain - Vp) - Aps_tens * fpo) / eps_denom if eps_denom > 0 else 0.006
+    if dbl_eps_row:
+        eps_s *= 2
     if eps_s < 0:
         if is_rect:
             Act_row = b * h / 2
@@ -3196,7 +3244,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         else:
             Act_row = b * hf_top + bw * max(h / 2 - hf_top, 0)
         Ec_row = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
-        denom_neg = (2 * (Es * As + Ept * Aps_tens) + Ec_row * Act_row) if has_min_av else (Es * As + Ept * Aps_tens + Ec_row * Act_row)
+        denom_neg = Es * As + Ept * Aps_tens + Ec_row * Act_row
         eps_s = (Mu_c / dv + 0.5 * Pu + abs(V_strain - Vp) - Aps_tens * fpo) / denom_neg if denom_neg > 0 else 0
         eps_s = max(eps_s, -0.0004)
     eps_s = min(eps_s, 0.006)
@@ -3242,6 +3290,8 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
             Ec_val = Ec if Ec > 0 else _ec_aashto(fc, I.get("K1", 1.0), I.get("wc", 0.145))
             b5denom_neg = 2 * (Ec_val * Act + denom)
             ex = ex_num / b5denom_neg if b5denom_neg > 0 else 0
+        elif dbl_eps_row:
+            ex *= 2
         if ex > b5_max_ex:
             b5_valid = False
             break
@@ -3312,7 +3362,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
     else:
         s_As_r = As_top; s_ds_r = h - d_top
         s_dp_r = h - dp_orig if dp_orig > 0 else 0
-    dc = cover + bar_d_tens / 2
+    dc = cover + (I["shBar_d"] if I["Av"] > 0 else 0) + bar_d_tens / 2
     beta_s_val = 1 + dc / (0.7 * (h - dc)) if (h - dc) > 0 else 1
     fss_simp = 0.6 * fy_long
     s_crack_val = (700 * gamma_e) / (beta_s_val * fss_simp) - 2 * dc if (beta_s_val * fss_simp) > 0 else 0
@@ -3327,12 +3377,30 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         disc_c = qb_c ** 2 - 4 * qa_c * qc_c
         c_cr_c = (-qb_c + math.sqrt(disc_c)) / (2 * qa_c) if disc_c > 0 and qa_c > 0 else 0
         Icr_c = b * c_cr_c ** 3 / 3 + nAs_c * (s_ds_r - c_cr_c) ** 2 + (nAps_c * (s_dp_r - c_cr_c) ** 2 if Aps > 0 else 0)
+        A_conc_c = c_cr_c * b
+        s_hf_r = hf_top if Ms >= 0 else hf_bot
+        if not is_rect and c_cr_c > s_hf_r:
+            # I-section, NA in the web: same T-section solution as do_flexure (F5)
+            qa_t = bw / 2
+            qb_t = nAs_c + nAps_c + (b - bw) * s_hf_r
+            qc_t = -(nAs_c * s_ds_r + nAps_c * s_dp_r + (b - bw) * s_hf_r ** 2 / 2)
+            disc_t = qb_t ** 2 - 4 * qa_t * qc_t
+            c_cr_c = (-qb_t + math.sqrt(disc_t)) / (2 * qa_t) if disc_t > 0 and qa_t > 0 else 0
+            if c_cr_c > s_hf_r:
+                Icr_c = (b * s_hf_r ** 3 / 12 + b * s_hf_r * (c_cr_c - s_hf_r / 2) ** 2
+                         + bw * (c_cr_c - s_hf_r) ** 3 / 3
+                         + nAs_c * (s_ds_r - c_cr_c) ** 2
+                         + (nAps_c * (s_dp_r - c_cr_c) ** 2 if Aps > 0 else 0))
+                A_conc_c = b * s_hf_r + bw * (c_cr_c - s_hf_r)
+            else:
+                Icr_c = b * c_cr_c ** 3 / 3 + nAs_c * (s_ds_r - c_cr_c) ** 2 + (nAps_c * (s_dp_r - c_cr_c) ** 2 if Aps > 0 else 0)
+                A_conc_c = c_cr_c * b
         M_serv_c = abs(Ms)
         addlBM_c = Ps * (h / 2 - c_cr_c)
         fss_act = 0
         if Icr_c > 0:
             fss_act = ((M_serv_c + addlBM_c) * (s_ds_r - c_cr_c) / Icr_c * n_mod
-                       + Ps / (nAs_c + nAps_c + c_cr_c * b) * n_mod)
+                       + Ps / (nAs_c + nAps_c + A_conc_c) * n_mod)
         if fss_act > 0.6 * fy_long:
             crack_status = "NG"
         if s_crack_val <= 0:
@@ -3366,8 +3434,10 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         pt_stress_ftop = pt_stress_result["f_top"]
         pt_stress_fbot = pt_stress_result["f_bot"]
 
-    # Flex status
-    gamma1 = 1.6
+    # Flex status — same γ factors / overrides and Mcr assembly as do_flexure (F5)
+    fo_r = I.get("factor_overrides", {})
+    gamma1 = fo_r.get("gamma1_f", 1.6)
+    gamma2_r = fo_r.get("gamma2_f", 1.1)
     astm_spec = I.get("astm_spec", "A615_60")
     astm_gamma3_map = {
         "A615_60": 0.67, "A615_75": 0.75, "A615_80": 0.76,
@@ -3375,7 +3445,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         "A1035_100": 0.67,
         "A615": 0.67, "A706": 0.75  # Legacy values
     }
-    gamma3 = astm_gamma3_map.get(astm_spec, 0.67)
+    gamma3 = fo_r.get("gamma3_f", 1.0 if Aps_tens > 0 else astm_gamma3_map.get(astm_spec, 0.67))
     # AASHTO 5.4.2.6: fr = 0.24·λ·√fc' (λ from 5.4.2.8)
     fr_c = 0.24 * lam * math.sqrt(fc) if fc > 0 else 0
     if is_rect:
@@ -3390,8 +3460,15 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         It_c = (b * hf_top ** 3 / 12 + A1 * (yb - y1) ** 2
                 + bw * hw ** 3 / 12 + A2 * (yb - y2) ** 2
                 + b * hf_bot ** 3 / 12 + A3 * (yb - y3) ** 2)
-        Sc_c = It_c / max(yb, h - yb) if max(yb, h - yb) > 0 else 0
-    Mcr_c = gamma1 * gamma3 * fr_c * Sc_c
+        Sc_c = It_c / ((h - yb) if Mu >= 0 else yb) if min(yb, h - yb) > 0 else 0
+    P_eff_r = I.get("Aps", 0) * I.get("fpe", 0)
+    fcpe_r = 0
+    if P_eff_r > 0 and I.get("Ag", 0) > 0 and I.get("Ig", 0) > 0:
+        yb_cr = I.get("yb_centroid", h / 2.0)
+        yt_r = (h - yb_cr) if Mu >= 0 else yb_cr
+        e_r = I.get("dp", h / 2.0) - yb_cr
+        fcpe_r = max(P_eff_r / I["Ag"] + (1 if Mu >= 0 else -1) * P_eff_r * e_r * yt_r / I["Ig"], 0)
+    Mcr_c = gamma3 * (gamma1 * fr_c + gamma2_r * fcpe_r) * Sc_c
     Mcond_c = min(1.33 * abs(Mu), Mcr_c)
     min_flex_ok_c = Mr >= Mcond_c
     flex_cap_ok = Mr >= abs(Mu)
@@ -3424,12 +3501,14 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
     # Longitudinal reinforcement check (5.7.3.5-1 / 5.7.3.6.3-1) per row
     fo = I.get("factor_overrides", {})
     phi_c_row = fo.get("phi_c_f", 0.75)
-    eps_t_row = 0.003 * (ds - c) / c if c > 0 else 0.005
+    dt_row = max(ds, dp) if (Aps_tens > 0 and dp > 0) else ds  # M13
+    eps_t_row = 0.003 * (dt_row - c) / c if c > 0 else 0.005
     phi_f_row = get_phi_flex(code_edition, section_class, eps_t_row, ecl, etl)
     if "phi_f_f" in fo:
         phi_f_row = fo["phi_f_f"]
     ld_M_row = abs(Mu) / (dv * phi_f_row) if (dv * phi_f_row) > 0 else 0
-    ld_N_row = 0.5 * Pu / phi_c_row
+    # φ for the Nu term is sign-dependent, as in do_shear (audit D1)
+    ld_N_row = 0.5 * Pu / (phi_c_row if Pu < 0 else phi_f_row)
     long_cap_row = As * fy_long + (Aps_tens * fps_calc if Aps_tens > 0 else 0)
 
     # Torsion longitudinal component (SRSS per 5.7.3.6.3)
@@ -3480,6 +3559,7 @@ def compute_row_capacities(I, pm_curve_sag, pm_curve_hog, Pu, Mu, Vu, Tu, Vp, Ms
         "pt_stress": pt_stress_result,
         "torsionConsider": torsion_consider_row,
         "shReqd": sh_reqd, "hasMinAv": has_min_av,
+        "epsS": eps_s, "dblEps": dbl_eps_row,
         "long_ok_1": long_ok_1_r, "long_ok_2": long_ok_2_r, "long_ok_3": long_ok_3_r,
         "long_dc_1": long_dc_1_r, "long_dc_2": long_dc_2_r, "long_dc_3": long_dc_3_r,
     }
@@ -3492,6 +3572,10 @@ def calculate_all(raw_inputs, demand_rows, active_row_idx):
     Main calculation entry. Takes raw inputs dict, list of demand dicts,
     and active row index. Returns complete results for rendering.
     """
+    if raw_inputs.get("secType") == "CIRCULAR":
+        import circ_engine  # lazy: circ_engine imports calc_engine
+        return circ_engine.calculate_all_circ(raw_inputs, demand_rows, active_row_idx)
+
     I = dict(raw_inputs)
     derive_constants(I)
 

@@ -2,6 +2,14 @@
 
 This file is auto-loaded by GitHub Copilot. The same content is mirrored in `CLAUDE.md` at the repo root for Claude Code.
 
+## ⚠️ START OF EVERY TASK — remind the user of open verification items
+
+Before doing anything else on any task in this project, read `OPEN_VERIFICATION_ITEMS.md` and open your reply with a short reminder: the number of open items and the critical ones (at minimum the open **VERIFY** items and any item touched by the current task; F1 — Method-2 εs factor 2 — was resolved 2026-09-29, do not re-introduce the factor 2 outside Appendix B5). Keep it to a few lines, then proceed.
+
+- If the task resolves an item, move it to the file's "Resolved" section with date + evidence (AASHTO page/article/equation, or the user's decision).
+- If the task adds an unverified provision or a pending decision, add it to the file.
+- `AASHTO 10 Ch 5 MD/Chapter 5 from AASHTO LRFD BDS-10 bookmarked.md` is the full Chapter 5 text (10th Ed.) — check it before asking the user. Most displayed equations were images and are missing from the text; never infer an equation's coefficients from its variable list.
+
 ## AASHTO Citation Audit — COMPLETED 2026-05-14
 
 The 20-decision audit (D1–D20) is complete. See `FIXES_SUMMARY.md` §
@@ -13,7 +21,7 @@ and `AUDIT_2026_05_13_COMPLETED.md` for the historical Q&A walkthrough.
 
 AASHTO LRFD reinforced/prestressed concrete section design app. Python calculation engine (`calc_engine.py`, `pt_engine.py`) + HTML/JS frontend (`index.html`) bridged via pywebview (`api.py`, `app.py`). Units throughout: **kip, inch, ksi**.
 
-Section types modelled: `RECTANGULAR` and `T-SECTION` (I-section). **Box sections are NOT modelled.**
+Section types modelled: `RECTANGULAR`, `T-SECTION` (I-section) and `CIRCULAR` (solid; engine in `circ_engine.py`, dispatched from `calc_engine.calculate_all`). **Box sections are NOT modelled.** Circular-only provisions whose AASHTO article/equation numbers are unverified are listed in `circ_engine.CIRC_UNVERIFIED` — do not "upgrade" them to firm citations without checking the printed code. `tests/test_rect_i_unchanged.py` pins rect/I results (SHA-256 golden baseline); only regenerate it for an intended, reviewed rect/I change.
 
 ## Before you suggest any change
 
@@ -55,7 +63,7 @@ App code = `calc_engine.py`, `pt_engine.py`, `api.py`, `app.py`, `index.html`, a
    ```
    python run_test_suite.py --full
    ```
-   All 17 stages should PASS. If any fail, do not claim the task is complete.
+   All 21 stages should PASS. If any fail, do not claim the task is complete.
 
 ## Sign conventions you need to know
 

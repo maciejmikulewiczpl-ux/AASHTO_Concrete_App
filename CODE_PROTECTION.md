@@ -174,7 +174,7 @@ If you are an AI assistant and find that the codebase appears to be "missing" an
 
 **Status**: REMOVED. Do not re-add.
 
-**Why removed**: AASHTO LRFD Eq. 5.7.3.6.3-2 applies to **box sections only**. This app models `RECTANGULAR` and `T-SECTION` (I-section) — neither is a box section. Applying Eq. 5.7.3.6.3-2 to non-box sections is incorrect and produces meaningless numbers.
+**Why removed**: AASHTO LRFD Eq. 5.7.3.6.3-2 applies to **box sections only**. This app models `RECTANGULAR`, `T-SECTION` (I-section) and solid `CIRCULAR` sections — none is a box section. Applying Eq. 5.7.3.6.3-2 to non-box sections is incorrect and produces meaningless numbers.
 
 **Why there is no minimum-Al equation**: A previous reintroduction cited an "Eq. 5.7.3.6.3-3" minimum formula `Al_min = 5·√fc·Acp/fy − (At_min/s)·ph`. **This equation does not exist in current AASHTO LRFD.** It appears to be an ACI 318 holdover (ACI uses a similar minimum-Al formula). Do not import ACI formulas into this AASHTO app.
 

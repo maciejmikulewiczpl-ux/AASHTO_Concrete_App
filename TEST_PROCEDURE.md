@@ -24,6 +24,8 @@ failure.
 ### Dimension 1 — Section geometry
 Rectangular (slim/deep, wide/shallow) and I-section (symmetric and
 asymmetric flanges). 12 canonical sections in `tests/fixtures.py:SECTION_CATALOGUE`.
+Solid circular sections are covered separately in `tests/test_circular.py`
+(not added to `SECTION_CATALOGUE`, so the rect/I matrices are unaffected).
 
 ### Dimension 2 — Reinforcement layout
 Bottom only, top + bottom symmetric, top + bottom asymmetric, and
@@ -97,6 +99,24 @@ against silent formula drift:
 - Vp shear demand augments Vr
 - `pt_engine.compute_full_profile` returns a complete profile with
   fpe-after-losses < fpj at every point
+
+### Circular section (`tests/test_circular.py`)
+- Circular segment area / centroid / inertia vs numerical strip integration
+- Gross properties, bar layout (rings, bundles), invalid-diameter guard
+- Pure-bending Mn vs an independent strain-compatibility solve
+- Pn,max factor 0.80 (hoops) vs 0.85 (spiral); sag/hog mirror; Pr = φPn, Mr = φMn
+- dv / de / bv, Av (hoop + cross-ties), torsion geometry, spiral excluded from torsion, spiral ρs
+- Cracked section (c_cr, I_seg) vs strip integration; crack-control dc; Mcr
+- PT smoke test and the report-key contract (same REQUIRED_* keys as rect/I)
+- Provisions in `circ_engine.CIRC_UNVERIFIED` are pinned as the implemented
+  contract, NOT as verified AASHTO citations
+
+### Rect/I golden baseline (`tests/test_rect_i_unchanged.py`)
+SHA-256 of the full `calculate_all` result for 180 rect/I cases
+(12 sections × 5 variants × 3 active rows, 12 demand rows each), captured
+before the circular section was added. Any change to rect/I output fails
+this test. Regenerate only for an intended, reviewed rect/I change:
+`python tests/golden/make_rect_i_baseline.py`.
 
 ### Existing scripts (all repaired 2026-05-13, all run by the orchestrator)
 The legacy standalone scripts have been brought back into the active

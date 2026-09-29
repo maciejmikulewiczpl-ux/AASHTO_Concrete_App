@@ -29,6 +29,10 @@ PYTEST_STAGES = [
     ("Pytest:  invariants & report keys", ["tests/test_invariants.py"]),
     ("Pytest:  PT integration",          ["tests/test_pt_full.py"]),
     ("Pytest:  existing test_pt.py",     ["test_pt.py"]),
+    ("Pytest:  circular section",        ["tests/test_circular.py"]),
+    ("Pytest:  rect/I golden baseline",  ["tests/test_rect_i_unchanged.py"]),
+    ("Pytest:  review fixes (F3-F6,M1-2)", ["tests/test_review_fixes.py"]),
+    ("Pytest:  AASHTO Ch.5 verified (F1,F2,M3,M4)", ["tests/test_aashto_ch5_verified.py"]),
 ]
 
 # Stage 2: existing standalone scripts at project root (kept for back-compat).

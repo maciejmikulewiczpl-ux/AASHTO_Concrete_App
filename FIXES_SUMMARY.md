@@ -2,6 +2,24 @@
 
 ---
 
+## Chapter 5 text verification — 2026-09-29
+
+Open items checked against the full AASHTO LRFD 10th Ed. Chapter 5 text
+(`AASHTO 10 Ch 5 MD/`). Evidence per item in `OPEN_VERIFICATION_ITEMS.md` → Resolved.
+
+| # | Change | Impact |
+|---|---|---|
+| F1/M5 | Method 2 εs: single denominator (EsAs + EpAps) per Eq. 5.7.3.4.2-4 for sections with AND without min Av; εs<0 → + EcAct once. **The factor 2 belongs to Appendix B5 (Eq. B5.2-3) only — do not re-add it to Method 2.** | Vr2 lower (≈ −20 %) where min Av is present; θ larger, Tr lower. Unconservative bug removed. |
+| M4 | Axial tension cracking the compression face now doubles B5 εx and row εs too (active Method 2 already did). | Some B5 results become invalid under axial tension. |
+| F2 | γ3 = 1.0 when tension-side prestress is present (Table 5.6.3.3). | Higher Mcr for PT sections (conservative). |
+| M3 | Method 1 scope flag (`m1_applicable`) + warnings. | Information only. |
+| C7/C8/C11/C12 | Circular: hoop-closure input (0.85 for welded/mech./hooked hoops), ρs for such hoops, fyh ≤ 75 ksi, compression-member detailing checks. | Default (lap-spliced hoops) unchanged. |
+| M9/R6b | Labels: combined V+T stress check marked supplementary (not AASHTO); Vs → Eq. 5.7.3.3-4; vu → 5.7.2.8; B5 εx → B5.2-3/-4. | Display only. |
+
+Pinned: `tests/test_aashto_ch5_verified.py`, `tests/test_circular.py`. Golden baseline regenerated after an old-vs-new diff review.
+
+---
+
 ## AASHTO Citation Audit — completed 2026-05-14 (D1–D20)
 
 A 20-decision audit started on 2026-05-13 and finalized on 2026-05-14, covering
