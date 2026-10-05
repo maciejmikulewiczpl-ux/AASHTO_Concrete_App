@@ -151,3 +151,41 @@ def test_longitudinal_reinforcement_check_exists():
     for k in ("long_dem", "long_cap", "long_ok"):
         assert k in sh, f"Shear result missing {k}"
     assert isinstance(sh["long_ok"], bool)
+
+
+_B5_CIRC = dict(secType="CIRCULAR", h=36, b=36, D=36, circ_bar1=9, circ_n1=12,
+                circ_trans_type="hoop", shN=5, s_shear=6, shear_legs=2)
+
+
+@pytest.mark.parametrize("raw_kw,dem,expect_valid,reason_part", [
+    (_B5_CIRC, dict(Mu=4000, Vu=100), False, "vu/fc"),
+    (_B5_CIRC, dict(Mu=4000, Vu=300), False, "εx"),
+    ({}, dict(Mu=2500, Vu=120), None, None),
+    (dict(nStrands=4, strand_area=0.217, dp=30, fpe=170, sectionClass="CIP_PT"),
+     dict(Mu=2500, Vu=120, Pu=50), None, None),
+])
+def test_b5_applicability_values_reproduce_engine(raw_kw, dem, expect_valid, reason_part):
+    """The shear tab / report 'Method 3 Applicability' block rebuilds vu/f'c, εx and sxe
+    from these engine keys; pin that they reproduce the engine's own values."""
+    raw = make_inputs(**raw_kw)
+    res = calculate_all(raw, [demand(**dem)], 0)
+    sh, fl = res["shear"], res["flexure"]
+    if expect_valid is not None:
+        assert sh["b5_valid"] is expect_valid
+        assert reason_part in sh["b5_invalid_reason"]
+    phi, Vp = raw["phi_v"], 0.0
+    assert sh["vu_b5"] == pytest.approx(abs(dem["Vu"] - phi * Vp) / (phi * sh["bv"] * sh["dv"]))
+    assert sh["vufc"] == pytest.approx(sh["vu_b5"] / raw["fc"])
+    V = sh["Veff"] if sh["torsion_consider"] else abs(dem["Vu"])
+    assert sh["b5_Vterm"] == pytest.approx(0.5 * abs(V - Vp) * sh["b5_cot_th"])
+    num = sh["Mu_c"] / sh["dv"] + 0.5 * dem.get("Pu", 0) + sh["b5_Vterm"] - sh["Aps_tens"] * sh["fpo"]
+    assert sh["b5_ex_num"] == pytest.approx(num)
+    base = raw["Es"] * fl["As"] + raw["Ept"] * sh["Aps_tens"]
+    if sh["b5_ex_neg_recalc"]:
+        assert sh["b5_denom_used"] == pytest.approx(2 * (sh["Ec_gp"] * sh["Act"] + base))
+    else:
+        assert sh["b5_denom_used"] == pytest.approx((2 if sh["has_min_av"] else 1) * base)
+    dbl = 2 if (sh["dbl_eps"] and not sh["b5_ex_neg_recalc"]) else 1
+    assert sh["ex_b5"] == pytest.approx(dbl * sh["b5_ex_num"] / sh["b5_denom_used"])
+    sxe_raw = sh["sx"] * 1.38 / (raw["ag"] + 0.63)
+    assert sh["sxe"] == pytest.approx(min(max(sxe_raw, 12), 80))

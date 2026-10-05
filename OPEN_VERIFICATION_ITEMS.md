@@ -53,6 +53,7 @@ Design choices awaiting a **DECIDE**:
 | ID | Status | Item |
 |---|---|---|
 | H1 | DECIDE | Circular work + review fixes + 2026-09-29 Chapter-5 fixes are **uncommitted**. The pre-commit hook will flag `index.html` / `calc_engine.py` (lines modified in place — nothing removed); commit needs the user's go-ahead. |
+| B5-LB | DECIDE (all sections; hits circular columns most) | D19 (2026-05-14) invalidates Method 3 when v<sub>u</sub>/f′<sub>c</sub> < 0.075, ε<sub>x</sub>·1000 < −0.20 or s<sub>xe</sub> < 5 in. The printed Tables B5.2-1/-2 label those first row/column "≤0.075", "≤–0.20", "≤5", and CB5.2 says a cell "can be applied over a range of values … provided that ε<sub>x</sub> is not greater than … and v<sub>u</sub>/f′<sub>c</sub> is not greater than …" → values below the first row/column fall in that cell. Only the upper bounds (v<sub>u</sub>/f′<sub>c</sub> > 0.250, ε<sub>x</sub>·1000 > 1.00 / 2.00, s<sub>xe</sub> > 80) are outside the tables. Default circular case (36" / 12-#9, V<sub>u</sub> = 100 kip): v<sub>u</sub>/f′<sub>c</sub> = 0.030 → B5 shown as not applicable. Proposed: use the first row/column for values below it. Reverses part of D19, so it needs the user's go-ahead. (Checked 2026-10-05: circular A<sub>s</sub> in ε<sub>s</sub>/ε<sub>x</sub> is already the tension-half steel — 0.5·A<sub>st</sub> for even bar counts; odd counts use the geometric half (9-#9: 4 bars sagging / 5 hogging vs 4.5), see D-C5.) |
 | H3 | DECIDE | `tests/golden/rect_i_baseline.json` must be regenerated (reviewed) whenever fixes intentionally change rect/I results. Last regenerated 2026-09-29 for F1/F2/M4 (reviewed with an old-vs-new engine diff). |
 
 ---
@@ -61,7 +62,7 @@ Design choices awaiting a **DECIDE**:
 
 | Need | Closes |
 |---|---|
-| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, H1, H3 |
+| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, B5-LB, H1, H3 |
 
 Not implemented (optional): the C5.7.2.8-1 alternative for circular members (d<sub>v</sub> = M<sub>n</sub>/(A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub>) with M<sub>n</sub> ignoring axial load and half-section steel); the engine uses the permitted 0.9d<sub>e</sub> alternative.
 

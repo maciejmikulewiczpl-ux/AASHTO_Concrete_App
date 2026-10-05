@@ -244,6 +244,10 @@ canvas { width: 100% !important; height: 100% !important; }
 .demand-table .cap-cell-vnmax::after { content:''; }
 .vnmax-cap-warn { background:#fff3cd; border-left:4px solid #f0ad4e; padding:6px 10px; margin:6px 0; font-size:0.85rem; color:#5b4500; border-radius:3px; }
 .vnmax-cap-warn b { color:#a04500; }
+.b5-step { font-weight:600; font-size:0.82rem; color:#1a5276; margin:8px 0 2px; }
+.b5-eq { font-family:Consolas,'Courier New',monospace; font-size:0.78rem; background:#f7f9fc; border:1px solid #e0e6ed; border-radius:3px; padding:4px 8px; margin:3px 0; line-height:1.5; overflow-wrap:anywhere; }
+.b5-chk { font-size:0.8rem; margin:4px 0; padding:4px 8px; border-left:3px solid #ccd; overflow-wrap:anywhere; }
+.b5-note { font-size:0.78rem; color:#555; font-style:italic; margin:3px 0; }
 .badge-capped { display:inline-block; background:#f0ad4e; color:#fff; font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:3px; margin-left:4px; vertical-align:middle; }
 .shear-overreinf-banner { background:#fff3cd; border:1px solid #f0ad4e; padding:8px 12px; margin:0 0 10px 0; font-weight:600; color:#7d5a00; border-radius:4px; }
 .shear-overreinf-banner b { color:#a04500; }
@@ -4533,7 +4537,7 @@ function runAllCalculations(){
         window._lastFlex=res.flexure;
         _lastRes=res;
         try{ renderFlexure(res.flexure, res.inputs, res.demands); }catch(e){ console.error('renderFlexure error:',e); }
-        try{ renderShear(res.shear, res.inputs, res.demands); }catch(e){ console.error('renderShear error:',e); }
+        try{ renderShear(res.shear, res.inputs, res.demands, res.flexure); }catch(e){ console.error('renderShear error:',e); }
         try{ renderTorsion(res.torsion, res.inputs, res.demands); }catch(e){ console.error('renderTorsion error:',e); }
         try{ renderPtServiceRows(res.row_results, res.inputs); }catch(e){ console.error('renderPtServiceRows error:',e); }
         try{ updateFactorsDisplay(res); }catch(e){ console.error('updateFactorsDisplay error:',e); }
@@ -5206,7 +5210,93 @@ function drawPtStressDiagrams(pt){
   ctx.fillText('→ Tension (all in ksi)', W-4, H-4);
 }
 
-function renderShear(sh,inp,dem){
+// Method 3 (Appendix B5) applicability, step by step: table selection, vu/f'c, εx and sxe vs. the table ranges.
+// Mirrors calc_engine.do_shear / lookup_b5 using the engine's own intermediate values.
+function b5ApplicabilitySteps(sh,fl,inp,dem,Av,s){
+  const S=[];
+  const head=t=>S.push({k:'head',t}), eq=t=>S.push({k:'eq',t}), row=(l,v,u)=>S.push({k:'row',l,v,u});
+  const chk=(l,ok,d,y,n)=>S.push({k:'chk',l,ok,d,y,n}), note=t=>S.push({k:'note',t});
+  const fc=VE('fc'), fyt=VE('fy_trans'), lam=inp.lam!=null?inp.lam:V('lambda'), Ept=VE('Ept'), ag=VE('ag');
+  const Es=inp.Es, phi=inp.phi_v, bv=sh.bv, dv=sh.dv;
+  const Pu=dem.Pu, Mu=dem.Mu, Vu=dem.Vu, Vp=dem.Vp;
+  const Aps_t=sh.Aps_tens!==undefined?sh.Aps_tens:inp.Aps;
+  const As=fl?fl.As:NaN;
+  const T1=sh.has_min_av;
+  const Vs_=sh.torsion_consider?sh.Veff:Math.abs(Vu);
+  const Vl=sh.torsion_consider?'V<sub>eff</sub>':'V<sub>u</sub>';
+
+  head('Step 1 &mdash; Table selection (Appendix B5.2)');
+  if(Av>0 && s>0){
+    eq("A<sub>v,min</sub> = 0.0316&lambda;&radic;f'<sub>c</sub>&middot;b<sub>v</sub>&middot;s/f<sub>y</sub> = 0.0316 &times; "+F(lam,2)+" &times; &radic;"+F(fc,2)+" &times; "+F(bv,2)+" &times; "+F(s,2)+" / "+F(fyt,1)+" = "+F(sh.Av_min,4)+" in&sup2; &nbsp; [Eq. 5.7.2.5-1]");
+    eq("A<sub>v</sub> provided = "+F(Av,4)+" in&sup2; "+(T1?'&ge;':'&lt;')+" A<sub>v,min</sub> = "+F(sh.Av_min,4)+" in&sup2;");
+  } else {
+    eq('No transverse reinforcement (A<sub>v</sub> = 0 or s = 0) &rarr; less than minimum');
+  }
+  row('Table used',T1?'B5.2-1 (&ge; min. A<sub>v</sub>) &mdash; entered with v<sub>u</sub>/f\'<sub>c</sub> and &epsilon;<sub>x</sub>':'B5.2-2 (&lt; min. A<sub>v</sub>) &mdash; entered with s<sub>xe</sub> and &epsilon;<sub>x</sub>');
+
+  head("Step 2 &mdash; Shear stress ratio v<sub>u</sub>/f'<sub>c</sub>");
+  eq("v<sub>u</sub> = |V<sub>u</sub> &minus; &phi;<sub>v</sub>V<sub>p</sub>| / (&phi;<sub>v</sub>b<sub>v</sub>d<sub>v</sub>) = |"+F(Vu,2)+" &minus; "+F(phi,2)+" &times; "+F(Vp,2)+"| / ("+F(phi,2)+" &times; "+F(bv,2)+" &times; "+F(dv,3)+") = "+F(sh.vu_b5,4)+" ksi &nbsp; [5.7.2.8]");
+  eq("v<sub>u</sub>/f'<sub>c</sub> = "+F(sh.vu_b5,4)+" / "+F(fc,2)+" = "+F(sh.vufc,4));
+  if(T1){
+    const lo=sh.vufc<0.075, hi=sh.vufc>0.250;
+    chk("Table B5.2-1 range 0.075 &le; v<sub>u</sub>/f'<sub>c</sub> &le; 0.250",!lo&&!hi,
+      lo?F(sh.vufc,4)+' &lt; 0.075 (below the first table row)':hi?F(sh.vufc,4)+' &gt; 0.250 (above the last table row &mdash; section likely overstressed)':'0.075 &le; '+F(sh.vufc,4)+' &le; 0.250');
+  } else {
+    note("Table B5.2-2 is entered with s<sub>xe</sub>; v<sub>u</sub>/f'<sub>c</sub> has no table limit.");
+  }
+
+  head('Step 3 &mdash; Longitudinal strain &epsilon;<sub>x</sub> (Eq. '+(T1?'B5.2-3':'B5.2-4')+')');
+  const th_it=sh.b5_cot_th>0?Math.atan(1/sh.b5_cot_th)*180/Math.PI:30;
+  if(sh.b5_valid) note('&epsilon;<sub>x</sub> depends on cot&theta;; values below are from the converged iteration ('+sh.n_iter+' iterations, &theta; = '+F(th_it,2)+'&deg;).');
+  else note('&epsilon;<sub>x</sub> depends on cot&theta;; the iteration starts at &theta; = 30&deg; and stops at the first out-of-range value. Values below are from iteration '+sh.n_iter+' (&theta; = '+F(th_it,2)+'&deg;).');
+  eq("M<sub>u</sub> = max(|M<sub>u</sub>|, |"+(sh.torsion_consider?'V<sub>eff</sub>':'V<sub>u</sub>')+" &minus; V<sub>p</sub>|&middot;d<sub>v</sub>) = max("+F(Math.abs(Mu),1)+", "+F(Math.abs(Vs_-Vp),2)+" &times; "+F(dv,3)+") = "+F(sh.Mu_c,1)+" kip-in");
+  eq("(a) M<sub>u</sub>/d<sub>v</sub> = "+F(sh.Mu_c,1)+" / "+F(dv,3)+" = "+F(sh.Mu_c/dv,2)+" kip");
+  eq("(b) 0.5N<sub>u</sub> = 0.5 &times; "+F(Pu,2)+" = "+F(0.5*Pu,2)+" kip &nbsp; (N<sub>u</sub> + tension)");
+  eq("(c) 0.5|"+Vl+" &minus; V<sub>p</sub>|cot&theta; = 0.5 &times; |"+F(Vs_,2)+" &minus; "+F(Vp,2)+"| &times; "+F(sh.b5_cot_th,4)+" = "+F(sh.b5_Vterm,2)+" kip");
+  eq("(d) A<sub>ps</sub>f<sub>po</sub> = "+F(Aps_t,3)+" &times; "+F(sh.fpo,2)+" = "+F(Aps_t*sh.fpo,2)+" kip");
+  eq("Numerator = (a) + (b) + (c) &minus; (d) = "+F(sh.b5_ex_num,2)+" kip");
+  const asLbl=inp.isCirc?'A<sub>s</sub> = steel in the flexural-tension half (bars on the centreline count &frac12;)':'A<sub>s</sub> = tension-side steel';
+  row(asLbl,F(As,3),'in&sup2;');
+  const f2=T1?'2':'';
+  if(sh.b5_ex_neg_recalc){
+    eq("Numerator &lt; 0 &rarr; denominator = 2(E<sub>c</sub>A<sub>ct</sub> + E<sub>s</sub>A<sub>s</sub> + E<sub>p</sub>A<sub>ps</sub>) = 2("+F(sh.Ec_gp,0)+" &times; "+F(sh.Act,1)+" + "+F(Es,0)+" &times; "+F(As,3)+" + "+F(Ept,0)+" &times; "+F(Aps_t,3)+") = "+F(sh.b5_denom_used,0)+" kip");
+  } else {
+    eq("Denominator = "+f2+"(E<sub>s</sub>A<sub>s</sub> + E<sub>p</sub>A<sub>ps</sub>) = "+f2+"("+F(Es,0)+" &times; "+F(As,3)+" + "+F(Ept,0)+" &times; "+F(Aps_t,3)+") = "+F(sh.b5_denom_used,0)+" kip");
+  }
+  const dbl=sh.dbl_eps && !sh.b5_ex_neg_recalc;
+  eq("&epsilon;<sub>x</sub> = "+F(sh.b5_ex_num,2)+" / "+F(sh.b5_denom_used,0)+(dbl?" &times; 2":"")+" = "+F(sh.ex_b5,6)+" &nbsp; (&epsilon;<sub>x</sub>&times;1000 = "+F(sh.ex_b5*1000,3)+")");
+  if(dbl) note('&times; 2: axial tension cracks the flexural compression face (gross stress '+F(sh.flex_compr,3)+' ksi &gt; f<sub>r</sub> = '+F(sh.fr,3)+' ksi), B5.2.');
+  const exHi=T1?1.00:2.00, ex1k=sh.ex_b5*1000;
+  chk('Table '+(T1?'B5.2-1':'B5.2-2')+' range &minus;0.20 &le; &epsilon;<sub>x</sub>&times;1000 &le; '+F(exHi,2),ex1k>=-0.20&&ex1k<=exHi+1e-9,
+    ex1k<-0.20?F(ex1k,3)+' &lt; &minus;0.20 (below the first table column)':ex1k>exHi+1e-9?F(ex1k,3)+' &gt; '+F(exHi,2)+' (above the last table column)':'&minus;0.20 &le; '+F(ex1k,3)+' &le; '+F(exHi,2));
+
+  head('Step 4 &mdash; Crack spacing parameter s<sub>xe</sub>');
+  const sxeRaw=(ag+0.63)>0?sh.sx*1.38/(ag+0.63):NaN;
+  eq("s<sub>xe</sub> = s<sub>x</sub>&middot;1.38/(a<sub>g</sub> + 0.63) = "+F(sh.sx,3)+" &times; 1.38 / ("+F(ag,3)+" + 0.63) = "+F(sxeRaw,2)+" in &rarr; 12 &le; s<sub>xe</sub> &le; 80 &rarr; "+F(sh.sxe,2)+" in &nbsp; [Eq. 5.7.3.4.2-7]");
+  if(T1) note('Table B5.2-1 is entered with v<sub>u</sub>/f\'<sub>c</sub>; s<sub>xe</sub> has no table limit.');
+  else chk('Table B5.2-2 range 5 &le; s<sub>xe</sub> &le; 80 in',sh.sxe>=5&&sh.sxe<=80,F(sh.sxe,2)+' in');
+
+  head('Result');
+  chk('Method 3 (Appendix B5)',sh.b5_valid,sh.b5_valid?'all values within the table ranges':(sh.b5_invalid_reason||'out of table range'),'APPLICABLE','NOT APPLICABLE');
+  if(!sh.b5_valid) note('A value outside the table range invalidates Method 3; the tables are not extrapolated. Use Method 2 (General Procedure).');
+  return S;
+}
+function b5StepsPanelHTML(S){
+  return S.map(x=>x.k==='head'?`<div class="b5-step">${x.t}</div>`
+    :x.k==='eq'?`<div class="b5-eq">${x.t}</div>`
+    :x.k==='row'?`<div class="b5-chk"><b>${x.l}:</b> ${x.v}${x.u?' '+x.u:''}</div>`
+    :x.k==='chk'?`<div class="b5-chk">${BG(x.ok,x.y||'OK',x.n||'OUT OF RANGE')} <b>${x.l}</b><br>${x.d}</div>`
+    :`<div class="b5-note">${x.t}</div>`).join('');
+}
+function b5StepsReportHTML(S){
+  return S.map(x=>x.k==='head'?`<div style="font-weight:600;margin:10px 0 2px">${x.t}</div>`
+    :x.k==='eq'?REQ(x.t)
+    :x.k==='row'?RR(x.l,x.v,x.u||'')
+    :x.k==='chk'?RR(x.l,RCHK(x.ok,(x.y||'OK')+' &mdash; '+x.d,(x.n||'OUT OF RANGE')+' &mdash; '+x.d))
+    :`<div class="rpt-note">${x.t}</div>`).join('');
+}
+
+function renderShear(sh,inp,dem,fl){
   const Pu=dem.Pu,Mu=dem.Mu,Vu=dem.Vu,Vp=dem.Vp;
   const Aps=inp.Aps,hasPT=inp.hasPT;
   const Aps_t=sh.Aps_tens!==undefined?sh.Aps_tens:Aps;
@@ -5312,6 +5402,8 @@ function renderShear(sh,inp,dem){
   const exLim=sh.b5_max_ex;
   o+=R('Method 3 validity',sh.b5_valid?BG(true):BG(false,(sh.b5_invalid_reason||('&epsilon;<sub>x</sub> = '+F(sh.ex_b5,6)+' &gt; '+F(exLim,3)))+' &mdash; METHOD NOT VALID',''));
   if(sh.b5_valid) o+=R('Iterations',sh.n_iter);
+  o+=SH('Method 3 Applicability &mdash; Step by Step');
+  try{ o+=b5StepsPanelHTML(b5ApplicabilitySteps(sh,fl,inp,dem,Av,VE('shear_s'))); }catch(e){ console.error('B5 applicability error:',e); }
   if(sh.b5_valid){
     o+=SH('Table Selection');
     o+=R('Min A<sub>v</sub> required',F(sh.Av_min,4),'in&sup2;');
@@ -7297,6 +7389,8 @@ function generateReport(){
     h2+=`<h2>9 &mdash; Shear: Appendix B5 (Table Method) ${RREF('AASHTO Appendix B5')}</h2>`;
     if(!sh.b5_valid){
       h2+=`<div class="rpt-note">Method is NOT VALID for this section &mdash; ${sh.b5_invalid_reason||('&epsilon;<sub>x</sub> = '+F(sh.ex_b5,6)+' exceeds the table range limit of '+F(sh.b5_max_ex,3))}.</div>`;
+      h2+=`<h3>9.1 Applicability Check &mdash; Why Method 3 Cannot Be Used</h3>`;
+      h2+=b5StepsReportHTML(b5ApplicabilitySteps(sh,fl,inp,dem,Av,s_sh));
     } else {
       h2+=`<div class="rpt-note">Iterative table lookup using v<sub>u</sub>/f'<sub>c</sub> and &epsilon;<sub>x</sub> to find &theta; and &beta; from AASHTO Tables B5.2-1 or B5.2-2. Unlike the General Procedure, the B5 strain uses 0.5|V&minus;V<sub>p</sub>|cot&theta; and iterates until &theta;/&beta; converge.</div>`;
       const V_rpt3=sh.torsion_consider?sh.Veff:Math.abs(Vu);
