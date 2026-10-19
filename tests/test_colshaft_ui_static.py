@@ -192,7 +192,8 @@ def test_js_constants_mirror_python():
                        encoding="utf-8")       # the pending status carries an en dash
     assert r.returncode == 0, r.stderr
     js = json.loads(r.stdout)
-    assert js["st"] == {"NEGLECT": csl.ST_NEGLECT, "PENDING": csl.ST_PENDING, "REFINED": csl.ST_REFINED}
+    assert js["st"] == {"NEGLECT": csl.ST_NEGLECT, "MAGNIFIED": csl.ST_MAGNIFIED,
+                        "REFINED": csl.ST_REFINED}
     assert js["rank"] == csl._RANK
     assert js["bars"] == sorted(ce.BARS)
     import colshaft_engine as ee
@@ -202,19 +203,22 @@ def test_js_constants_mirror_python():
 
 @needs_node
 def test_js_k_and_long_check_constants_mirror_python():
-    """Follow-ups 2026-10-19: K sources / end conditions / Euler K / warning texts and the
-    'n/a' long-check text are one value in Python and JS."""
+    """Follow-ups 2026-10-19 (+ rulings M1/M10): K sources / end conditions / Table
+    C4.6.2.5-1 K / warning texts / the unstable reason and the 'n/a' long-check text are
+    one value in Python and JS."""
     import colshaft_lrfd as cl
     import colshaft_slender as csl
     code = ("const c=require(process.argv[1]);console.log(JSON.stringify("
-            "{src:c.K_SOURCES,end:c.END_CONDITIONS,euler:c.EULER_K,dw:c.DEFAULT_K_WARNING,"
-            "uw:c.UNBRACED_K_LT1_WARNING,bn:c.BRACED_K_LT1_NOTE,na:c.LONG_NA}))")
+            "{src:c.K_SOURCES,end:c.END_CONDITIONS,tk:c.TABLE_K,tc:c.TABLE_CASE,dw:c.DEFAULT_K_WARNING,"
+            "uw:c.UNBRACED_K_LT1_WARNING,bn:c.BRACED_K_LT1_NOTE,na:c.LONG_NA,ur:c.UNSTABLE_REASON,"
+            "eu:c.EULER_K===undefined}))")
     r = subprocess.run([NODE, "-e", code, JS], capture_output=True, text=True, cwd=ROOT,
                        encoding="utf-8")
     assert r.returncode == 0, r.stderr
     js = json.loads(r.stdout)
     assert js["src"] == list(csl.K_SOURCES) and js["end"] == list(csl.END_CONDITIONS)
-    assert js["euler"] == csl.EULER_K
+    assert js["tk"] == csl.TABLE_K and js["tc"] == csl.TABLE_CASE and js["eu"]
+    assert js["ur"] == csl.UNSTABLE_REASON
     assert js["dw"] == csl.DEFAULT_K_WARNING and js["uw"] == csl.UNBRACED_K_LT1_WARNING
     assert js["bn"] == csl.BRACED_K_LT1_NOTE and js["na"] == cl.LONG_NA
 
@@ -277,8 +281,8 @@ def test_limitations_tab_lists_column_on_shaft_non_goals():
     html = _html()
     lim = html[html.index('id="tab-limitations"'):html.index(PANEL)]
     assert ">Column on Shaft</div>" in lim
-    for text in ("displacement demand", "ductility demand", "column silos", "screen only",
-                 "S6", "No service-limit crack control", "Circular members only",
+    for text in ("displacement demand", "ductility demand", "column silos", "moment magnification",
+                 "Art. 4.5.3.2.2b", "two-pass", "Table C4.6.2.5-1", "No service-limit crack control", "Circular members only",
                  "envelope-bounded (conservative)", "No direct CSiBridge read"):
         assert text in lim, text
 
@@ -302,12 +306,12 @@ def test_panel_stops_keydown_and_keyup_propagation():
 
 
 @needs_node
-def test_js_pending_status_and_gr60_mirror_python():
+def test_js_unstable_status_and_gr60_mirror_python():
     import colshaft_engine as ee
     import colshaft_seismic as cs
     out = json.loads(_js_eval("const c=require(process.argv[1]);console.log(JSON.stringify("
-                              "{p:c.ST_OK_PENDING,g:c.GR60_EXPECTED}))"))
-    assert out["p"] == ee.ST_OK_PENDING
+                              "{p:c.ST_UNSTABLE,g:c.GR60_EXPECTED}))"))
+    assert out["p"] == ee.ST_UNSTABLE
     assert out["g"] == {"fye": cs.FYE, "fue": cs.FUE, "fyh": cs.FYH}
 
 

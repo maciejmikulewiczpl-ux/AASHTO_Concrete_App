@@ -45,22 +45,22 @@
     ['sStep', 'Hoop pitch step', 'in'],
     ['maxLegs', 'Cross-tie legs, max', '']
   ];
-  // colshaft_engine.ST_OK_PENDING (ruling F-3; pinned equal by the pytest)
-  var ST_OK_PENDING = 'OK – MAGNIFICATION PENDING (S6)';
+  // colshaft_engine.ST_UNSTABLE (ruling M10; pinned equal by the pytest)
+  var ST_UNSTABLE = 'UNSTABLE (Pu ≥ φK·Pe)';
   var STATUS_COLORS = {
     'OK': '#27ae60',
     'NG': '#c0392b',
     'NO SOLUTION': '#7b1010',
     'REFINED ANALYSIS REQUIRED': '#e67e22'
   };
-  STATUS_COLORS[ST_OK_PENDING] = '#d4a017';     // amber
-  // Rulings 8-9 / F-3 precedence: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
-  // OK – MAGNIFICATION PENDING (S6) > OK
-  var STATUS_RANK = { 'OK': 0, 'NG': 2, 'REFINED ANALYSIS REQUIRED': 3, 'NO SOLUTION': 4 };
-  STATUS_RANK[ST_OK_PENDING] = 1;
-  // report class per status: pass (OK), amber (OK pending S6), fail (otherwise)
+  STATUS_COLORS[ST_UNSTABLE] = '#922b21';     // dark red
+  // Rulings 8-9 / M10 precedence: NO SOLUTION > UNSTABLE (Pu ≥ φK·Pe) >
+  // REFINED ANALYSIS REQUIRED > NG > OK
+  var STATUS_RANK = { 'OK': 0, 'NG': 1, 'REFINED ANALYSIS REQUIRED': 2, 'NO SOLUTION': 4 };
+  STATUS_RANK[ST_UNSTABLE] = 3;
+  // report class per status: pass (OK), fail (otherwise)
   function statusClass(status) {
-    return status === 'OK' ? 'rpt-pass' : status === ST_OK_PENDING ? 'cs-rpt-amber' : 'rpt-fail';
+    return status === 'OK' ? 'rpt-pass' : 'rpt-fail';
   }
   // A706 Gr60 expected steel (colshaft_seismic.FYE / FUE / FYH, ruling F-1)
   var GR60_EXPECTED = { fye: 68, fue: 95, fyh: 68 };
@@ -68,26 +68,29 @@
   // minor 7b: shown whenever an input changes after a run, cleared by the next Design
   var STALE_MSG = 'Results are stale — inputs changed after the last Design; re-run Design.';
   var OV_PARTS = ['col_long', 'col_trans', 'shaft_long', 'shaft_trans'];
-  // colshaft_slender.ST_NEGLECT / ST_PENDING / ST_REFINED and _RANK (pinned equal by
+  // colshaft_slender.ST_NEGLECT / ST_MAGNIFIED / ST_REFINED and _RANK (pinned equal by
   // tests/test_colshaft_ui_static.py)
   var SLENDER_STATUS = {
     NEGLECT: 'neglect',
-    PENDING: 'magnification pending verification (S6)',
+    MAGNIFIED: 'magnified',
     REFINED: 'refined analysis required'
   };
   var SLENDER_RANK = {};
   SLENDER_RANK[SLENDER_STATUS.NEGLECT] = 0;
-  SLENDER_RANK[SLENDER_STATUS.PENDING] = 1;
+  SLENDER_RANK[SLENDER_STATUS.MAGNIFIED] = 1;
   SLENDER_RANK[SLENDER_STATUS.REFINED] = 2;
   // calc_engine.BARS sizes (pinned equal by the pytest)
   var BAR_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18];
-  // colshaft_slender K_SOURCES / END_CONDITIONS / EULER_K and the warning texts
-  // (user decision 2026-10-19; pinned equal by tests/test_colshaft_ui_static.py)
+  // colshaft_slender K_SOURCES / END_CONDITIONS / TABLE_K / TABLE_CASE and the warning
+  // texts (rulings M1/M2 2026-10-19; pinned equal by tests/test_colshaft_ui_static.py)
   var K_SOURCES = ['default', 'analysis'];
   var END_CONDITIONS = ['fixed-free', 'fixed-fixed'];
-  var EULER_K = { 'fixed-free': 2.0, 'fixed-fixed': 1.0 };
-  var DEFAULT_K_WARNING = 'Default K is the theoretical Euler value; AASHTO design values (Art. 4.6.2.5) are higher — ' +
-    'override with a buckling-analysis K if available';
+  // Table C4.6.2.5-1 design values (unbraced): fixed-free case (e), fixed-fixed case (d)
+  var TABLE_K = { 'fixed-free': 2.1, 'fixed-fixed': 1.2 };
+  var TABLE_CASE = { 'fixed-free': '(e)', 'fixed-fixed': '(d)' };
+  var DEFAULT_K_WARNING = 'Default K values are Table C4.6.2.5-1 design values for idealised end conditions — ' +
+    'override with a buckling-analysis K if the restraint differs';
+  var UNSTABLE_REASON = 'magnification unstable (Pu ≥ φK·Pe)';
   var UNBRACED_K_LT1_WARNING = 'unbraced K < 1.0 from buckling analysis is below the C5.6.4.3 floor (\'taken as not less than 1.0\')';
   var BRACED_K_LT1_NOTE = 'braced K < 1.0 requires supporting analysis';
   // colshaft_lrfd.LONG_NA / LONG_NA_REASON (pinned equal by the pytest)
@@ -176,10 +179,13 @@
       H_ft: '', base_end: 'auto', lambda_mo: 1.2, mu_d: '',
       shaft_basis: 'auto', L_eq_ft: '', soil: '', L_embed_ft: '', P_dead: '',
       slender: {
-        '2': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '' },
-        '3': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '' },
+        '2': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '',
+          K_braced_source: 'default', K_braced: '' },
+        '3': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '',
+          K_braced_source: 'default', K_braced: '' },
         beta_d: '', gamma_p: ''
       },
+      sway_group: '',
       override: emptyOverride()
     };
   }
@@ -222,9 +228,21 @@
       ['2', '3'].forEach(function (ax) {
         var raw = isObj(b) && isObj(b.slender) && isObj(b.slender[ax]) ? b.slender[ax] : {};
         var a = q.slender[ax];
-        if ((raw.K_source === undefined || raw.K_source === null || raw.K_source === '') && num(raw.K) !== null) a.K_source = 'analysis';
+        var noSrc = raw.K_source === undefined || raw.K_source === null || raw.K_source === '';
+        if (noSrc && num(raw.K) !== null) a.K_source = 'analysis';
         if (K_SOURCES.indexOf(a.K_source) < 0) a.K_source = 'default';
         if (END_CONDITIONS.indexOf(a.end_condition) < 0) a.end_condition = 'fixed-free';
+        // ruling M2: a state without the braced K -> 1.0 default, except a legacy BRACED
+        // axis whose K was a buckling-analysis K keeps it (colshaft_slender.resolve_K_braced)
+        var noKb = raw.K_braced_source === undefined || raw.K_braced_source === null || raw.K_braced_source === '';
+        if (noKb) {
+          if (num(raw.K_braced) !== null) a.K_braced_source = 'analysis';
+          else if (raw.braced && (raw.K_source === 'analysis' || (noSrc && num(raw.K) !== null))) {
+            a.K_braced_source = 'analysis';
+            a.K_braced = raw.K;
+          }
+        }
+        if (K_SOURCES.indexOf(a.K_braced_source) < 0) a.K_braced_source = 'default';
       });
       ['col', 'shaft'].forEach(function (m) { q[m].bars_terminated = !!q[m].bars_terminated; });
       return q;
@@ -369,6 +387,9 @@
           if (a.K_source === 'analysis' && !(num(a.K) > 0)) {
             errs.push(who + ': slenderness axis ' + ax + ': enter K > 0 from the buckling analysis (or use the default K).');
           }
+          if (a.K_braced_source === 'analysis' && !(num(a.K_braced) > 0)) {
+            errs.push(who + ': slenderness axis ' + ax + ': enter the braced K > 0 from the buckling analysis (or use the default 1.0).');
+          }
         });
       }
       overrideErrors(b).forEach(function (e) { errs.push(who + ': override ' + e + '.'); });
@@ -385,33 +406,67 @@
     out.bars_terminated = !!m.bars_terminated;
     return out;
   }
+  // braced K (delta_b, braced screen) as the engine resolves it (mirror of
+  // colshaft_slender.resolve_K_braced; the state is normalised by normalizeState)
+  function kbInfo(a) {
+    a = a || {};
+    var src = K_SOURCES.indexOf(a.K_braced_source) >= 0 ? a.K_braced_source : (num(a.K_braced) !== null ? 'analysis' : 'default');
+    var kb = a.K_braced;
+    var noSrc = a.K_source === undefined || a.K_source === null || a.K_source === '';
+    if (K_SOURCES.indexOf(a.K_braced_source) < 0 && num(a.K_braced) === null && a.braced &&
+        (a.K_source === 'analysis' || (noSrc && num(a.K) !== null))) {
+      src = 'analysis';     // legacy braced axis: its buckling-analysis K is the braced K
+      kb = a.K;
+    }
+    var out = { K: null, source: src, label: '', warning: '', error: '' };
+    if (src === 'analysis') {
+      var K = num(kb);
+      if (!(K > 0)) { out.error = 'enter the braced K > 0 from the buckling analysis'; return out; }
+      out.K = K;
+      out.label = 'K = ' + K + ' (braced, buckling analysis)';
+      if (K < 1.0) out.warning = BRACED_K_LT1_NOTE;
+    } else {
+      out.K = 1.0;
+      out.label = 'K = 1.0 (braced, C5.6.4.3; Table C4.6.2.5-1 case (c))';
+    }
+    return out;
+  }
   // K for one slenderness axis as the engine resolves it (mirror of
-  // colshaft_slender.resolve_K) -> {K|null, source, end_condition, label, warning, error}
+  // colshaft_slender.resolve_K): braced axis -> the braced K; unbraced -> the unbraced K.
+  // -> {K|null, source, end_condition, label, warning, error, K_braced, K_unbraced}
   function kInfo(a) {
     a = a || {};
     var braced = !!a.braced;
     var src = K_SOURCES.indexOf(a.K_source) >= 0 ? a.K_source : (num(a.K) !== null ? 'analysis' : 'default');
     var end = END_CONDITIONS.indexOf(a.end_condition) >= 0 ? a.end_condition : 'fixed-free';
-    var out = { K: null, source: src, end_condition: end, braced: braced, label: '', warning: '', error: '' };
+    var kb = kbInfo(a);
+    var out = { K: null, source: src, end_condition: end, braced: braced, label: '', warning: '', error: '',
+      K_braced: kb.K, K_braced_source: kb.source, K_braced_label: kb.label, K_unbraced: null };
+    if (braced) {
+      out.K = kb.K; out.source = kb.source; out.label = kb.label; out.warning = kb.warning; out.error = kb.error;
+      return out;
+    }
     if (src === 'analysis') {
       var K = num(a.K);
       if (!(K > 0)) { out.error = 'enter K > 0 from the buckling analysis'; return out; }
       out.K = K;
       out.label = 'K = ' + K + ' (buckling analysis)';
-      if (K < 1.0) out.warning = braced ? BRACED_K_LT1_NOTE : UNBRACED_K_LT1_WARNING;
-    } else if (braced) {
-      out.K = 1.0;
-      out.label = 'K = 1.0 (braced, C5.6.4.3)';
+      if (K < 1.0) out.warning = UNBRACED_K_LT1_WARNING;
     } else {
-      out.K = EULER_K[end];
-      out.label = 'K = ' + out.K.toFixed(1) + ' (Euler ideal, ' + end + '; not the AASHTO Table C4.6.2.5-1 design value)';
+      out.K = TABLE_K[end];
+      out.label = 'K = ' + out.K + ' (Table C4.6.2.5-1 case ' + TABLE_CASE[end] + ' design value, ' + end + ')';
       out.warning = DEFAULT_K_WARNING;
     }
+    out.K_unbraced = out.K;
+    if (kb.error) out.error = kb.error;
+    else if (kb.warning) out.warning = (out.warning ? out.warning + '; ' : '') + kb.warning;
     return out;
   }
   function kInfoText(a) {
     var k = kInfo(a);
-    return k.error ? k.error : k.label + (k.warning ? ' — ' + k.warning : '');
+    if (k.error) return k.error;
+    var t = (k.braced ? '' : 'unbraced (δs) ') + k.label + (k.braced ? '' : '; braced (δb) ' + k.K_braced_label);
+    return t + (k.warning ? ' — ' + k.warning : '');
   }
   // per-member note for the longitudinal V(+T) check (engine lrfd[part].long_check)
   function longCheckText(lc) {
@@ -458,12 +513,16 @@
     ['2', '3'].forEach(function (ax) {
       var a = b.slender[ax];
       var k = kInfo(a);
-      sl[ax] = { braced: !!a.braced, K_source: k.source, end_condition: k.end_condition, K: num(a.K),
-        lu: num(a.lu_ft) === null ? null : num(a.lu_ft) * 12.0 };
+      sl[ax] = { braced: !!a.braced, K_source: K_SOURCES.indexOf(a.K_source) >= 0 ? a.K_source : (num(a.K) !== null ? 'analysis' : 'default'),
+        end_condition: k.end_condition, K: num(a.K),
+        lu: num(a.lu_ft) === null ? null : num(a.lu_ft) * 12.0,
+        K_braced_source: k.K_braced_source, K_braced: num(a.K_braced) };
     });
     sl.beta_d = num(b.slender.beta_d);
     sl.gamma_p = num(b.slender.gamma_p);
     p.slender = sl;
+    var sg = String(b.sway_group === undefined || b.sway_group === null ? '' : b.sway_group).trim();
+    if (sg) p.sway_group = sg;
     var ov = {};
     OV_PARTS.forEach(function (part) {
       var r = overridePart(b.override[part], /long/.test(part) ? 'long' : 'trans');
@@ -748,7 +807,12 @@
     ['E17', 'The p-y axial-ramp guard (ruling 8-16) is applied to the strength rows only; the seismic stability / ' +
       'demand path follows upstream.'],
     ['E18', 'Shaft flexural capacity = M-φ expected Mp at P_dead (seismic-app convention); the SDC ref string reads ' +
-      '"MD ≤ φMne" and P_dead is not the least-compression seismic axial — confirm the capacity definition and the axial.']
+      '"MD ≤ φMne" and P_dead is not the least-compression seismic axial — confirm the capacity definition and the axial.'],
+    ['E20', 'Moment magnification Mc = max(δb, δs)·M2 per axis (conservative bound of Eq. 4.5.3.2.2b-1; the CSiBridge rows do not ' +
+      'separate the gravity moment M2b from the sway moment M2s).'],
+    ['E21', 'Cm = 1.0 for the δb of an unbraced axis (conservative reading of "For all other cases, Cm shall be taken as 1.0").'],
+    ['E22', 'Sway groups: δs from ΣPu / ΣPe by a two-pass approximation (pass 1 each bent alone; pass 2 with the other members\' ' +
+      'pass-1 Pe,s and their Pu of the same load case).']
   ];
   var REPORT_SECTIONS = [
     ['inputs', '1. Inputs'], ['parse', '2. Parse summary'], ['lrfd', '3. LRFD strength design — governing rows'],
@@ -770,13 +834,13 @@
         if (best === null || k - lim > best.klr - best.limit) best = { axis: ax, klr: k, limit: lim };
       });
       if (best) {
-        best.status = best.klr >= 100.0 ? SLENDER_STATUS.REFINED : best.klr < best.limit ? SLENDER_STATUS.NEGLECT : SLENDER_STATUS.PENDING;
+        best.status = best.klr >= 100.0 ? SLENDER_STATUS.REFINED : best.klr < best.limit ? SLENDER_STATUS.NEGLECT : SLENDER_STATUS.MAGNIFIED;
         out.push(best);
       }
     });
     return out;
   }
-  var K_SOURCE_TEXT = { 'default': 'Euler default', 'analysis': 'buckling analysis' };
+  var K_SOURCE_TEXT = { 'default': 'Table C4.6.2.5-1 default', 'analysis': 'buckling analysis' };
   // per axis: K used, its source, end condition, Kℓu/r, limit, status (report + drill-down).
   // K from the engine (result bent.slender_K), else as the payload implies (kInfo).
   function slenderKRows(b, pb) {
@@ -797,6 +861,39 @@
         label: k ? k.label : '' });
     });
     return out;
+  }
+  // ruling M12: per axis K_braced, K_unbraced, EI, Pe_b, Pe_s (ΣPe_s), Cm, δb, δs and the
+  // applied δ of the governing row (engine result bent.magnification.axes)
+  function fmtD(v, d) { return isNum(v) ? fmt(v, d) : '—'; }
+  function magRows(b) {
+    var m = b && isObj(b.magnification) ? b.magnification : null;
+    if (!m || !isObj(m.axes)) return [];
+    return ['2', '3'].map(function (ax) {
+      var a = m.axes[ax] || {};
+      var pes = isNum(a.Pe_s) ? fmt(a.Pe_s, 0) + (isNum(a.sPe_s) && Math.abs(a.sPe_s - a.Pe_s) > 1e-6 ? ' (Σ ' + fmt(a.sPe_s, 0) + ')' : '') : '—';
+      return { axis: ax, K_braced: fmtD(a.K_braced, 2), K_unbraced: a.braced ? 'braced' : fmtD(a.K_unbraced, 2),
+        EI: isNum(m.EI) ? m.EI.toExponential(3) : '—', Pe_b: fmtD(a.Pe_b, 0), Pe_s: a.braced ? '—' : pes,
+        Cm: fmtD(a.Cm, 3), db: a.unstable && !isNum(a.db) ? 'unstable' : fmtD(a.db, 3),
+        ds: a.unstable && !isNum(a.ds) ? 'unstable' : fmtD(a.ds, 3),
+        delta: a.unstable && !isNum(a.delta) ? UNSTABLE_REASON : fmtD(a.delta, 3),
+        row: a.row ? String(a.row) + (a.case ? ' (' + a.case + ')' : '') : '—',
+        Pu: isNum(a.Pu) ? fmt(a.Pu, 0) + (isNum(a.sPu) && Math.abs(a.sPu - a.Pu) > 1e-6 ? ' (Σ ' + fmt(a.sPu, 0) + ')' : '') : '—' };
+    });
+  }
+  var MAG_HDR = ['Axis', 'K braced (δb)', 'K unbraced (δs)', 'EI (kip-in²)', 'Pe,b (kip)', 'Pe,s (kip)', 'Cm', 'δb', 'δs',
+    'δ applied', 'Governing row', 'Pu (kip)'];
+  function magCells(r) {
+    return [r.axis, r.K_braced, r.K_unbraced, r.EI, r.Pe_b, r.Pe_s, r.Cm, r.db, r.ds, r.delta, r.row, r.Pu];
+  }
+  function magNote(b) {
+    var m = b && isObj(b.magnification) ? b.magnification : null;
+    if (!m) return '';
+    var t = 'βd = ' + fmt(m.beta_d, 3) + ' (' + (m.beta_d_source || '') + '); EI = max(Eq. 5.6.4.3-1 = ' +
+      (isNum(m.EI1) ? m.EI1.toExponential(3) : '—') + ', Eq. 5.6.4.3-2 = ' + (isNum(m.EI2) ? m.EI2.toExponential(3) : '—') +
+      ') kip-in² with Ec = ' + fmt(m.Ec, 0) + ' ksi, Ig = ' + fmt(m.Ig, 0) + ' in⁴, Es = ' + fmt(m.Es, 0) + ' ksi, Is = ' + fmt(m.Is, 0) +
+      ' in⁴; φK = ' + fmt(m.phi_K, 2) + '.';
+    if (isObj(m.sway)) t += ' Sway group ' + m.sway.group + ' (' + m.sway.n_members + ' bents, two-pass): ΣPe,s and ΣPu include the other members.';
+    return t;
   }
   function codeLabel(key) {
     var c = CODES.filter(function (x) { return x.key === key; })[0];
@@ -830,7 +927,7 @@
     return '<table class="rpt-table' + (cls ? ' ' + cls : '') + '"><thead><tr>' + hdr.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
       '</tr></thead><tbody>' + rows.map(function (r) {
         return '<tr>' + r.map(function (c) {
-          var cl = c === 'OK' ? ' class="rpt-pass"' : c === 'NG' ? ' class="rpt-fail"' : c === ST_OK_PENDING ? ' class="cs-rpt-amber"' : '';
+          var cl = c === 'OK' ? ' class="rpt-pass"' : (c === 'NG' || c === ST_UNSTABLE) ? ' class="rpt-fail"' : '';
           return '<td' + cl + '>' + esc(c) + '</td>';
         }).join('') + '</tr>';
       }).join('') + '</tbody></table>';
@@ -849,6 +946,15 @@
       'column/shaft interface: Mu = |M_base|, Vu = |V_base|.'
   };
   function shaftSourceNote(src) { return SHAFT_SOURCES[src] || ('Shaft rows: ' + (src || '—') + '.'); }
+  // ruling M6 / M5 / M8 (user-supplied Art. 4.5.3.2.2b text, AASHTO 10 Ch 5 MD/Art_4.5.3.2.2b_user_supplied.md)
+  var MAG_EQ = [
+    'δb = Cm / (1 − Pu/(φK·Pe,b)) ≥ 1.0   (Eq. 4.5.3.2.2b-3; Pe,b with the braced K)',
+    'δs = 1 / (1 − ΣPu/(φK·ΣPe,s))   (Eq. 4.5.3.2.2b-4; Pe,s with the unbraced K; δs = 1.0 on a braced axis)',
+    'Pe = π²·EI / (K·ℓu)²   (Eq. 4.5.3.2.2b-5), EI = max(Eq. 5.6.4.3-1, 5.6.4.3-2), φK = 0.75',
+    'Cm = 0.6 + 0.4·(M1b/M2b)   (Eq. 4.5.3.2.2b-6, braced axes only; Cm = 1.0 otherwise, incl. δb of an unbraced axis)',
+    'Mc = max(δb, δs)·M2 per axis (conservative bound of Eq. 4.5.3.2.2b-1: the CSiBridge rows do not separate M2b from M2s); Mu = √(Mc2² + Mc3²)'
+  ];
+  var MAG_REF = 'AASHTO LRFD 10th Art. 4.5.3.2.2b and §5.6.4.3 (user-supplied text, 2026-10-19)';
   function lrfdRowsTable(checkRows) {
     if (!checkRows || !checkRows.length) return rptNote('No LRFD rows.');
     var rows = checkRows.map(function (r, i) { return { r: r, i: i }; })
@@ -939,10 +1045,12 @@
         return [a.axis, a.K, a.source, a.end_condition, a.klr, a.limit, a.status];
       })) : rptNote('No screened rows.');
       axs.forEach(function (a) { if (a.label) h4 += rptNote('Axis ' + a.axis + ': ' + a.label + '.'); });
-      h4 += '<div class="rpt-eq">' + esc('S6: moment magnification is NOT applied — AASHTO Art. 4.5.3.2.2b and the §5.6.4.3 EI equations ' +
-        'are not available (open item S6). Screen only: Kℓu/r is classified, the factored moments are not magnified.') + '</div>' +
+      var mr = magRows(b);
+      if (mr.length) h4 += '<h4>Moment magnification (final cage, governing row per axis)</h4>' + rptTable(MAG_HDR, mr.map(magCells)) +
+        rptNote(magNote(b));
+      h4 += rptEq(MAG_EQ) +
         rptNote('r = 0.25·D; ℓu default = H + Df (Df = ' + (isNum(b.Df_for_lu) ? fmt(b.Df_for_lu / 12.0, 2) + ' ft' : '—') +
-          '). Envelope rows use M1/M2 = +1 (single curvature).');
+          '). Envelope rows use M1/M2 = +1 (single curvature) and Pu = P_min (most compression).') + rptRef(MAG_REF);
     }
     sec.slender = h4;
     // 5. M-phi
@@ -1035,8 +1143,9 @@
       '<li>' + esc(env ? 'Envelope bounding: the CSiBridge Max/Min rows are not concurrent, so every row is envelope-bounded (conservative): ' +
         'biaxial M and V from the envelope maxima (up to √2 conservative); shear, torsion and the longitudinal V+T check at P_max ' +
         '(least compression); flexure at the P in [P_min, P_max] with the lowest resistance.' : 'Concurrent rows used as given (no envelope rows).') + '</li>' +
-      '<li>' + esc('S6: slenderness moment magnification is not applied (AASHTO Art. 4.5.3.2.2b and the §5.6.4.3 EI equations not ' +
-        'available); the optional screen classifies Kℓu/r only.') + '</li>' +
+      '<li>' + esc('Slenderness (optional): Kℓu/r screen (§5.6.4.3) and moment magnification (Art. 4.5.3.2.2b): Mc = max(δb, δs)·M2 ' +
+        'per axis (conservative: gravity and sway moments are not separated); Cm = 1.0 for unbraced axes (δb too); sway groups ' +
+        'use a two-pass approximation for ΣPu / ΣPe; default K = Table C4.6.2.5-1 design values.') + '</li>' +
       '<li>' + esc('Seismic capacity design ported from the Seismic Column app @ 9265d67: its references are not yet checked ' +
         'against the printed codes (OPEN_VERIFICATION_ITEMS E1–E11) and are marked ' + UNVERIFIED_SUFFIX + '.') + '</li>' +
       '<li>' + esc('Defaults: Extreme rows set only the axial range for M-φ and the seismic Vc (S2); shaft flexural capacity = M-φ ' +
@@ -1068,13 +1177,13 @@
     UNVERIFIED_SUFFIX: UNVERIFIED_SUFFIX, OPEN_DECIDE_E: OPEN_DECIDE_E, REPORT_SECTIONS: REPORT_SECTIONS,
     seismicRef: seismicRef, checkRef: checkRef, slenderAxes: slenderAxes, mphiChart: mphiChart,
     shaftSeries: shaftSeries, shaftCharts: shaftCharts, reportHtml: reportHtml, codeLabel: codeLabel,
-    ST_OK_PENDING: ST_OK_PENDING, statusClass: statusClass, expectedErrors: expectedErrors, layerErrors: layerErrors,
+    ST_UNSTABLE: ST_UNSTABLE, statusClass: statusClass, expectedErrors: expectedErrors, layerErrors: layerErrors,
     expectedStr: expectedStr, shaftSourceNote: shaftSourceNote, GR60_EXPECTED: GR60_EXPECTED,
     EXPECTED_HINT: EXPECTED_HINT, STALE_MSG: STALE_MSG,
-    K_SOURCES: K_SOURCES, END_CONDITIONS: END_CONDITIONS, EULER_K: EULER_K, DEFAULT_K_WARNING: DEFAULT_K_WARNING,
+    K_SOURCES: K_SOURCES, END_CONDITIONS: END_CONDITIONS, TABLE_K: TABLE_K, TABLE_CASE: TABLE_CASE, UNSTABLE_REASON: UNSTABLE_REASON, DEFAULT_K_WARNING: DEFAULT_K_WARNING,
     UNBRACED_K_LT1_WARNING: UNBRACED_K_LT1_WARNING, BRACED_K_LT1_NOTE: BRACED_K_LT1_NOTE, LONG_NA: LONG_NA,
     BARS_TERMINATED_LABEL: BARS_TERMINATED_LABEL, kInfo: kInfo, kInfoText: kInfoText, longCheckText: longCheckText,
-    slenderKRows: slenderKRows
+    slenderKRows: slenderKRows, kbInfo: kbInfo, magRows: magRows, magNote: magNote, MAG_EQ: MAG_EQ
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -1188,7 +1297,7 @@
       field('Seismic code', sel('code', CODES.map(function (c) { return [c.key, c.label]; }), ' id="cs-code"')),
       field('Envelope mode', sel('settings.envelope_mode', [['station', 'station (default)'], ['member', 'member (fastest, most conservative)']], ' id="cs-env-mode"')),
       field('Slenderness screen', inp('settings.slenderness_on', 'bool', ' id="cs-slender-on"'))
-    ]) + '<div class="circ-info">Slenderness: magnification pending AASHTO Art. 4.5.3.2.2b (S6) — screen only (K&#8467;u/r classification, no magnified moments).</div>' +
+    ]) + '<div class="circ-info">Slenderness: K&#8467;u/r screen (&sect;5.6.4.3) and moment magnification (Art. 4.5.3.2.2b): Mc = max(&delta;b, &delta;s)&middot;M2 per axis, EI per &sect;5.6.4.3, &phi;K = 0.75.</div>' +
       '<div style="font-weight:600;font-size:0.8rem;margin-top:8px;">Cage search</div>' +
       grid(PARAM_LABELS.map(function (p) { return field(p[1], inp('params.' + p[0], 'num', ' style="width:80px"'), p[2]); }));
     return card('3. Settings', 'blue', h, 'cs-card-settings');
@@ -1240,15 +1349,18 @@
         var A = P + 'slender.' + ax + '.';
         return grid([
           field('Axis ' + ax + ' braced', inp(A + 'braced', 'bool')),
-          field('K source (axis ' + ax + ')', sel(A + 'K_source', [['default', 'default (C5.6.4.3 / Euler)'], ['analysis', 'buckling analysis']])),
-          field('End condition (axis ' + ax + ', unbraced default K)', sel(A + 'end_condition', [['fixed-free', 'fixed-free (K = 2.0)'], ['fixed-fixed', 'fixed-fixed, sway (K = 1.0)']])),
-          field('K (axis ' + ax + ', buckling analysis)', inp(A + 'K', 'num', w)),
+          field('Unbraced K source (axis ' + ax + ', &delta;s)', sel(A + 'K_source', [['default', 'default (Table C4.6.2.5-1)'], ['analysis', 'buckling analysis']])),
+          field('End condition (axis ' + ax + ', unbraced default K)', sel(A + 'end_condition', [['fixed-free', 'fixed-free, case (e) (K = 2.1)'], ['fixed-fixed', 'fixed-fixed, sway, case (d) (K = 1.2)']])),
+          field('Unbraced K (axis ' + ax + ', buckling analysis)', inp(A + 'K', 'num', w)),
+          field('Braced K source (axis ' + ax + ', &delta;b)', sel(A + 'K_braced_source', [['default', 'default 1.0 (C5.6.4.3)'], ['analysis', 'buckling analysis']])),
+          field('Braced K (axis ' + ax + ', buckling analysis)', inp(A + 'K_braced', 'num', w)),
           field('&#8467;u axis ' + ax + ' (blank = H + Df)', inp(A + 'lu_ft', 'num', w), 'ft'),
           '<span class="circ-info" id="cs-k-hint-' + i + '-' + ax + '" style="max-width:420px;white-space:normal;">' + esc(kInfoText(b.slender[ax])) + '</span>'
         ]);
       }).join('') + grid([
         field('&beta;d (blank = auto)', inp(P + 'slender.beta_d', 'num', w)),
-        field('&gamma;p', inp(P + 'slender.gamma_p', 'num', w))
+        field('&gamma;p (load factor applied to Dead-case moments for &beta;d; blank = 1.25)', inp(P + 'slender.gamma_p', 'num', w)),
+        field('Sway group (blank = this bent alone)', inp(P + 'sway_group', 'str', w))
       ]) + '</div>';
     return h;
   }
@@ -1378,6 +1490,12 @@
         '</tr></thead><tbody>' + sk.map(function (a) {
           return '<tr>' + [a.axis, a.K, a.source, a.end_condition, a.klr, a.limit, a.status].map(function (x) { return '<td>' + esc(x) + '</td>'; }).join('') + '</tr>';
         }).join('') + '</tbody></table>' + sk.map(function (a) { return a.label ? '<div class="circ-info">Axis ' + esc(a.axis) + ': ' + esc(a.label) + '.</div>' : ''; }).join('');
+      var mg = magRows(b);
+      if (mg.length) h += '<div style="font-weight:600;margin-top:8px;">Moment magnification per axis (governing row)</div>' +
+        '<div style="overflow-x:auto;"><table class="data-table" id="cs-mag-axes"><thead><tr>' +
+        MAG_HDR.map(function (x) { return '<th>' + esc(x) + '</th>'; }).join('') + '</tr></thead><tbody>' + mg.map(function (r) {
+          return '<tr>' + magCells(r).map(function (x) { return '<td>' + esc(x) + '</td>'; }).join('') + '</tr>';
+        }).join('') + '</tbody></table></div><div class="circ-info">' + esc(magNote(b)) + '</div>';
     }
     h += '<div style="font-weight:600;margin-top:8px;">Final checks</div><div style="overflow-x:auto;"><table class="data-table" id="cs-checks"><thead><tr>' +
       ['Group', 'Check', 'Demand', 'Capacity', 'Ratio', '', 'Detail', 'Reference'].map(function (x) { return '<th>' + x + '</th>'; }).join('') +

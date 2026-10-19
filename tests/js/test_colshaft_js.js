@@ -74,7 +74,9 @@ test('payload keys match the run_colshaft schema', () => {
   assert.ok(!('P_dead' in b1));
   assert.ok(!('override' in b1));
   assert.ok(!('soil' in b1));
-  assert.deepStrictEqual(b1.slender['2'], { braced: false, K_source: 'default', end_condition: 'fixed-free', K: null, lu: null });
+  assert.deepStrictEqual(b1.slender['2'], { braced: false, K_source: 'default', end_condition: 'fixed-free', K: null, lu: null,
+    K_braced_source: 'default', K_braced: null });
+  assert.ok(!('sway_group' in b1), 'blank sway group is omitted (bent alone)');
   // bent 2: soil basis by default (auto), soil payload in engine units
   assert.ok(!('shaft_basis' in b2));
   assert.strictEqual(b2.L_embed_in, 720);
@@ -188,6 +190,13 @@ test('other validation: paste, frames, slenderness K', () => {
   assert.ok(CS.kInfoText(t.bents[0].slender['3']).indexOf('below the C5.6.4.3 floor') > 0);
   for (const b of t.bents) b.slender['3'].K = 0;
   assert.ok(CS.validateState(t).some(x => /axis 3: enter K > 0/.test(x)));
+  // ruling M2: the braced K (delta_b) from analysis must be > 0
+  const u = sampleState();
+  u.settings.slenderness_on = true;
+  u.bents[0].slender['2'].K_braced_source = 'analysis';
+  assert.ok(CS.validateState(u).some(x => /axis 2: enter the braced K > 0/.test(x)));
+  u.bents[0].slender['2'].K_braced = 0.9;
+  assert.deepStrictEqual(CS.validateState(u), []);
 });
 
 test('status colour map and precedence', () => {
@@ -197,16 +206,17 @@ test('status colour map and precedence', () => {
   assert.strictEqual(CS.statusColor('REFINED ANALYSIS REQUIRED'), '#e67e22');
   assert.strictEqual(CS.statusColor('???'), '#7f8c8d');
   assert.deepStrictEqual(Object.keys(CS.STATUS_COLORS).sort(),
-    ['NG', 'NO SOLUTION', 'OK', 'OK – MAGNIFICATION PENDING (S6)', 'REFINED ANALYSIS REQUIRED']);
+    ['NG', 'NO SOLUTION', 'OK', 'REFINED ANALYSIS REQUIRED', 'UNSTABLE (Pu ≥ φK·Pe)']);
   assert.strictEqual(CS.worstStatus(['OK', 'NG']), 'NG');
-  // ruling F-3: OK < OK – MAGNIFICATION PENDING (S6) < NG; amber colour and report class
-  const P = CS.ST_OK_PENDING;
-  assert.strictEqual(P, 'OK – MAGNIFICATION PENDING (S6)');
-  assert.strictEqual(CS.worstStatus(['OK', P, 'OK']), P);
-  assert.strictEqual(CS.worstStatus([P, 'NG']), 'NG');
-  assert.strictEqual(CS.statusColor(P), '#d4a017');
-  assert.deepStrictEqual(['OK', P, 'NG', 'NO SOLUTION'].map(CS.statusClass),
-    ['rpt-pass', 'cs-rpt-amber', 'rpt-fail', 'rpt-fail']);
+  // ruling M10: NO SOLUTION > UNSTABLE > REFINED > NG > OK; dark red; fail class
+  const U = CS.ST_UNSTABLE;
+  assert.strictEqual(U, 'UNSTABLE (Pu ≥ φK·Pe)');
+  assert.strictEqual(CS.worstStatus(['OK', 'REFINED ANALYSIS REQUIRED', U, 'NG']), U);
+  assert.strictEqual(CS.worstStatus([U, 'NO SOLUTION']), 'NO SOLUTION');
+  assert.strictEqual(CS.statusColor(U), '#922b21');
+  assert.deepStrictEqual(['OK', U, 'NG', 'NO SOLUTION'].map(CS.statusClass),
+    ['rpt-pass', 'rpt-fail', 'rpt-fail', 'rpt-fail']);
+  assert.ok(!('ST_OK_PENDING' in CS));
   assert.strictEqual(CS.worstStatus(['NG', 'REFINED ANALYSIS REQUIRED', 'OK']), 'REFINED ANALYSIS REQUIRED');
   assert.strictEqual(CS.worstStatus(['REFINED ANALYSIS REQUIRED', 'NO SOLUTION']), 'NO SOLUTION');
   assert.strictEqual(CS.worstStatus([]), 'OK');
@@ -226,7 +236,7 @@ test('result formatting (grid rows, kip-in -> kip-ft, drill-down rows, checks)',
       lrfd: { col: { long: { bar: 11, n: 15, bundle: 1 }, trans: { bar: 5, s: 4, ties: 0 },
         check_rows: [
           { Pu: -800, Mu: 24000, Vu: 100, Tu: 120, Mr: 36000, Vr2: 500, Tr: 1200, ratio: 0.5, ok: true,
-            _case: 'Str-I', _frame: '101', _station: 0, _klr2: 40.2, _klr3: 55.5, _slender_status: ST.PENDING,
+            _case: 'Str-I', _frame: '101', _station: 0, _klr2: 40.2, _klr3: 55.5, _slender_status: ST.MAGNIFIED,
             _Pmin: -1100, _Pmax: -800, _flexP: -1100, flexStatus: 'OK', shearStatus: 'NR' },
           { Pu: -900, Mu: 30000, Vu: 100, Tu: 0, Mr: 33000, Vr2: 500, Tr: 1200, ratio: 0.91, ok: true,
             _case: 'Str-II', _frame: '101', _station: 240, _klr2: 20, _klr3: 21, _slender_status: ST.NEGLECT }] } },
@@ -253,7 +263,7 @@ test('result formatting (grid rows, kip-in -> kip-ft, drill-down rows, checks)',
   assert.strictEqual(r.Mp, '5000');
   assert.strictEqual(r.Mo, '6000');
   assert.strictEqual(r.Vo, '300');
-  assert.strictEqual(r.slender, '55.5 (magnification pending verification (S6))');
+  assert.strictEqual(r.slender, '55.5 (magnified)');
   assert.strictEqual(r.shaft_M, '7000 (10.0 ft) / 10000');
   assert.strictEqual(r.shaft_V, '300 / 900');
   assert.ok(r.final.indexOf('Shaft 22-#14 (bundles of 2) (LRFD), #5 @ 6.00 in + 2 ties (LRFD+Seismic)') >= 0, r.final);
@@ -275,8 +285,8 @@ test('result formatting (grid rows, kip-in -> kip-ft, drill-down rows, checks)',
   assert.strictEqual(c[2][5], 'NG');
 });
 
-test('slenderness summary ranks the engine strings: refined > S6 pending > neglect', () => {
-  assert.deepStrictEqual(ST, { NEGLECT: 'neglect', PENDING: 'magnification pending verification (S6)',
+test('slenderness summary ranks the engine strings: refined > magnified > neglect', () => {
+  assert.deepStrictEqual(ST, { NEGLECT: 'neglect', MAGNIFIED: 'magnified',
     REFINED: 'refined analysis required' });
   const on = { slenderness_on: true };
   const bent = rows => ({ lrfd: { col: { check_rows: rows } } });
@@ -284,10 +294,10 @@ test('slenderness summary ranks the engine strings: refined > S6 pending > negle
   assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 20, _klr3: 18, _slender_status: ST.NEGLECT },
     { _klr2: 120, _klr3: 90, _slender_status: ST.REFINED }]), on), '120.0 (refined analysis required)');
   assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 120, _slender_status: ST.REFINED },
-    { _klr2: 40, _slender_status: ST.PENDING }, { _klr2: 10, _slender_status: ST.NEGLECT }]), on),
+    { _klr2: 40, _slender_status: ST.MAGNIFIED }, { _klr2: 10, _slender_status: ST.NEGLECT }]), on),
   '120.0 (refined analysis required)');
   assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 10, _slender_status: ST.NEGLECT },
-    { _klr2: 40, _slender_status: ST.PENDING }]), on), '40.0 (magnification pending verification (S6))');
+    { _klr2: 40, _slender_status: ST.MAGNIFIED }]), on), '40.0 (magnified)');
   assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 10, _slender_status: ST.NEGLECT }]), on), '10.0 (neglect)');
   assert.strictEqual(CS.slenderSummary(bent([]), { slenderness_on: false }), 'off');
 });
@@ -394,10 +404,14 @@ function reportFixture() {
       categories: { DEAD: 'Dead', 'Str-I': 'Strength' }, warnings: ['No units row <assumed>', 'B<1>: frame 999 not found'] },
     bents: [{
       name: 'B<1>', status: 'OK', no_solution: [], warnings: ['frame 999 not found'], H_in: 240, Df_for_lu: 120,
+      magnification: { beta_d: 0.0718, beta_d_source: 'gp', phi_K: 0.75, Ec: 3986.5, Es: 29000, Ig: 636172, Is: 10292,
+        EI1: 7.5e8, EI2: 9.4e8, EI: 9.4e8, sway: null, axes: {
+          '2': { braced: false, K_braced: 1.0, K_unbraced: 2.1, Pe_b: 72000, Pe_s: 16000, sPe_s: 16000, Cm: 1.0, db: 1.03, ds: 1.15, delta: 1.15, row: 1, case: 'Str-I', Pu: 1600, sPu: 1600, unstable: false },
+          '3': { braced: false, K_braced: 1.0, K_unbraced: 2.1, Pe_b: 72000, Pe_s: 16000, sPe_s: 16000, Cm: 1.0, db: 1.03, ds: 1.15, delta: 1.15, row: 1, case: 'Str-I', Pu: 1600, sPu: 1600, unstable: false } } },
       shaft_basis: 'soil', axial: { P_dead: -950, dead_cases: { DEAD: -950 }, P_ext_min: -1400, P_ext_max: -500 },
       lrfd: { col: { check_rows: [
         { Pu: -800, Mu: 24000, Vu: 100, Tu: 120, Mr: 36000, Vr2: 500, Tr: 1200, ratio: 0.5, ok: true, _case: 'Str-I',
-          _frame: '101', _station: 0, _klr2: 40, _klr3: 20, _slender_limit2: 22, _slender_limit3: 22, _slender_status: ST.PENDING },
+          _frame: '101', _station: 0, _klr2: 40, _klr3: 20, _slender_limit2: 22, _slender_limit3: 22, _slender_status: ST.MAGNIFIED },
         { Pu: -900, Mu: 30000, Vu: 90, Tu: 0, Mr: 33000, Vr2: 500, Tr: 1200, ratio: 0.91, ok: true, _case: 'Str-II',
           _frame: '101', _station: 240, _klr2: 120, _klr3: 10, _slender_limit2: 22, _slender_limit3: 22, _slender_status: ST.REFINED }] },
         shaft: { source: 'p-y strength', check_rows: [] } },
@@ -464,10 +478,11 @@ test('report: header, assumptions box, sections in order for every bent', () => 
   assert.ok(h.indexOf('Column on Shaft — Design Report') >= 0);
   assert.ok(h.indexOf('Project: <b>Bridge &lt;1&gt;</b>') > 0 && h.indexOf('2026-10-19') > 0);
   assert.ok(h.indexOf('Seismic code: Caltrans SDC 2.1') > 0);
-  // assumptions box: envelope bounding, S6, every open E DECIDE id
+  // assumptions box: envelope bounding, magnification (rulings M5/M6/M9), every open E DECIDE id
   const a0 = h.indexOf('data-sec="assumptions"');
   const box = h.slice(a0, h.indexOf('</ul></li></ul></div>', a0));
-  assert.ok(/envelope-bounded \(conservative\)/.test(box) && /S6/.test(box) && /not applied/.test(box), box);
+  assert.ok(/envelope-bounded \(conservative\)/.test(box) && /max\(δb, δs\)·M2/.test(box) && /two-pass/.test(box), box);
+  assert.ok(!/S6/.test(box), box);
   CS.OPEN_DECIDE_E.forEach(e => assert.ok(box.indexOf('<b>' + e[0] + '</b>') > 0, e[0]));
   // the 10 sections, in order, once per bent (including the NO SOLUTION bent)
   const keys = CS.REPORT_SECTIONS.map(s => s[0]);
@@ -481,10 +496,12 @@ test('report: header, assumptions box, sections in order for every bent', () => 
   assert.ok(b1.indexOf('frame 999 not found') > 0);
   // inputs / overrides / soil
   assert.ok(b1.indexOf('auto, from the column frame stations') > 0 && b1.indexOf('shaft long 22-#14') > 0 && b1.indexOf('api_sand') > 0);
-  // slenderness per axis: axis 2 refined (120 >= 100), axis 3 neglect; S6 note
+  // slenderness per axis: axis 2 refined (120 >= 100), axis 3 neglect; magnification equations + table
   assert.deepStrictEqual(CS.slenderAxes(r.bents[0].lrfd.col.check_rows).map(a => [a.axis, a.klr, a.status]),
     [['2', 120, ST.REFINED], ['3', 20, ST.NEGLECT]]);
-  assert.ok(b1.indexOf('moment magnification is NOT applied') > 0);
+  assert.ok(b1.indexOf('NOT applied') < 0 && b1.indexOf('Eq. 4.5.3.2.2b-3') > 0 && b1.indexOf('Eq. 4.5.3.2.2b-4') > 0);
+  assert.ok(b1.indexOf('Moment magnification (final cage, governing row per axis)') > 0);
+  assert.ok(b1.indexOf('<td>1.150</td>') > 0 && b1.indexOf('βd = 0.072') > 0, 'magnification table');
   // M-phi table + Mo/Vo derivation + column shear breakdown
   assert.ok(b1.indexOf('governs Mo') > 0 && b1.indexOf('9.000e-5') > 0);
   assert.ok(b1.indexOf('Mo = λmo × Mp = 1.20 × 6333.3 = 7600.0 kip-ft') > 0, 'Mo line');
@@ -590,17 +607,17 @@ test('soil layer validation (minor 7d)', () => {
   assert.ok(/layer 2: sand needs k > 0/.test(e[0]), e[0]);
 });
 
-test('report: shaft row source line (ruling F-4), amber pending status, stale message', () => {
+test('report: shaft row source line (ruling F-4), UNSTABLE status, stale message', () => {
   assert.ok(/\|V_base\|·L_eq/.test(CS.shaftSourceNote('cantilever strength')));
   assert.ok(/Mu = \|M_base\|, Vu = \|V_base\|/.test(CS.shaftSourceNote('interface strength')));
   assert.ok(/p-y soil model/.test(CS.shaftSourceNote('p-y strength')));
   assert.ok(/pasted shaft frames/.test(CS.shaftSourceNote('shaft frames')));
   const r = reportFixture();
-  r.bents[0].status = CS.ST_OK_PENDING;
+  r.bents[0].status = CS.ST_UNSTABLE;
   r.bents[0].lrfd.shaft = { source: 'cantilever strength', check_rows: r.bents[0].lrfd.col.check_rows };
   const h = CS.reportHtml(r, RPT_PAYLOAD, {});
-  assert.ok(h.indexOf('<span class="cs-rpt-amber">OK – MAGNIFICATION PENDING (S6)</span>') > 0);
-  assert.ok(h.indexOf('<td class="cs-rpt-amber">OK – MAGNIFICATION PENDING (S6)</td>') > 0);
+  assert.ok(h.indexOf('<span class="rpt-fail">UNSTABLE (Pu ≥ φK·Pe)</span>') > 0, 'header status');
+  assert.ok(h.indexOf('<td class="rpt-fail">UNSTABLE (Pu ≥ φK·Pe)</td>') > 0, 'summary cell');
   assert.ok(h.indexOf('Shaft (cantilever strength)') > 0 && h.indexOf('taken down the equivalent cantilever') > 0);
   assert.ok(h.indexOf('least compression of the Extreme rows, else P_dead') > 0);
   assert.ok(/stale/.test(CS.STALE_MSG) && /re-run Design/.test(CS.STALE_MSG));
@@ -632,11 +649,14 @@ test('K per axis (2026-10-19): defaults, analysis override, legacy state, payloa
   let k = CS.kInfo({ braced: true, K_source: 'default', end_condition: 'fixed-free', K: '' });
   assert.strictEqual(k.K, 1.0); assert.strictEqual(k.warning, '');
   k = CS.kInfo({ braced: false, K_source: 'default', end_condition: 'fixed-free', K: '' });
-  assert.strictEqual(k.K, 2.0);
-  assert.strictEqual(k.label, 'K = 2.0 (Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 design value)');
+  // ruling M1: Table C4.6.2.5-1 design values (e) 2.1 / (d) 1.2
+  assert.strictEqual(k.K, 2.1);
+  assert.strictEqual(k.label, 'K = 2.1 (Table C4.6.2.5-1 case (e) design value, fixed-free)');
   assert.strictEqual(k.warning, CS.DEFAULT_K_WARNING);
+  assert.ok(!/Euler/.test(CS.DEFAULT_K_WARNING));
+  assert.strictEqual(k.K_braced, 1.0); assert.strictEqual(k.K_unbraced, 2.1);
   k = CS.kInfo({ braced: false, K_source: 'default', end_condition: 'fixed-fixed', K: 0.5 });
-  assert.strictEqual(k.K, 1.0); assert.ok(/Euler ideal, fixed-fixed/.test(k.label));
+  assert.strictEqual(k.K, 1.2); assert.ok(/case \(d\) design value, fixed-fixed/.test(k.label));
   k = CS.kInfo({ braced: false, K_source: 'analysis', end_condition: 'fixed-free', K: 1.6 });
   assert.strictEqual(k.K, 1.6); assert.strictEqual(k.warning, '');
   k = CS.kInfo({ braced: false, K_source: 'analysis', K: 0.8 });
@@ -650,8 +670,10 @@ test('K per axis (2026-10-19): defaults, analysis override, legacy state, payloa
   assert.strictEqual(st.bents[0].slender['3'].K_source, 'default');
   assert.strictEqual(st.bents[0].slender['2'].end_condition, 'fixed-free');
   const pl = CS.buildPayload(Object.assign(sampleState(), { bents: st.bents.map(b => Object.assign(b, { col_frames: '101', L_eq_ft: 10 })) }));
-  assert.deepStrictEqual(pl.bents[0].slender['2'], { braced: false, K_source: 'analysis', end_condition: 'fixed-free', K: 2.1, lu: null });
-  assert.deepStrictEqual(pl.bents[0].slender['3'], { braced: true, K_source: 'default', end_condition: 'fixed-free', K: null, lu: null });
+  assert.deepStrictEqual(pl.bents[0].slender['2'], { braced: false, K_source: 'analysis', end_condition: 'fixed-free', K: 2.1, lu: null,
+    K_braced_source: 'default', K_braced: null });
+  assert.deepStrictEqual(pl.bents[0].slender['3'], { braced: true, K_source: 'default', end_condition: 'fixed-free', K: null, lu: null,
+    K_braced_source: 'default', K_braced: null });
   // a garbage source / end condition normalises to the defaults
   const g = CS.normalizeState({ bents: [{ slender: { '2': { K_source: 'x', end_condition: 'y' } } }] });
   assert.strictEqual(g.bents[0].slender['2'].K_source, 'default');
@@ -665,32 +687,87 @@ test('K per axis (2026-10-19): defaults, analysis override, legacy state, payloa
 test('report: per-axis K table and the per-member longitudinal V+T note (2026-10-19)', () => {
   const r = reportFixture();
   r.bents[0].slender_K = {
-    '2': { K: 2.0, source: 'default', end_condition: 'fixed-free', braced: false,
-      label: 'K = 2.0 (Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 design value)' },
+    '2': { K: 2.1, source: 'default', end_condition: 'fixed-free', braced: false,
+      label: 'K = 2.1 (Table C4.6.2.5-1 case (e) design value, fixed-free)' },
     '3': { K: 0.8, source: 'analysis', end_condition: 'fixed-free', braced: false, label: 'K = 0.8 (buckling analysis)' } };
   r.bents[0].lrfd.col.long_check = { bars_terminated: false, enforced: 'none', n_rows: 2, n_torsion_rows: 0,
     note: 'not enforced, n/a: bars continuous (§5.7.3.5). §5.7.3.5: "Eq. 5.7.3.5-1 shall be evaluated where ... discontinuous."' };
   const h = CS.reportHtml(r, RPT_PAYLOAD, {});
   const sec4 = h.slice(h.indexOf('data-sec="slender"'), h.indexOf('data-sec="mphi"'));
   assert.ok(sec4.indexOf('<th>K used</th>') > 0 && sec4.indexOf('<th>K source</th>') > 0 && sec4.indexOf('<th>End condition</th>') > 0, sec4);
-  assert.ok(sec4.indexOf('<td>Euler default</td>') > 0 && sec4.indexOf('<td>buckling analysis</td>') > 0);
-  assert.ok(sec4.indexOf('Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 design value') > 0);
+  assert.ok(sec4.indexOf('<td>Table C4.6.2.5-1 default</td>') > 0 && sec4.indexOf('<td>buckling analysis</td>') > 0);
+  assert.ok(sec4.indexOf('K = 2.1 (Table C4.6.2.5-1 case (e) design value, fixed-free)') > 0);
   assert.ok(sec4.indexOf('<td>120.0</td>') > 0);
   const rows = CS.slenderKRows(r.bents[0], null);
   assert.deepStrictEqual(rows.map(a => [a.axis, a.K, a.source, a.status]),
-    [['2', '2', 'Euler default', ST.REFINED], ['3', '0.8', 'buckling analysis', ST.NEGLECT]]);
+    [['2', '2.1', 'Table C4.6.2.5-1 default', ST.REFINED], ['3', '0.8', 'buckling analysis', ST.NEGLECT]]);
   // braced default
   r.bents[0].slender_K['3'] = { K: 1.0, source: 'default', end_condition: 'fixed-free', braced: true, label: 'K = 1.0 (braced, C5.6.4.3)' };
   assert.strictEqual(CS.slenderKRows(r.bents[0], null)[1].source, 'braced default (C5.6.4.3)');
   // no engine K: fall back to the payload (legacy K -> analysis)
   delete r.bents[0].slender_K;
   const pk = CS.slenderKRows(r.bents[0], { slender: { '2': { braced: false, K: 2.1 }, '3': { braced: false, K_source: 'default' } } });
-  assert.deepStrictEqual(pk.map(a => [a.K, a.source]), [['2.1', 'buckling analysis'], ['2', 'Euler default']]);
+  assert.deepStrictEqual(pk.map(a => [a.K, a.source]), [['2.1', 'buckling analysis'], ['2.1', 'Table C4.6.2.5-1 default']]);
   // longitudinal V+T note per member in section 3, inputs echo the flags
   const sec3 = h.slice(h.indexOf('data-sec="lrfd"'), h.indexOf('data-sec="slender"'));
   assert.ok(sec3.indexOf('Longitudinal reinforcement for V+T (Eq. 5.7.3.5-1 / 5.7.3.6.3-1): not enforced, n/a: bars continuous (§5.7.3.5)') > 0, sec3);
   assert.ok(h.indexOf('Longitudinal bars terminated/discontinuous (Eq. 5.7.3.5-1)') > 0);
   assert.ok(/column no, shaft no/.test(h));
+});
+
+test('braced K / sway group (ruling M2 / M9): defaults, legacy migration, payload, round-trip', () => {
+  let k = CS.kbInfo({});
+  assert.strictEqual(k.K, 1.0); assert.strictEqual(k.source, 'default');
+  k = CS.kbInfo({ K_braced_source: 'analysis', K_braced: 0.85 });
+  assert.strictEqual(k.K, 0.85); assert.strictEqual(k.warning, CS.BRACED_K_LT1_NOTE);
+  assert.ok(CS.kbInfo({ K_braced_source: 'analysis', K_braced: '' }).error);
+  // braced axis: the screen K is the braced K
+  k = CS.kInfo({ braced: true, K_source: 'analysis', K: 2.0, K_braced_source: 'analysis', K_braced: 0.9 });
+  assert.strictEqual(k.K, 0.9); assert.strictEqual(k.K_braced, 0.9);
+  // unbraced axis: both K values reported, the hint names both
+  const t = CS.kInfoText({ braced: false, K_source: 'default', end_condition: 'fixed-fixed' });
+  assert.ok(/unbraced \(δs\) K = 1.2/.test(t) && /braced \(δb\) K = 1.0/.test(t), t);
+  // legacy state (no K_braced): unbraced -> default 1.0; braced with an analysis K -> kept as the braced K
+  const st = CS.normalizeState({ bents: [{ slender: { '2': { braced: false, K: 2.1 }, '3': { braced: true, K: 0.8 } } }] });
+  assert.strictEqual(st.bents[0].slender['2'].K_braced_source, 'default');
+  assert.strictEqual(st.bents[0].slender['3'].K_braced_source, 'analysis');
+  assert.strictEqual(st.bents[0].slender['3'].K_braced, 0.8);
+  assert.strictEqual(CS.kInfo(st.bents[0].slender['3']).K, 0.8);
+  assert.strictEqual(st.bents[0].sway_group, '');
+  // payload: braced K and the sway group
+  const s = sampleState();
+  s.bents[0].slender['2'].K_braced_source = 'analysis';
+  s.bents[0].slender['2'].K_braced = 0.9;
+  s.bents[0].sway_group = ' G1 ';
+  s.bents[1].sway_group = 'G1';
+  const p = CS.buildPayload(s);
+  assert.strictEqual(p.bents[0].slender['2'].K_braced_source, 'analysis');
+  assert.strictEqual(p.bents[0].slender['2'].K_braced, 0.9);
+  assert.strictEqual(p.bents[0].sway_group, 'G1');
+  assert.strictEqual(p.bents[1].sway_group, 'G1');
+  const back = CS.normalizeState(JSON.parse(JSON.stringify(CS.serializeState(s))));
+  assert.strictEqual(back.bents[0].slender['2'].K_braced, 0.9);
+  assert.strictEqual(back.bents[0].sway_group, ' G1 ');
+  assert.deepStrictEqual(CS.TABLE_K, { 'fixed-free': 2.1, 'fixed-fixed': 1.2 });
+});
+
+test('magnification rows (ruling M12): per axis table cells and the EI / beta_d note', () => {
+  const b = { magnification: { beta_d: 0.25, beta_d_source: 'user override', phi_K: 0.75, Ec: 3986.5, Es: 29000,
+    Ig: 636172, Is: 10292, EI1: 7.5e8, EI2: 9.4e8, EI: 9.4e8,
+    sway: { group: 'G', n_members: 2, Pe_others: { '2': 1000, '3': 1000 }, pass: 2 },
+    axes: {
+      '2': { braced: false, K_braced: 1.0, K_unbraced: 2.1, Pe_b: 72000, Pe_s: 16000, sPe_s: 32000, Cm: 1.0, db: 1.03,
+        ds: 1.15, delta: 1.15, row: 1, case: 'Str-I', Pu: 1600, sPu: 3200, unstable: false },
+      '3': { braced: true, K_braced: 1.0, K_unbraced: null, Pe_b: 72000, Pe_s: null, sPe_s: null, Cm: 0.6, db: null,
+        ds: 1.0, delta: null, row: 2, case: 'Str-II', Pu: 9000, sPu: 9000, unstable: true } } } };
+  const m = CS.magRows(b);
+  assert.deepStrictEqual([m[0].K_unbraced, m[0].Pe_s, m[0].delta, m[0].Pu, m[0].row],
+    ['2.10', '16000 (Σ 32000)', '1.150', '1600 (Σ 3200)', '1 (Str-I)']);
+  assert.deepStrictEqual([m[1].K_unbraced, m[1].Pe_s, m[1].db, m[1].delta],
+    ['braced', '—', 'unstable', CS.UNSTABLE_REASON]);
+  const note = CS.magNote(b);
+  assert.ok(/βd = 0.250 \(user override\)/.test(note) && /Eq. 5.6.4.3-1/.test(note) && /Sway group G \(2 bents, two-pass\)/.test(note), note);
+  assert.deepStrictEqual(CS.magRows({}), []);
 });
 
 const di = process.argv.indexOf('--dump');
