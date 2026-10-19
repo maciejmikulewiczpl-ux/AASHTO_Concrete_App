@@ -258,6 +258,31 @@ def test_transverse_no_solution_reported():
     assert math.isfinite(tr.dc_v) and tr.dc_v > 1.0
 
 
+def test_long_vt_check_drives_longitudinal_steel():
+    """Controller ruling on E12: the engine's longitudinal check for V(+T) (long_ok_2,
+    Eq. 5.7.3.5-1 / 5.7.3.6.3-1) is part of the pass; if only it fails, the
+    longitudinal cage is stepped up."""
+    rows = [row(-200.0, 20000.0, Vu=400.0)]
+    flex_only = cl.design_longitudinal(MEMBER, rows, {})
+    alone = cl.design_transverse(MEMBER, flex_only, rows, {})
+    assert not alone.ok and alone.long_only_fail and alone.long_vt_ng_rows == [0]
+    lg, tr = cl.design_member(MEMBER, rows, {})
+    assert lg.ok and tr.ok
+    assert lg.Ast > flex_only.Ast
+    assert cl.STEP_NOTE in lg.note
+    assert "Eq. 5.7.3.5-1 / 5.7.3.6.3-1" in cl.STEP_NOTE
+    out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
+                                 "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)[0]
+    assert out["long_ok_2"] is True and out["shearStatus"] in ("OK", "NR")
+
+
+def test_design_member_no_step_when_not_needed():
+    rows = [row(-800.0, 12000.0, Vu=100.0)]
+    lg, tr = cl.design_member(MEMBER, rows, {})
+    assert lg.ok and tr.ok and cl.STEP_NOTE not in lg.note
+    assert (lg.bar, lg.n, lg.bundle) == (11, 12, 1)
+
+
 # ── speed ───────────────────────────────────────────────────────────
 
 def test_500_rows_under_20s():
@@ -271,8 +296,11 @@ def test_500_rows_under_20s():
         r["_station"] = float(i)
         rows.append(r)
     t = time.perf_counter()
-    lg = cl.design_longitudinal(MEMBER, rows, {})
-    tr = cl.design_transverse(MEMBER, lg, rows, {})
+    lg, tr = cl.design_member(MEMBER, rows, {})
     dt = time.perf_counter() - t
     assert lg.ok and tr.ok
     assert dt < 20.0, f"{dt:.1f} s"
+    out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
+                                 "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)
+    assert all(o["long_ok_2"] is not False for o in out)
+    assert all(o["shearStatus"] in ("OK", "NR") and o["flexStatus"] != "NG" for o in out)

@@ -23,6 +23,10 @@ selected seismic provisions bound the bar count; envelope rows use the worst
 axial load in [P_min, P_max] for flexure (spec 4.1a); both faces' P-M curves
 are checked and the lower Mr is used (odd bar counts, open item D-C5).
 
+Transverse pass also requires the engine's longitudinal check for V(+T)
+(`long_ok_2`, Eq. 5.7.3.5-1 / 5.7.3.6.3-1); `design_member` steps the
+longitudinal cage up when only that check fails (controller ruling, 2026-10-18).
+
 Longitudinal steel is designed with a nominal transverse cage (#5 hoop @ 6 in,
 no ties, the member's `trans_type`/`hoop_closure`) unless the member supplies
 `trans_bar` / `trans_s` / `ties`.  The transverse search keeps the longitudinal
@@ -78,6 +82,9 @@ class TransResult:
     governing_row: Optional[int]
     note: str
     long_vt_ng_rows: List[int] = field(default_factory=list)
+    # True when the strongest candidate failed ONLY the longitudinal check for V(+T):
+    # more longitudinal steel (design_member) may then give a solution
+    long_only_fail: bool = False
 
 
 # ─── Raw inputs ─────────────────────────────────────────────────────
@@ -392,16 +399,26 @@ class _Search:
         return ok_all, max(worst, 0.0), gov, gP
 
     def shear(self, cand, full=False):
-        """-> (pass, dc_v, dc_t, governing original row, long-V+T NG rows)."""
+        """-> (pass, dc_v, dc_t, governing original row, long-V+T NG rows, other_fail).
+
+        Row pass = shearStatus in {OK, NR}, Tr >= |Tu| where torsion is considered, and
+        the engine's longitudinal check for V (+T) `long_ok_2` (Eq. 5.7.3.5-1 /
+        5.7.3.6.3-1, Method 2) not False.  `other_fail` is True when some evaluated row
+        fails for a reason other than `long_ok_2`."""
         I, sag, hog = cand["I"], cand["sag"], cand["hog"]
         ok_all, dv, dt, gov, gdc, long_ng = True, 0.0, 0.0, None, -1.0, []
+        other_fail = False
         for u in self.order(cand):
             r = cand["rows"][u]
             Tu = abs(r["Tu"])
             res = cc.compute_row_capacities_circ(I, sag, hog, r["Pu"], r["Mu"], r["Vu"], r["Tu"],
                                                  r.get("Vp", 0), r.get("Ms", 0), r.get("Ps", 0))
             tors = bool(res["torsionConsider"])
-            ok = res["shearStatus"] in ("OK", "NR") and (not tors or res["Tr"] >= Tu)
+            ok_vt = res["shearStatus"] in ("OK", "NR") and (not tors or res["Tr"] >= Tu)
+            long_ok = res.get("long_ok_2") is not False
+            ok = ok_vt and long_ok
+            if not ok_vt:
+                other_fail = True
             vr = res["Vr2"]
             v = abs(r["Vu"]) / vr if vr > 0 else (0.0 if r["Vu"] == 0 else math.inf)
             t = (Tu / res["Tr"] if res["Tr"] > 0 else math.inf) if (tors and Tu > 0) else 0.0
@@ -417,7 +434,7 @@ class _Search:
                 self.failed(cand["first"][u])
                 if not full:
                     break
-        return ok_all, dv, dt, gov, sorted(long_ng)
+        return ok_all, dv, dt, gov, sorted(long_ng), other_fail
 
 
 def _ring_fit(base, bar, nb, min_clear, trans):
@@ -440,6 +457,18 @@ def _member_trans(member):
     return {"trans_bar": int(member.get("trans_bar", NOMINAL_TRANS["trans_bar"])),
             "s": float(member.get("trans_s", NOMINAL_TRANS["trans_s"])),
             "ties": int(member.get("ties", NOMINAL_TRANS["ties"]))}
+
+
+def _count_range(base, p, bar, nb, Ag, ag, trans):
+    """(area per position, n_lo, n_hi): bar-count bounds from the six-bar minimum, rho_l
+    limits and the clear-spacing fit (index.html optimizeFlexureCirc)."""
+    a = ce.BARS[bar]["a"] * nb
+    d_eq = ce.BARS[bar]["d"] * math.sqrt(nb)
+    min_clear = max(p["minSpacing"], 1.5 * d_eq, 1.5 * ag)
+    n_hi = min(_ring_fit(base, bar, nb, min_clear, trans),
+               int(math.floor(p["rho_max"] * Ag / a + 1e-9)))
+    n_lo = max(N_MIN, int(math.ceil(p["rho_min"] * Ag / a - 1e-9)))
+    return a, n_lo, n_hi
 
 
 # ─── Public searches ────────────────────────────────────────────────
@@ -465,12 +494,7 @@ def design_longitudinal(member: dict, rows: list, params: dict = None,
     for nb in (1, 2, 3):
         cands = []
         for bar in sizes:
-            a = ce.BARS[bar]["a"] * nb
-            d_eq = ce.BARS[bar]["d"] * math.sqrt(nb)
-            min_clear = max(p["minSpacing"], 1.5 * d_eq, 1.5 * ag)
-            n_hi = min(_ring_fit(S.base, bar, nb, min_clear, trans),
-                       int(math.floor(p["rho_max"] * Ag / a + 1e-9)))
-            n_lo = max(N_MIN, int(math.ceil(p["rho_min"] * Ag / a - 1e-9)))
+            a, n_lo, n_hi = _count_range(S.base, p, bar, nb, Ag, ag, trans)
             if n_hi < n_lo:
                 continue
             min_as = min((c["As"] for c in cands), default=math.inf)
@@ -508,7 +532,8 @@ def design_longitudinal(member: dict, rows: list, params: dict = None,
 def design_transverse(member: dict, long: LongResult, rows: list, params: dict = None,
                       transform: Transform = None) -> TransResult:
     """First transverse cage (search order of transverse_candidates) for which flexure
-    and shear (shearStatus in OK/NR, Tr >= |Tu| where torsion is considered) pass on every row."""
+    and shear (shearStatus in OK/NR, Tr >= |Tu| where torsion is considered, long_ok_2 not
+    False) pass on every row.  Does not change the longitudinal cage (see design_member)."""
     if not long.bar or not long.n:
         return TransResult(False, 0, 0.0, 0, 0.0, 0.0, math.inf, math.inf, None,
                            "NO SOLUTION: no longitudinal cage to design transverse steel for")
@@ -524,7 +549,7 @@ def design_transverse(member: dict, long: LongResult, rows: list, params: dict =
         if not S.flex(cand)[0]:
             skipped_flex += 1
             continue
-        ok, dv, dt, gov, long_ng = S.shear(cand)
+        ok, dv, dt, gov, long_ng, _ = S.shear(cand)
         if ok:
             note = "; ".join(_trans_note(skipped_flex, long_ng)) or "OK"
             return _trans_result(True, cand, bar, ties, s, D, cover, dv, dt, gov, long_ng, note)
@@ -534,12 +559,15 @@ def design_transverse(member: dict, long: LongResult, rows: list, params: dict =
     bar, ties, s = last          # strongest candidate: report its D/C
     cand = S.build({"bar": long.bar, "n": long.n, "bundle": long.bundle,
                     "trans_bar": bar, "s": s, "ties": ties})
-    _, dv, dt, gov, long_ng = S.shear(cand, full=True)
+    _, dv, dt, gov, long_ng, other_fail = S.shear(cand, full=True)
+    flex_ok = S.flex(cand, full=True)[0]
     note = f"NO SOLUTION: strongest candidate #{bar} @ {s:.2f} in + {ties} tie leg(s) fails"
     if spiral:
         note += "; spiral is not counted as torsion reinforcement (C6) - use hoops if torsion must be considered"
     note = "; ".join([note] + _trans_note(skipped_flex, long_ng))
-    return _trans_result(False, cand, bar, ties, s, D, cover, dv, dt, gov, long_ng, note)
+    res = _trans_result(False, cand, bar, ties, s, D, cover, dv, dt, gov, long_ng, note)
+    res.long_only_fail = bool(long_ng) and not other_fail and flex_ok
+    return res
 
 
 def _trans_note(skipped_flex, long_ng):
@@ -547,7 +575,7 @@ def _trans_note(skipped_flex, long_ng):
     if skipped_flex:
         parts.append(f"{skipped_flex} candidate(s) skipped because flexure failed with that hoop size")
     if long_ng:
-        parts.append(f"longitudinal reinforcement for V+T NG (Method 2) at rows {long_ng}")
+        parts.append(f"longitudinal reinforcement for V+T NG (Eq. 5.7.3.5-1 / 5.7.3.6.3-1) at rows {long_ng}")
     return parts
 
 
@@ -602,3 +630,58 @@ def check_cage(member: dict, cage: dict, rows: list, transform: Transform = None
         by_key[k] = res
         out.append(res)
     return out
+
+
+STEP_NOTE = "longitudinal steel increased for Eq. 5.7.3.5-1 / 5.7.3.6.3-1 (shear+torsion)"
+
+
+def design_member(member: dict, rows: list, params: dict = None,
+                  transform: Transform = None):
+    """Longitudinal then transverse design -> (LongResult, TransResult).
+
+    When no transverse candidate passes and the strongest one fails ONLY the
+    longitudinal check for V(+T) (`long_ok_2`, Eq. 5.7.3.5-1 / 5.7.3.6.3-1), the
+    longitudinal cage is stepped up through every fitting cage (bundle 1-3, bar
+    sizes and counts within the rho_l range) in order of increasing As (then fewer
+    bars) that passes flexure, and the transverse search is re-run, until one passes
+    or the list ends.  A stepped LongResult carries STEP_NOTE in its note."""
+    lg = design_longitudinal(member, rows, params, transform)
+    tr = design_transverse(member, lg, rows, params, transform)
+    if not lg.ok or tr.ok or not tr.long_only_fail:
+        return lg, tr
+    p = _params(params)
+    S = _Search(member, rows, transform)
+    trans = _member_trans(member)
+    D = float(member["D"])
+    Ag = math.pi * D * D / 4.0
+    ag = float(member.get("ag", 0.75))
+    strongest = list(transverse_candidates(params))[-1]
+    steps = []
+    for nb in (1, 2, 3):
+        for bar in (b for b in SIZES if p["minBar"] <= b <= p["maxBar"]):
+            a, n_lo, n_hi = _count_range(S.base, p, bar, nb, Ag, ag, trans)
+            steps += [(n * a, n, nb, bar) for n in range(n_lo, n_hi + 1) if n * a > lg.Ast + 1e-9]
+    steps.sort()
+    last = (lg, tr)
+    for As, n, nb, bar in steps:
+        # cheap screen: the strongest transverse cage must pass the V/T/long rows
+        tb, ties, s = strongest
+        probe = S.build({"bar": bar, "n": n, "bundle": nb, "trans_bar": tb, "s": s, "ties": ties})
+        ok, _, _, _, _, other = S.shear(probe)
+        if not ok:
+            if other:
+                break          # a shear/torsion criterion fails: more long. steel is not the cure
+            continue
+        cand = S.build(dict(trans, bar=bar, n=n, bundle=nb))
+        fl = S.flex(cand, full=True)
+        if not fl[0]:
+            continue
+        lg2 = LongResult(True, bar, n, nb, As, As / Ag, fl[1], fl[2], lg.note + "; " + STEP_NOTE, fl[3])
+        tr2 = design_transverse(member, lg2, rows, params, transform)
+        last = (lg2, tr2)
+        if tr2.ok:
+            return lg2, tr2
+    lg_last, tr_last = last
+    if lg_last is lg:
+        tr_last.note += "; no heavier longitudinal cage satisfies Eq. 5.7.3.5-1 / 5.7.3.6.3-1"
+    return lg_last, tr_last
