@@ -1,0 +1,4 @@
+Frame	Station	OutputCase	CaseType	StepType	P	V2	V3	T	M2	M3
+Text	m		Text	Text	KN	KN	KN	KN-m	KN-m	KN-m
+10	0	EQ	Combination	Max	100	10	20	30	100	200
+10	1,000.5	EQ	Combination	Max	-1,200.5	10	20	30	100	200
