@@ -6,7 +6,9 @@ Run ONCE (and again whenever a later task adds a block) with the seismic app's v
         "<Seismic Column>" tests/golden/seismic_port_golden.json
 
 Blocks: source_commit, sections (parameters + materials/section values + M-phi),
-detailing, provisions, pile (p-y soil profiles + beam-column pile solver).
+detailing, provisions, pile (p-y soil profiles + beam-column pile solver),
+seismic (Task 7: capacity-design primitives for the column/shaft pair, built from
+upstream PRIMITIVES only -- never evaluate_column / _build_checks).
 """
 import json
 import subprocess
@@ -57,6 +59,12 @@ PILE_UNSTABLE = dict(
               dict(su_top_ksf=0.15, eps50=0.02, submerged=True)]],
     Hcol=240.0, L_embed=120.0, bound=0.5)
 PILE_SAMPLE = 8                           # store every 8th node of the diagrams
+# --- seismic capacity-design block (Task 7) ---------------------------------
+SEIS_P_DEAD = 800.0                       # kip, compression positive
+SEIS_H = 240.0                            # column clear height, in
+SEIS_L_EMBED = 720.0
+SEIS_PROFILE = "soft_clay"
+SEIS_COL_TRANS = [[5, 6.0], [6, 5.0], [6, 3.0], [8, 3.0]]   # (spiral bar, pitch) probes
 BALANCE = ("balance_k_ratio_adjacent", "balance_k_ratio_any", "balance_T_ratio",
            "ref_balanced_stiffness", "ref_balanced_stiffness_any",
            "ref_balanced_geometry", "ref_balance_tuning")
@@ -139,6 +147,7 @@ def main(upstream, out):
         pk: {k: v for k, v in dataclasses.asdict(get_provisions(pk)).items()
              if k not in BALANCE} for pk in PROV_KEYS}
     golden["pile"] = _pile_block(CircularSection, moment_curvature, get_provisions)
+    golden["seismic"] = _seismic_block(CircularSection, moment_curvature, get_provisions)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(golden, f, indent=2)
     print("wrote", out, commit)
@@ -205,6 +214,72 @@ def _pile_block(CircularSection, moment_curvature, get_provisions):
                 EI_col=EI_col, EI_shaft=EI_shaft, Mp_col=float(rc.Mp), Mo=Mo,
                 D_shaft=D_shaft, profiles=PILE_PROFILES, bounds=PILE_BOUNDS,
                 cases=cases, inground_demand=demand, unstable=unstable)
+
+
+def _seismic_block(CircularSection, moment_curvature, get_provisions):
+    """Column/shaft capacity-design values from upstream primitives (Ruling P4).
+
+    Sections use the provisions' expected-strength factors (fce_factor,
+    fce_floor) and upstream default fye/fue/fyh.  Axial is compression positive.
+    """
+    from seismic_column import sdc_capacity as sc
+    from seismic_column.soil import SoilLayer, SoilProfile
+    from seismic_column.materials import bar_diameter
+    profile = SoilProfile(tuple(SoilLayer.from_engineering(t, m, g, **kw)
+                                for t, m, g, kw in PILE_PROFILES[SEIS_PROFILE]))
+    P = SEIS_P_DEAD
+    out = dict(column=PILE_COL, shaft=PILE_SHAFT, P_dead=P, H=SEIS_H,
+               L_embed=SEIS_L_EMBED, profile=SEIS_PROFILE, bounds=PILE_BOUNDS,
+               by_code={})
+    for pk in PROV_KEYS:
+        prov = get_provisions(pk)
+        mat = dict(fce_factor=prov.fce_factor, fce_floor=prov.fce_floor)
+        col = CircularSection(**dict(SECTIONS[PILE_COL], **mat))
+        sh = CircularSection(**dict(SECTIONS[PILE_SHAFT], **mat))
+        mc, ms = moment_curvature(col, P), moment_curvature(sh, P)
+        Mo = prov.overstrength_factor * mc.Mp
+        mu = prov.mu_d_limit_single
+        Vo = {"fixed-free": Mo / SEIS_H, "fixed-fixed": 2.0 * Mo / SEIS_H}
+        col_v = list(sc.shear_capacity(col, P, mu, True, prov))
+        sh_v = list(sc.shear_capacity(sh, P, 1.0, False, prov))
+        dbl = bar_diameter(col.long_bar_no)
+        if prov.max_tie_spacing_model == "caltrans_8.4.1":
+            s_max = sc.max_transverse_spacing_caltrans(dbl)[0]
+        else:
+            s_max = sc.max_transverse_spacing(col.D, dbl, False)[0]
+        if prov.transverse_min_model == "caltrans_table":
+            rmin = list(sc.caltrans_min_transverse_ratio(
+                col.D, SEIS_H, col.rho_l, P, col.fc, col.Ag))
+        else:
+            rmin = [sc.min_transverse_ratio(col.fc, col.fyh, col.Ag, col.Acore,
+                                            prov.conf_c1, prov.conf_c2,
+                                            prov.rho_s_min_floor), True, ""]
+        probes = []
+        for bar, pitch in SEIS_COL_TRANS:
+            c2 = CircularSection(**dict(SECTIONS[PILE_COL], spiral_bar_no=bar,
+                                        spiral_spacing=pitch, **mat))
+            probes.append(dict(bar=bar, s=pitch, rho_s=float(c2.rho_s),
+                               phiVn=float(sc.shear_capacity(c2, P, mu, True, prov)[0])))
+        EI_col, EI_sh = float(mc.Mp / mc.phi_y), float(ms.Mp / ms.phi_y)
+        soil = {}
+        for end, Vh, Mh in (("fixed-free", Vo["fixed-free"], 0.0),
+                            ("fixed-fixed", Vo["fixed-fixed"], Mo)):
+            M_ig, V_ig, gov = sc.inground_demand(
+                SEIS_H, SEIS_L_EMBED, EI_col, EI_sh, sh.D, P, profile, Vh,
+                tuple(PILE_BOUNDS), M_head=Mh)
+            soil[end] = dict(M=float(M_ig), V=float(V_ig),
+                             gov_none=gov is None,
+                             gov_Df_eq=None if gov is None else float(gov.Df_eq),
+                             gov_depth=None if gov is None else float(gov.max_moment_depth))
+        out["by_code"][pk] = dict(
+            Mp_col=float(mc.Mp), phi_y_col=float(mc.phi_y), Mo=float(Mo), Vo=Vo,
+            mu_d=mu, col_shear=col_v, col_rho_s=float(col.rho_s),
+            shaft_shear=sh_v, Mp_shaft=float(ms.Mp), phi_y_shaft=float(ms.phi_y),
+            shaft_rho_s=float(sh.rho_s),
+            shaft_demand_interface=float(prov.shaft_demand_factor * Mo),
+            shaft_demand_factor=prov.shaft_demand_factor,
+            rho_s_min=rmin, s_max=float(s_max), trans_probes=probes, soil=soil)
+    return out
 
 
 if __name__ == "__main__":
