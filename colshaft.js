@@ -167,7 +167,8 @@
       settings: { envelope_mode: 'station', slenderness_on: false },
       params: clone(DEFAULT_PARAMS),
       bents: [defaultBent(0)],
-      soils: []
+      soils: [],
+      report: { project: '' }
     };
   }
   function normalizeState(obj) {
@@ -491,12 +492,24 @@
   }
 
   // ─── SVG polyline plot (no libraries) ──────────────────────────────
+  var svgSeq = 0;
   function svgPlot(series, opts) {
+    // series: {points [[x, y]], color, label, markers, dash (stroke-dasharray), width,
+    // noScale (left out of the axis extents and clipped to the plot area, e.g. an
+    // unstable p-y bound whose runaway values would flatten the other curves)}
     opts = opts || {};
     var W = opts.width || 360, H = opts.height || 260, m = { l: 62, r: 12, t: 22, b: 40 };
-    var pts = [];
-    series.forEach(function (s) { (s.points || []).forEach(function (p) { if (isNum(p[0]) && isNum(p[1])) pts.push(p); }); });
+    var pts = [], all = [];
+    series.forEach(function (s) {
+      (s.points || []).forEach(function (p) {
+        if (!(isNum(p[0]) && isNum(p[1]))) return;
+        all.push(p);
+        if (!s.noScale) pts.push(p);
+      });
+    });
+    if (!pts.length) pts = all;
     if (!pts.length) return '<div class="circ-info">No data to plot.</div>';
+    var clip = 'cs-clip-' + (++svgSeq);
     var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
     (opts.hlines || []).forEach(function (h) { if (isNum(h.y)) ys.push(h.y); });
     var x0 = Math.min.apply(null, xs.concat(opts.xZero ? [0] : [])), x1 = Math.max.apply(null, xs.concat(opts.xZero ? [0] : []));
@@ -510,6 +523,7 @@
       '" style="background:#fff;border:1px solid #dce1e8;border-radius:4px;font-family:Segoe UI,sans-serif">'];
     o.push('<text x="' + (W / 2) + '" y="14" text-anchor="middle" font-size="12" font-weight="600" fill="#1a5276">' + esc(opts.title || '') + '</text>');
     o.push('<rect x="' + m.l + '" y="' + m.t + '" width="' + pw + '" height="' + ph + '" fill="none" stroke="#bbb"/>');
+    o.push('<defs><clipPath id="' + clip + '"><rect x="' + m.l + '" y="' + m.t + '" width="' + pw + '" height="' + ph + '"/></clipPath></defs>');
     for (var i = 0; i <= 4; i++) {
       var xv = x0 + (x1 - x0) * i / 4, yv = y0 + (y1 - y0) * i / 4;
       o.push('<text x="' + sx(xv).toFixed(1) + '" y="' + (H - m.b + 14) + '" text-anchor="middle" font-size="10" fill="#555">' + esc(fmtTick(xv)) + '</text>');
@@ -529,13 +543,21 @@
       if (!p.length) return;
       var d = p.map(function (q) { return sx(q[0]).toFixed(1) + ',' + sy(q[1]).toFixed(1); }).join(' ');
       var col = s.color || '#2980b9';
-      o.push('<polyline fill="none" stroke="' + col + '" stroke-width="1.8" points="' + d + '"/>');
+      o.push('<polyline fill="none" stroke="' + col + '" stroke-width="' + (isNum(s.width) ? s.width : 1.8) + '"' +
+        (s.dash ? ' stroke-dasharray="' + esc(s.dash) + '"' : '') + ' clip-path="url(#' + clip + ')" points="' + d + '"/>');
       if (s.markers) p.forEach(function (q) { o.push('<circle cx="' + sx(q[0]).toFixed(1) + '" cy="' + sy(q[1]).toFixed(1) + '" r="2.5" fill="' + col + '"/>'); });
-      if (s.label) o.push('<text x="' + (m.l + 6) + '" y="' + (m.t + 14 + 12 * k) + '" font-size="10" fill="' + col + '">' + esc(s.label) + '</text>');
+      if (s.label) {
+        // opts.legend 'br' stacks the labels in the bottom-right corner (default: top-left)
+        if (opts.legend === 'br') o.push('<text x="' + (m.l + pw - 6) + '" y="' + (m.t + ph - 8 - 12 * (series.length - 1 - k)) +
+          '" text-anchor="end" font-size="10" fill="' + col + '">' + esc(s.label) + '</text>');
+        else o.push('<text x="' + (m.l + 6) + '" y="' + (m.t + 14 + 12 * k) + '" font-size="10" fill="' + col + '">' + esc(s.label) + '</text>');
+      }
     });
     (opts.points || []).forEach(function (q) {
       o.push('<circle cx="' + sx(q.x).toFixed(1) + '" cy="' + sy(q.y).toFixed(1) + '" r="4" fill="none" stroke="#c0392b" stroke-width="2"/>');
-      if (q.label) o.push('<text x="' + (sx(q.x) + 6).toFixed(1) + '" y="' + (sy(q.y) - 6).toFixed(1) + '" font-size="10" fill="#c0392b">' + esc(q.label) + '</text>');
+      // q.anchor 'end' puts the label left of the point, q.below under it (charts whose marks sit at an edge)
+      if (q.label) o.push('<text x="' + (sx(q.x) + (q.anchor === 'end' ? -6 : 6)).toFixed(1) + '" y="' + (sy(q.y) + (q.below ? 16 : -6)).toFixed(1) +
+        '"' + (q.anchor === 'end' ? ' text-anchor="end"' : '') + ' font-size="10" fill="#c0392b">' + esc(q.label) + '</text>');
     });
     o.push('</svg>');
     return o.join('');
@@ -545,6 +567,322 @@
     if (a >= 1000) return v.toFixed(0);
     if (a >= 10) return v.toFixed(1);
     return v.toFixed(2);
+  }
+
+  // ─── Charts shared by the drill-down and the report (Task 11) ──────
+  // Column M-phi curve at the governing P (the one that set Mo); x = phi x 10^3 (1/in).
+  function mphiChart(c, title) {
+    if (!c || !Array.isArray(c.phi) || !c.phi.length) return '<div class="circ-info">No M-&phi; curve in the result.</div>';
+    var pts = c.phi.map(function (f, i) { return [f * 1000.0, isNum(c.M[i]) ? c.M[i] / 12.0 : null]; });
+    var marks = [];
+    if (isNum(c.phi_y) && isNum(c.Mp)) marks.push({ x: c.phi_y * 1000.0, y: c.Mp / 12.0, label: 'φy, Mp', below: true });
+    if (isNum(c.phi_u)) {
+      var last = pts[pts.length - 1];
+      marks.push({ x: c.phi_u * 1000.0, y: isNum(last[1]) ? last[1] : c.Mp / 12.0, label: 'φu', anchor: 'end', below: true });
+    }
+    return svgPlot([{ points: pts, color: '#2980b9' },
+      { points: isNum(c.phi_y) && isNum(c.phi_u) && isNum(c.Mp) ? [[0, 0], [c.phi_y * 1000.0, c.Mp / 12.0], [c.phi_u * 1000.0, c.Mp / 12.0]] : [],
+        color: '#7f8c8d', dash: '4,3', width: 1.2, label: 'bilinear: Mp = ' + kft(c.Mp) + ' kip-ft' }], {
+      title: (title || 'M-φ') + ' at P = ' + fmt(c.P, 0) + ' kip', xlabel: 'φ (×10⁻³ 1/in)', ylabel: 'M (kip-ft)',
+      points: marks, legend: 'br'
+    });
+  }
+  // Shaft M(z) / V(z) / y(z): every soil bound (governing emphasised, unstable dashed grey
+  // and labelled); the cantilever / interface bases plot shaft_profile.  z = depth below
+  // the top of shaft (ft), the datum of shaft_profile / profiles_by_bound / Df_eq_gov.
+  function shaftSeries(S, k) {
+    var pr = S.pile && Array.isArray(S.pile.profiles_by_bound) ? S.pile.profiles_by_bound : [];
+    var scale = k === 'M' ? 1 / 12.0 : 1;
+    if (!pr.length) {
+      var idx = { M: 1, V: 2 }[k];
+      if (!idx) return [];
+      return [{ points: (S.shaft_profile || []).map(function (q) { return [isNum(q[idx]) ? q[idx] * scale : null, q[0] / 12.0]; }), color: '#c0392b' }];
+    }
+    return pr.map(function (b) {
+      var pts = (b.z || []).map(function (z, i) { var v = (b[k] || [])[i]; return [isNum(v) ? v * scale : null, z / 12.0]; });
+      var lab = '×' + fmt(b.factor, 2).replace(/\.?0+$/, '');
+      if (!b.stable) return { points: pts, color: '#aaaaaa', dash: '5,4', width: 1.2, noScale: true, label: lab + ' unstable (excluded)' };
+      if (b.governing) return { points: pts, color: '#c0392b', width: 2.6, label: lab + ' (governing)' };
+      return { points: pts, color: '#2980b9', width: 1.4, label: lab };
+    });
+  }
+  function shaftCharts(S) {
+    if (!S) return [];
+    var dfl = S.pile && isNum(S.pile.Df_eq_gov) ? [{ y: S.pile.Df_eq_gov / 12.0, label: 'Df_eq' }] : [];
+    var o = { ylabel: 'z below top of shaft (ft)', invertY: true, xZero: true, hlines: dfl, legend: 'br' };
+    var out = [svgPlot(shaftSeries(S, 'M'), Object.assign({ title: 'Shaft M(z) (' + (S.shaft_basis || '') + ')', xlabel: 'M (kip-ft)' }, o)),
+      svgPlot(shaftSeries(S, 'V'), Object.assign({ title: 'Shaft V(z)', xlabel: 'V (kip)' }, o))];
+    var y = shaftSeries(S, 'y');
+    if (y.length) out.push(svgPlot(y, Object.assign({ title: 'Shaft y(z)', xlabel: 'y (in)' }, o)));
+    return out;
+  }
+
+  // ─── Printable report (Task 11) ────────────────────────────────────
+  // Ported seismic provisions keep the seismic app's references, which are not yet
+  // checked against the printed codes (OPEN_VERIFICATION_ITEMS.md section E).
+  var UNVERIFIED_SUFFIX = '(unverified — see OPEN_VERIFICATION_ITEMS E)';
+  // Open DECIDE rows of OPEN_VERIFICATION_ITEMS.md section E (pinned equal to the file
+  // by tests/test_colshaft_ui_static.py).
+  var OPEN_DECIDE_E = [
+    ['E13', 'Soil stability: unstable soil bounds are dropped from the overstrength shaft demand envelope ' +
+      '("Shaft p-y solve" is NG only when every bound is unstable); "Soil-pile stability (p-y)" is NG when any bound ' +
+      'is unstable at the yield-level force (upstream split).'],
+    ['E14', 'Df_eq for ℓu from a fixed-free solve at Mo/H on the softest stable bound (conservative); the shaft ' +
+      'confinement and oversize checks carry no ported reference.'],
+    ['E17', 'The p-y axial-ramp guard (ruling 8-16) is applied to the strength rows only; the seismic stability / ' +
+      'demand path follows upstream.']
+  ];
+  var REPORT_SECTIONS = [
+    ['inputs', '1. Inputs'], ['parse', '2. Parse summary'], ['lrfd', '3. LRFD strength design — governing rows'],
+    ['slender', '4. Slenderness screen'], ['mphi', '5. Moment-curvature'], ['mo', '6. Overstrength moment and shear'],
+    ['colshear', '7. Column seismic shear'], ['shaft', '8. Shaft demand and checks'], ['checks', '9. Final checks'],
+    ['cage', '10. Final cage']
+  ];
+  function seismicRef(ref) { return ref ? ref + ' ' + UNVERIFIED_SUFFIX : '—'; }
+  // Seismic-group refs are the ported ref_* strings; the LRFD groups carry none.
+  function checkRef(c) { return c && c.group === 'Seismic' ? seismicRef(c.ref) : ((c && c.ref) || '—'); }
+  function slenderAxes(checkRows) {
+    // per CSiBridge axis: the row with the largest K*lu/r - limit; status per colshaft_slender
+    var out = [];
+    ['2', '3'].forEach(function (ax) {
+      var best = null;
+      (checkRows || []).forEach(function (r) {
+        var k = r['_klr' + ax], lim = r['_slender_limit' + ax];
+        if (!isNum(k) || !isNum(lim)) return;
+        if (best === null || k - lim > best.klr - best.limit) best = { axis: ax, klr: k, limit: lim };
+      });
+      if (best) {
+        best.status = best.klr >= 100.0 ? SLENDER_STATUS.REFINED : best.klr < best.limit ? SLENDER_STATUS.NEGLECT : SLENDER_STATUS.PENDING;
+        out.push(best);
+      }
+    });
+    return out;
+  }
+  function codeLabel(key) {
+    var c = CODES.filter(function (x) { return x.key === key; })[0];
+    return c ? c.label : String(key || '');
+  }
+  function memberStr(m) {
+    if (!m) return '—';
+    return 'D = ' + fmt(m.D, 1) + ' in, f\'c = ' + fmt(m.fc, 2) + ' ksi, fy = ' + fmt(m.fy, 0) + ' ksi, cover = ' +
+      fmt(m.cover, 2) + ' in, ' + (m.trans_type || 'hoop') + (m.hoop_closure ? ' (' + m.hoop_closure + ')' : '');
+  }
+  function ovStr(ov) {
+    if (!isObj(ov) || !Object.keys(ov).length) return 'none';
+    return OV_PARTS.filter(function (k) { return ov[k]; }).map(function (k) {
+      return k.replace('_', ' ') + ' ' + (/long/.test(k) ? longStr(ov[k]) : transStr(ov[k]));
+    }).join('; ');
+  }
+  function rptKV(rows) {
+    return rows.map(function (r) {
+      return '<div class="rpt-row"><span class="rpt-lbl">' + esc(r[0]) + '</span><span class="rpt-val">' + esc(r[1]) + '</span></div>';
+    }).join('');
+  }
+  function rptTable(hdr, rows, cls) {
+    return '<table class="rpt-table' + (cls ? ' ' + cls : '') + '"><thead><tr>' + hdr.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows.map(function (r) {
+        return '<tr>' + r.map(function (c) {
+          var cl = c === 'OK' ? ' class="rpt-pass"' : c === 'NG' ? ' class="rpt-fail"' : '';
+          return '<td' + cl + '>' + esc(c) + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</tbody></table>';
+  }
+  function rptNote(t) { return '<div class="rpt-note">' + esc(t) + '</div>'; }
+  function rptRef(t) { return '<div class="rpt-ref">' + esc(t) + '</div>'; }
+  function rptEq(lines) { return '<div class="rpt-eq">' + lines.map(esc).join('<br>') + '</div>'; }
+  function lrfdRowsTable(checkRows) {
+    if (!checkRows || !checkRows.length) return rptNote('No LRFD rows.');
+    var rows = checkRows.map(function (r, i) { return { r: r, i: i }; })
+      .sort(function (a, b) { return (b.r.ratio || 0) - (a.r.ratio || 0); })
+      .map(function (x) {
+        var r = x.r;
+        return [String(x.i + 1), r._case || '', rowWhere(r), fmt(r.Pu, 0), kft(r.Mu), fmt(r.Vu, 1), kft(r.Tu, 1),
+          kft(r.Mr), fmt(r.Vr2, 1), kft(r.Tr, 1), fmt(r.ratio, 3), isNum(r._flexP) ? fmt(r._flexP, 0) : '—', r.ok ? 'OK' : 'NG'];
+      });
+    return rptTable(['#', 'Case', 'Where', 'Pu', 'Mu', 'Vu', 'Tu', 'Mr', 'Vr', 'Tr', 'D/C', 'P for flexure', ''], rows) +
+      rptNote('Pu, Vu, Vr, P in kip (compression < 0); Mu, Mr, Tu, Tr in kip-ft. Sorted by D/C. "P for flexure" = the axial ' +
+        'load in [P_min, P_max] at which the cage\'s flexural resistance is lowest (envelope rows). Checked with the app\'s ' +
+        'AASHTO LRFD circular-section engine (unchanged).');
+  }
+  function reportBent(b, pb, result, k) {
+    var S = b.seismic, ax = b.axial || {}, F = b.final, src = b.final_source || {}, refs = (S && S.refs) || {};
+    var sec = {};
+    var na = rptNote('Not available (no seismic result for this bent).');
+    // 1. inputs
+    var i1 = [];
+    if (pb) {
+      i1.push(['Column frames', (pb.col_frames || []).join(', ') || '—']);
+      i1.push(['Shaft frames', (pb.shaft_frames || []).join(', ') || '(none)']);
+      i1.push(['Column clear height H', fmt((b.H_in || 0) / 12.0, 2) + ' ft' + (pb.H_in === null || pb.H_in === undefined ? ' (auto, from the column frame stations)' : ' (entered)')]);
+      i1.push(['End conditions', 'longitudinal ' + (pb.end_condition_long || 'fixed-free') + ', transverse ' + (pb.end_condition_trans || 'fixed-free') +
+        (S ? ' (governing: ' + S.end_condition + ')' : '')]);
+      i1.push(['Base end', pb.base_end || 'auto']);
+      i1.push(['Column', memberStr(pb.column)]);
+      i1.push(['Shaft', memberStr(pb.shaft)]);
+      i1.push(['λmo', S ? fmt(S.lambda_mo, 2) : (isNum(pb.lambda_mo) ? fmt(pb.lambda_mo, 2) : '1.20 (default)')]);
+      i1.push(['μD', S ? fmt(S.mu_d, 2) + (isNum(pb.mu_d) ? ' (entered)' : ' (code default)') : (isNum(pb.mu_d) ? fmt(pb.mu_d, 2) : 'code default')]);
+      i1.push(['Shaft basis', b.shaft_basis || pb.shaft_basis || '—']);
+      if (isNum(pb.L_eq_in)) i1.push(['Pile equivalent cantilever length L_eq', fmt(pb.L_eq_in / 12.0, 2) + ' ft']);
+      if (isNum(pb.L_embed_in)) i1.push(['Shaft embedded length', fmt(pb.L_embed_in / 12.0, 2) + ' ft']);
+      if (pb.soil_bounds) i1.push(['Soil-stiffness bounds', pb.soil_bounds.map(function (x) { return '×' + x; }).join(', ')]);
+      i1.push(['P_dead entered (used only without Dead rows)', isNum(pb.P_dead) ? fmt(pb.P_dead, 0) + ' kip' : '—']);
+      i1.push(['Overrides', ovStr(pb.override)]);
+    }
+    var h1 = pb ? rptKV(i1) : rptNote('Inputs not available.');
+    if (pb && pb.soil && Array.isArray(pb.soil.layers)) {
+      h1 += '<h4>Soil profile (top of shaft = ground surface; J = ' + esc(fmt(pb.soil.J, 2)) + ', ' + (pb.soil.cyclic ? 'cyclic' : 'static') + ')</h4>' +
+        rptTable(['#', 'Thickness (ft)', 'p-y model', 'γ (pcf)', 'su top / bot (ksf)', 'ε50', 'φ′ (deg)', 'k (pci)', 'Submerged'],
+          pb.soil.layers.map(function (l, j) {
+            return [String(j + 1), fmt(l.thickness_ft, 1), l.py_model, fmt(l.gamma_pcf, 0),
+              (isNum(l.su_top_ksf) || isNum(l.su_bot_ksf)) ? fmt(l.su_top_ksf, 2) + ' / ' + fmt(l.su_bot_ksf, 2) : '—',
+              isNum(l.eps50) ? fmt(l.eps50, 4) : '—', isNum(l.phi_deg) ? fmt(l.phi_deg, 1) : '—', isNum(l.k_pci) ? fmt(l.k_pci, 0) : '—',
+              l.submerged ? 'yes' : 'no'];
+          }));
+    }
+    sec.inputs = h1;
+    // 2. parse summary
+    var P = result.parse || {};
+    var u = P.units || {};
+    var names = (result.bents || []).map(function (x) { return String(x.name) + ': '; });
+    var gw = (P.warnings || []).filter(function (w) { return !names.some(function (nm) { return String(w).indexOf(nm) === 0; }); });
+    var h2 = rptKV([['Units', [u.force, u.moment, u.length].filter(Boolean).join(', ') || '—'],
+      ['Rows / envelope rows', fmt(P.n_rows, 0) + ' / ' + fmt(P.n_envelope, 0)],
+      ['Load cases', Object.keys(P.categories || {}).map(function (c) { return c + ' = ' + P.categories[c]; }).join('; ') || '—'],
+      ['P_dead', fmt(ax.P_dead, 0) + ' kip' + (isObj(ax.dead_cases) && Object.keys(ax.dead_cases).length ? ' (sum of Dead cases: ' +
+        Object.keys(ax.dead_cases).map(function (c) { return c + ' ' + fmt(ax.dead_cases[c], 0); }).join(', ') + ')' : ' (entered)')],
+      ['Extreme axial range', isNum(ax.P_ext_min) ? fmt(ax.P_ext_min, 0) + ' .. ' + fmt(ax.P_ext_max, 0) + ' kip' : '— (no Extreme rows)']]);
+    if (P.n_envelope > 0) h2 += '<div class="rpt-eq">' + esc('Envelope output (Max/Min): every row is envelope-bounded (conservative). ' +
+      'M = √(max|M2|² + max|M3|²) and V = √(max|V2|² + max|V3|²) combine maxima from different steps (conservative by up to √2).') + '</div>';
+    var bw = (b.warnings || []);
+    if (gw.length || bw.length) h2 += '<h4>Warnings</h4><ul class="cs-rpt-list">' + gw.concat(bw).map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
+    if ((b.no_solution || []).length) h2 += '<h4 class="rpt-fail">No solution</h4><ul class="cs-rpt-list">' + b.no_solution.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
+    sec.parse = h2;
+    // 3. LRFD rows
+    var L = b.lrfd || {};
+    var h3 = '<h4>Column (final cage)</h4>' + lrfdRowsTable(L.col && L.col.check_rows);
+    if (L.shaft && L.shaft.check_rows) h3 += '<h4>Shaft (' + esc(L.shaft.source || '') + ')</h4>' + lrfdRowsTable(L.shaft.check_rows);
+    sec.lrfd = h3;
+    // 4. slenderness
+    var on = result.settings && result.settings.slenderness_on;
+    var h4;
+    if (!on) h4 = rptNote('Slenderness screen off.');
+    else {
+      var axs = slenderAxes(L.col && L.col.check_rows);
+      h4 = axs.length ? rptTable(['Axis', 'Kℓu/r', 'Limit', 'Status'], axs.map(function (a) {
+        return [a.axis, fmt(a.klr, 1), fmt(a.limit, 1), a.status];
+      })) : rptNote('No screened rows.');
+      h4 += '<div class="rpt-eq">' + esc('S6: moment magnification is NOT applied — AASHTO Art. 4.5.3.2.2b and the §5.6.4.3 EI equations ' +
+        'are not available (open item S6). Screen only: Kℓu/r is classified, the factored moments are not magnified.') + '</div>' +
+        rptNote('r = 0.25·D; ℓu default = H + Df (Df = ' + (isNum(b.Df_for_lu) ? fmt(b.Df_for_lu / 12.0, 2) + ' ft' : '—') +
+          '). Envelope rows use M1/M2 = +1 (single curvature).');
+    }
+    sec.slender = h4;
+    // 5. M-phi
+    if (S) {
+      var mp = (S.Mp_by_P || []).slice().sort(function (a, c) { return a[0] - c[0]; });
+      var h5 = rptTable(['P (kip)', 'Mp (kip-ft)', ''], mp.map(function (q) {
+        return [fmt(q[0], 0), kft(q[1]), q[0] === S.Mp_P ? 'governs Mo' : (q[0] === ax.P_dead ? 'P_dead' : '')];
+      }));
+      var c = S.mphi || {}, cs2 = S.mphi_shaft || {};
+      var ex = function (x) { return isNum(x) ? x.toExponential(3) : '—'; };
+      h5 += rptTable(['Member', 'P (kip)', 'φy (1/in)', 'Mp (kip-ft)', 'φu (1/in)', 'Failure'], [
+        ['Column (governing P)', fmt(S.Mp_P, 0), ex(c.phi_y), kft(S.Mp), ex(c.phi_u), c.failure_mode || '—'],
+        ['Shaft (P_dead)', fmt(ax.P_dead, 0), ex(cs2.phi_y), kft(S.shaft_Mp), ex(cs2.phi_u), cs2.failure_mode || '—']]);
+      h5 += '<div class="cs-rpt-charts">' + mphiChart(S.mphi, 'Column M-φ') + mphiChart(S.mphi_shaft, 'Shaft M-φ') + '</div>';
+      h5 += rptNote('Expected material properties; Mp = idealised plastic moment of the bilinear fit.') + rptRef(seismicRef(refs.flexure));
+      sec.mphi = h5;
+      // 6. Mo / Vo
+      var two = S.end_condition === 'fixed-fixed';
+      var Hft = S.H / 12.0;
+      sec.mo = rptEq(['Mo = λmo × Mp = ' + fmt(S.lambda_mo, 2) + ' × ' + kft(S.Mp, 1) + ' = ' + kft(S.Mo, 1) + ' kip-ft',
+        'Vo = ' + (two ? '2·Mo / H = 2 × ' : 'Mo / H = ') + kft(S.Mo, 1) + ' / ' + fmt(Hft, 2) + ' = ' + fmt(S.Vo, 1) + ' kip  (' + S.end_condition + ')']) +
+        rptRef(seismicRef(refs.overstrength)) +
+        rptNote('Mo is applied at the top of the shaft (fixed-fixed: head moment +Mo with V = 2·Mo/H, ruling 3A-1).');
+      // 7. column seismic shear
+      var v = S.col_shear || [];
+      var rq = S.required_transverse || {};
+      sec.colshear = rptEq(['At P = ' + fmt(S.P_vc, 0) + ' kip (least compression of the Extreme rows), μD = ' + fmt(S.mu_d, 2) + ', inside the plastic hinge:',
+        'Vc = ' + fmt(v[1], 1) + ' kip,  Vs = ' + fmt(v[2], 1) + ' kip,  φVn = ' + fmt(v[0], 1) + ' kip  vs  Vo = ' + fmt(S.Vo, 1) + ' kip  → ' +
+          (isNum(v[0]) && v[0] >= S.Vo ? 'OK' : 'NG'),
+        'ρs = ' + fmt(S.rho_s_col, 4) + '  vs  ρs,min = ' + fmt(S.rho_s_min, 4) +
+          (isNum(S.s_max_detailing) ? ';  s,max (detailing) = ' + fmt(S.s_max_detailing, 2) + ' in' : '') +
+          (S.min_trans_bar ? ';  min transverse bar #' + S.min_trans_bar : ''),
+        'Lightest seismic transverse meeting φVn ≥ Vo, ρs,min and spacing: ' + (rq.ok ? transStr(rq) : 'none in the search range')]) +
+        rptRef(seismicRef(refs.shear)) + rptRef(seismicRef(refs.transverse));
+      // 8. shaft
+      var h8 = rptKV([['Basis', S.shaft_basis || '—'],
+        ['Shaft flexure demand (factor × max M(z))', kft(S.shaft_Mdemand) + ' kip-ft vs Mp,shaft = ' + kft(S.shaft_Mp) + ' kip-ft'],
+        ['Shaft shear capacity φVn', fmt(S.shaft_phiVn, 1) + ' kip'],
+        ['EI column / shaft (Mp/φy)', fmt(S.EI_col, 0) + ' / ' + fmt(S.EI_shaft, 0) + ' kip-in²'],
+        ['Df (for ℓu)', isNum(S.Df) ? fmt(S.Df / 12.0, 2) + ' ft' : '—']]);
+      if (S.pile && Array.isArray(S.pile.bounds)) {
+        h8 += rptTable(['Bound', 'Stable', 'Df_eq (ft)', 'max M (kip-ft)', 'at z (ft)', 'max V (kip)'], S.pile.bounds.map(function (x) {
+          return ['×' + x.factor, x.stable ? 'yes' : 'NO', isNum(x.Df_eq) ? fmt(x.Df_eq / 12.0, 2) : '—', kft(x.Mmax),
+            isNum(x.z_Mmax) ? fmt(x.z_Mmax / 12.0, 2) : '—', fmt(x.Vmax, 1)];
+        }));
+        h8 += rptNote('z = depth below the top of shaft. Unstable bounds are drawn dashed grey and excluded from the demand envelope.');
+      }
+      h8 += '<div class="cs-rpt-charts">' + shaftCharts(S).join('') + '</div>';
+      var shc = (b.final_checks || []).filter(function (x) { return x.group === 'Seismic' && /^(Shaft|Soil)/.test(x.name || ''); });
+      if (shc.length) h8 += rptTable(['Check', 'Demand', 'Capacity', 'Ratio', '', 'Ref'], shc.map(function (x) {
+        var cr = checkRow(x);
+        return [cr[1], cr[2], cr[3], cr[4], cr[5], checkRef(x)];
+      }));
+      h8 += rptRef(seismicRef(refs.shaft_capacity));
+      sec.shaft = h8;
+    } else {
+      sec.mphi = sec.mo = sec.colshear = sec.shaft = na;
+    }
+    // 9. final checks
+    sec.checks = (b.final_checks || []).length ? rptTable(['Group', 'Check', 'Demand', 'Capacity', 'Ratio', '', 'Detail', 'Reference'],
+      b.final_checks.map(function (x) { var cr = checkRow(x); cr[7] = checkRef(x); return cr; }), 'cs-rpt-checks') +
+      rptNote('Shaft flexure demand/capacity in kip-ft; other values in the check\'s own units (kip, in, ratios); detail text may quote kip-in.')
+      : rptNote('No final checks.');
+    // 10. final cage
+    sec.cage = F ? rptTable(['Part', 'Cage', 'Source', 'Steel'], [
+      ['Column longitudinal', longStr(F.col_long), src.col_long || '—', 'Ast = ' + fmt(F.col_long && F.col_long.Ast, 2) + ' in², ρl = ' + fmt(F.col_long && F.col_long.rho_l, 4)],
+      ['Column transverse', transStr(F.col_trans), src.col_trans || '—', 'ρs = ' + fmt(F.col_trans && F.col_trans.rho_s, 4)],
+      ['Shaft longitudinal', longStr(F.shaft_long), src.shaft_long || '—', 'Ast = ' + fmt(F.shaft_long && F.shaft_long.Ast, 2) + ' in², ρl = ' + fmt(F.shaft_long && F.shaft_long.rho_l, 4)],
+      ['Shaft transverse', transStr(F.shaft_trans), src.shaft_trans || '—', 'ρs = ' + fmt(F.shaft_trans && F.shaft_trans.rho_s, 4)]]) +
+      rptNote('Source: LRFD, Seismic, LRFD+Seismic (merged cage re-walked, ruling 8-15) or Override (used as entered).')
+      : rptNote('No final cage (no solution).');
+    var h = '<div class="cs-rpt-bent' + (k ? ' cs-rpt-break' : '') + '"><h2>Bent ' + esc(b.name) + ' — <span class="' +
+      (b.status === 'OK' ? 'rpt-pass' : 'rpt-fail') + '">' + esc(b.status) + '</span></h2>';
+    REPORT_SECTIONS.forEach(function (s) { h += '<h3 data-sec="' + s[0] + '">' + esc(s[1]) + '</h3>' + sec[s[0]]; });
+    return h + '</div>';
+  }
+  // Whole report.  result = run_colshaft output; payload = the buildPayload() sent for it
+  // (bents index-aligned); meta = {project, date}.
+  function reportHtml(result, payload, meta) {
+    meta = meta || {};
+    if (!result || !Array.isArray(result.bents)) return '<div class="rpt-note">Run Design first.</div>';
+    var pbs = (payload && payload.bents) || [];
+    var st = result.settings || {};
+    var h = '<h1>Column on Shaft — Design Report</h1><div class="rpt-meta">' +
+      (meta.project ? 'Project: <b>' + esc(meta.project) + '</b> · ' : '') + 'Bents: ' + esc(result.bents.map(function (b) { return b.name; }).join(', ')) +
+      ' · Date: ' + esc(meta.date || '') + ' · Seismic code: ' + esc(codeLabel(result.code)) + ' · LRFD: AASHTO LRFD (app engine)' +
+      ' · Envelope mode: ' + esc(st.envelope_mode || 'station') + ' · Slenderness screen: ' + (st.slenderness_on ? 'on' : 'off') + '</div>';
+    var env = result.parse && result.parse.n_envelope > 0;
+    h += '<div class="cs-rpt-box" data-sec="assumptions"><b>Assumptions &amp; open decisions</b><ul class="cs-rpt-list">' +
+      '<li>' + esc(env ? 'Envelope bounding: the CSiBridge Max/Min rows are not concurrent, so every row is envelope-bounded (conservative): ' +
+        'biaxial M and V from the envelope maxima (up to √2 conservative); shear, torsion and the longitudinal V+T check at P_max ' +
+        '(least compression); flexure at the P in [P_min, P_max] with the lowest resistance.' : 'Concurrent rows used as given (no envelope rows).') + '</li>' +
+      '<li>' + esc('S6: slenderness moment magnification is not applied (AASHTO Art. 4.5.3.2.2b and the §5.6.4.3 EI equations not ' +
+        'available); the optional screen classifies Kℓu/r only.') + '</li>' +
+      '<li>' + esc('Seismic capacity design ported from the Seismic Column app @ 9265d67: its references are not yet checked ' +
+        'against the printed codes (OPEN_VERIFICATION_ITEMS E1–E11) and are marked ' + UNVERIFIED_SUFFIX + '.') + '</li>' +
+      '<li>' + esc('Defaults: Extreme rows set only the axial range for M-φ and the seismic Vc (S2); shaft flexural capacity = M-φ ' +
+        'expected Mp (S3); no service crack control (S4).') + '</li>' +
+      '<li>' + esc('Open decisions (DECIDE):') + '<ul>' + OPEN_DECIDE_E.map(function (e) { return '<li><b>' + esc(e[0]) + '</b> ' + esc(e[1]) + '</li>'; }).join('') +
+      '</ul></li></ul></div>';
+    h += rptTable(['Bent', 'Status', 'Final cage (source)'], result.bents.map(function (b) {
+      return [String(b.name), b.status, resultRows({ bents: [b], settings: st })[0].final];
+    }));
+    result.bents.forEach(function (b, k) {
+      var pb = pbs[k] && pbs[k].name === b.name ? pbs[k] : pbs.filter(function (x) { return x && x.name === b.name; })[0];
+      h += reportBent(b, pb || null, result, k);
+    });
+    return h;
   }
 
   var api = {
@@ -558,7 +896,10 @@
     longStr: longStr, transStr: transStr, resultRows: resultRows, governingRows: governingRows,
     checkRow: checkRow, svgPlot: svgPlot, profileMax: profileMax,
     SLENDER_STATUS: SLENDER_STATUS, SLENDER_RANK: SLENDER_RANK, BAR_SIZES: BAR_SIZES,
-    slenderSummary: slenderSummary, deadHint: deadHint, overrideErrors: overrideErrors
+    slenderSummary: slenderSummary, deadHint: deadHint, overrideErrors: overrideErrors,
+    UNVERIFIED_SUFFIX: UNVERIFIED_SUFFIX, OPEN_DECIDE_E: OPEN_DECIDE_E, REPORT_SECTIONS: REPORT_SECTIONS,
+    seismicRef: seismicRef, checkRef: checkRef, slenderAxes: slenderAxes, mphiChart: mphiChart,
+    shaftSeries: shaftSeries, shaftCharts: shaftCharts, reportHtml: reportHtml, codeLabel: codeLabel
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -569,6 +910,8 @@
 
   var state = defaultState();
   var lastResult = null;
+  var lastPayload = null;     // the payload sent for lastResult (report inputs, Task 11)
+  var reportShown = false;
   var drillIdx = null;
   var busy = false;
 
@@ -829,6 +1172,7 @@
       ['Group', 'Check', 'Demand', 'Capacity', 'Ratio', '', 'Detail', 'Reference'].map(function (x) { return '<th>' + x + '</th>'; }).join('') +
       '</tr></thead><tbody>' + (b.final_checks || []).map(function (c) {
         var cells = checkRow(c);
+        cells[7] = checkRef(c);
         return '<tr>' + cells.map(function (x, k) {
           var st = k === 5 ? ' style="color:' + (x === 'OK' ? '#1e8449' : '#c0392b') + ';font-weight:700"' :
             (k >= 6 ? ' style="white-space:normal;font-family:inherit;min-width:160px;"' : '');
@@ -838,27 +1182,10 @@
     if ((b.warnings || []).length) h += '<div style="font-size:0.78rem;margin-top:6px;"><b>Warnings:</b><ul style="margin:2px 0 0 18px;">' +
       b.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>';
     if (S) {
-      var charts = [];
-      var mp = (S.Mp_by_P || []).slice().sort(function (a, c) { return a[0] - c[0]; });
-      charts.push(svgPlot([{ points: mp.map(function (q) { return [q[0], q[1] / 12.0]; }), color: '#2980b9', markers: true }], {
-        title: 'Column Mp from M-φ vs axial load', xlabel: 'P (kip, compression < 0)', ylabel: 'Mp (kip-ft)',
-        points: [{ x: S.Mp_P, y: S.Mp / 12.0, label: 'max Mp' }]
-      }));
-      var prof = S.shaft_profile || [];
-      var dfl = S.pile && isNum(S.pile.Df_eq_gov) ? [{ y: S.pile.Df_eq_gov / 12.0, label: 'Df_eq' }] : [];
-      charts.push(svgPlot([{ points: prof.map(function (q) { return [q[1] / 12.0, q[0] / 12.0]; }), color: '#c0392b' }], {
-        title: 'Shaft M(z) (' + (S.shaft_basis || '') + ')', xlabel: 'M (kip-ft)', ylabel: 'depth below top of shaft (ft)', invertY: true, xZero: true, hlines: dfl
-      }));
-      charts.push(svgPlot([{ points: prof.map(function (q) { return [q[2], q[0] / 12.0]; }), color: '#27ae60' }], {
-        title: 'Shaft V(z)', xlabel: 'V (kip)', ylabel: 'depth below top of shaft (ft)', invertY: true, xZero: true, hlines: dfl
-      }));
-      var pg = S.pile && S.pile.profile_gov;
-      if (pg && pg.length && pg[0].length > 3) charts.push(svgPlot([{ points: pg.map(function (q) { return [q[3], q[0] / 12.0]; }), color: '#8e44ad' }], {
-        title: 'Shaft y(z), governing bound', xlabel: 'y (in)', ylabel: 'depth below top of shaft (ft)', invertY: true, xZero: true, hlines: dfl
-      }));
+      var charts = [mphiChart(S.mphi, 'Column M-φ')].concat(shaftCharts(S));
       h += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">' + charts.join('') + '</div>' +
-        '<div class="circ-info">The M-φ chart shows the plastic moment Mp of the final column cage at each sampled axial load (P_dead and the Extreme range); ' +
-        'the result does not carry the full M-φ curve. Shaft diagrams: governing envelope profile.</div>';
+        '<div class="circ-info">M-&phi;: the final column cage at the axial load that governs Mo (the bilinear idealisation dashed; Mp_by_P is listed in the report). ' +
+        'Shaft diagrams: depth below the top of shaft; every soil bound for the p-y basis (governing bold, unstable bounds dashed grey and excluded).</div>';
     }
     return h;
   }
@@ -881,9 +1208,79 @@
       }).join('');
     });
   }
+  // ── printable report (Task 11): reuses the Report tab's .report-preview classes and
+  // print rule (body * hidden, .report-preview shown); the rules below, scoped to this
+  // tab's own ids, keep the two reports from printing together and avoid clipping.
+  var PRINT_CSS = [
+    '#cs-report{max-width:1000px;}',
+    '#cs-report h4{font-size:10pt;margin:10px 0 4px;color:#2c3e50;}',
+    '#cs-report .cs-rpt-box{border:2px solid #e67e22;background:#fef5e7;padding:8px 12px;margin:10px 0 14px;font-size:9pt;}',
+    '#cs-report .cs-rpt-list{margin:4px 0 4px 18px;padding:0;font-size:9pt;}',
+    '#cs-report .rpt-table th,#cs-report .rpt-table td{white-space:normal;overflow-wrap:break-word;}',
+    '#cs-report .rpt-table td.rpt-pass,#cs-report .rpt-table td.rpt-fail{white-space:nowrap;}',
+    '#cs-report .cs-rpt-checks td:nth-child(n+7){text-align:left;font-family:inherit;}',
+    '#cs-report .cs-rpt-charts{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;}',
+    '#cs-report svg{max-width:100%;height:auto;}',
+    '@media print{',
+    'body:has(#cs-report.cs-printing) #reportPreview{display:none !important;}',
+    'body:not(:has(#cs-report.cs-printing)) #cs-report{display:none !important;}',
+    '#cs-report{font-size:8.5pt;}',
+    '#cs-report .rpt-table{font-size:7pt;table-layout:auto;}',
+    '#cs-report .rpt-table th,#cs-report .rpt-table td{padding:2px 3px;}',
+    '#cs-report .rpt-table tr{page-break-inside:avoid;}',
+    '#cs-report .cs-rpt-break{page-break-before:always;break-before:page;}',
+    '#cs-report .cs-rpt-charts svg{width:48%;}',
+    '#cs-report .cs-rpt-box,#cs-report .rpt-eq,#cs-report .rpt-table th{-webkit-print-color-adjust:exact;print-color-adjust:exact;}',
+    '}'
+  ].join(' ');
+  function injectPrintCss() {
+    if (document.getElementById('cs-print-style')) return;
+    var st = document.createElement('style');
+    st.id = 'cs-print-style';
+    st.textContent = PRINT_CSS;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function today() {
+    var d = new Date();
+    var p2 = function (x) { return (x < 10 ? '0' : '') + x; };
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  }
+  function reportBody() {
+    return reportHtml(lastResult, lastPayload, { project: state.report && state.report.project, date: today() });
+  }
+  function renderReportCard() {
+    var h = '<div class="circ-info">Per bent: inputs, parse summary, LRFD rows, slenderness, M-&phi;, Mo/Vo, column seismic shear, shaft, ' +
+      'all checks and the final cage. Seismic references are the ported ones ' + esc(UNVERIFIED_SUFFIX) + '.</div>' +
+      grid([field('Project', inp('report.project', 'str', ' id="cs-rpt-project" style="width:220px"')),
+        '<button type="button" class="calc-btn" id="cs-rpt-gen" data-act="report">Generate report</button>',
+        '<button type="button" class="calc-btn" id="cs-rpt-print" data-act="print" style="background:linear-gradient(135deg,#2980b9,#3498db);">Print report</button>']) +
+      '<div id="cs-rpt-msg"></div><div id="cs-report" class="report-preview cs-report" style="' + (reportShown && lastResult ? '' : 'display:none;') +
+      'margin-top:12px;">' + (reportShown && lastResult ? reportBody() : '') + '</div>';
+    return card('8. Printable report', 'purple', h, 'cs-card-report');
+  }
+  function showReport() {
+    var el = document.getElementById('cs-report');
+    if (!lastResult) {
+      var m = document.getElementById('cs-rpt-msg');
+      if (m) m.innerHTML = notice('red', 'Run Design first: the report is built from the last results.');
+      return null;
+    }
+    setText('cs-rpt-msg', '');
+    reportShown = true;
+    if (el) { el.innerHTML = reportBody(); el.style.display = ''; }
+    return el;
+  }
+  function printReportCs() {
+    var el = showReport();
+    if (!el) return;
+    el.classList.add('cs-printing');
+    var off = function () { el.classList.remove('cs-printing'); window.removeEventListener('afterprint', off); };
+    window.addEventListener('afterprint', off);
+    window.print();
+  }
   function renderAll() {
     panel.innerHTML = '<div style="padding:4px 0;">' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
-      renderRun() + '<div id="cs-results"></div>' + renderOverrides() + '</div>';
+      renderRun() + '<div id="cs-results"></div>' + renderReportCard() + renderOverrides() + '</div>';
     renderResults();
   }
   function setRunStatus(html) { var el = document.getElementById('cs-run-status'); if (el) el.innerHTML = html; }
@@ -925,6 +1322,7 @@
     var a = bridge();
     if (!a || !a.run_colshaft) { setRunStatus(notice('red', 'Python backend not available (pywebview.api.run_colshaft).')); return; }
     busy = true;
+    var sent = buildPayload(state);
     var b = document.getElementById('cs-design');
     if (b) { b.disabled = true; b.textContent = 'Running…'; }
     setRunStatus('<div class="circ-info">Running the design (this can take several seconds per bent)…</div>');
@@ -936,13 +1334,15 @@
       try { r = JSON.parse(res); } catch (e) { setRunStatus(notice('red', '<b>Error:</b> ' + esc(e.message))); return; }
       if (r.error) { setRunStatus(notice('red', '<b>Error:</b> ' + esc(r.error))); return; }
       lastResult = r;
+      lastPayload = sent;
       drillIdx = r.bents && r.bents.length ? 0 : null;
       updateHints();
       setRunStatus('<div class="circ-info">Done: ' + (r.bents || []).length + ' bent(s), overall ' +
         esc(worstStatus((r.bents || []).map(function (x) { return x.status; }))) + '.</div>');
       renderResults();
+      if (reportShown) showReport();
     };
-    a.run_colshaft(JSON.stringify(buildPayload(state))).then(done, function (e) { done(JSON.stringify({ error: String(e) })); });
+    a.run_colshaft(JSON.stringify(sent)).then(done, function (e) { done(JSON.stringify({ error: String(e) })); });
   }
   function onClick(ev) {
     var t = ev.target.closest ? ev.target.closest('[data-act]') : null;
@@ -952,6 +1352,8 @@
     if (act === 'parse') { doParse(); return; }
     if (act === 'design') { doDesign(); return; }
     if (act === 'drill') { drillIdx = i; renderResults(); return; }
+    if (act === 'report') { showReport(); return; }
+    if (act === 'print') { printReportCs(); return; }
     if (act === 'add-bent') state.bents.push(defaultBent(state.bents.length));
     else if (act === 'rm-bent') state.bents.splice(i, 1);
     else if (act === 'add-soil') state.soils.push(defaultSoil(state.soils.length));
@@ -999,11 +1401,12 @@
   panel.addEventListener('change', function (ev) { onChange(ev); ev.stopPropagation(); });
   panel.addEventListener('input', function (ev) { ev.stopPropagation(); });
 
+  injectPrintCss();
   window.ColShaft = {
     getState: function () { var ta = document.getElementById('cs-paste'); if (ta) state.paste = ta.value; return serializeState(state); },
     setState: function (obj) {
       // never let a malformed columnShaft abort the main project load
-      lastResult = null; drillIdx = null;
+      lastResult = null; lastPayload = null; reportShown = false; drillIdx = null;
       try { state = normalizeState(obj); renderAll(); } catch (e) {
         try { console.warn('Column on Shaft: invalid saved state, tab reset (' + e + ')'); } catch (e2) { /* ignore */ }
         try { state = defaultState(); renderAll(); } catch (e3) { /* ignore */ }

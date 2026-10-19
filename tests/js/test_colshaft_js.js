@@ -371,6 +371,157 @@ test('auto H from the parse summary', () => {
   assert.strictEqual(CS.autoHeightFt(s, s.bents[0]), null);
 });
 
+// ── Task 11: charts and the printable report ──
+function reportFixture() {
+  const ref = 'Caltrans SDC 2.1 §5.3.7.2 (concrete) & §5.3.7.3 (transverse)';
+  return {
+    code: 'SDC 2.1', settings: { envelope_mode: 'station', slenderness_on: true },
+    parse: { n_rows: 12, n_envelope: 6, units: { force: 'kip', moment: 'kip-ft', length: 'ft' },
+      categories: { DEAD: 'Dead', 'Str-I': 'Strength' }, warnings: ['No units row <assumed>', 'B<1>: frame 999 not found'] },
+    bents: [{
+      name: 'B<1>', status: 'OK', no_solution: [], warnings: ['frame 999 not found'], H_in: 240, Df_for_lu: 120,
+      shaft_basis: 'soil', axial: { P_dead: -950, dead_cases: { DEAD: -950 }, P_ext_min: -1400, P_ext_max: -500 },
+      lrfd: { col: { check_rows: [
+        { Pu: -800, Mu: 24000, Vu: 100, Tu: 120, Mr: 36000, Vr2: 500, Tr: 1200, ratio: 0.5, ok: true, _case: 'Str-I',
+          _frame: '101', _station: 0, _klr2: 40, _klr3: 20, _slender_limit2: 22, _slender_limit3: 22, _slender_status: ST.PENDING },
+        { Pu: -900, Mu: 30000, Vu: 90, Tu: 0, Mr: 33000, Vr2: 500, Tr: 1200, ratio: 0.91, ok: true, _case: 'Str-II',
+          _frame: '101', _station: 240, _klr2: 120, _klr3: 10, _slender_limit2: 22, _slender_limit3: 22, _slender_status: ST.REFINED }] },
+        shaft: { source: 'p-y strength', check_rows: [] } },
+      seismic: {
+        Mp_by_P: [[-950, 70000], [-1400, 76000], [-500, 60000]], Mp: 76000, Mp_P: -1400, Mo: 91200, Vo: 380, lambda_mo: 1.2,
+        end_condition: 'fixed-free', H: 240, P_vc: -500, mu_d: 3, col_shear: [600, 200, 466.7], rho_s_col: 0.0081,
+        rho_s_min: 0.006, s_max_detailing: 6.0, min_trans_bar: 0, shaft_basis: 'soil', shaft_profile: [[0, 91200, 380], [120, 99000, 300]],
+        shaft_Mdemand: 99000, shaft_Mp: 160000, shaft_phiVn: 900, EI_col: 9e8, EI_shaft: 2e9, Df: 120,
+        required_transverse: { ok: true, bar: 6, s: 4.5, ties: 0 },
+        mphi: { P: -1400, phi: [0, 5e-5, 1e-4, 9e-4], M: [0, 50000, 76000, 79000], phi_y: 9e-5, Mp: 76000, phi_u: 9e-4, failure_mode: 'concrete' },
+        mphi_shaft: { P: -950, phi: [0, 1e-4, 6e-4], M: [0, 150000, 162000], phi_y: 1e-4, Mp: 160000, phi_u: 6e-4, failure_mode: 'steel' },
+        refs: { overstrength: 'Caltrans SDC 2.1 §4.4.2 (Mo = 1.2·Mp, A706)', flexure: 'Caltrans SDC 2.1 §5.3.6.2 (moment-curvature)',
+          shear: ref, shaft_capacity: 'Caltrans SDC 2.1 §6.2.5.3', transverse: 'Caltrans SDC 2.1 §5.3.8.2' },
+        pile: { Df_eq_gov: 120, bounds: [{ factor: 2, stable: true, Df_eq: 100, Mmax: 95000, z_Mmax: 60, Vmax: 380 },
+          { factor: 0.5, stable: false, Df_eq: null, Mmax: null, z_Mmax: null, Vmax: null }],
+        profiles_by_bound: [
+          { factor: 2, stable: true, governing: true, z: [0, 60, 120], M: [91200, 95000, 0], V: [380, 0, -200], y: [0.5, 0.1, 0] },
+          { factor: 0.5, stable: false, governing: false, z: [0, 60, 120], M: [1e9, 2e9, 3e9], V: [1e7, 0, 0], y: [99, 50, 0] }] }
+      },
+      final: { col_long: { bar: 11, n: 15, bundle: 1, Ast: 23.4, rho_l: 0.0105 }, col_trans: { bar: 6, s: 4.5, ties: 0, rho_s: 0.0081 },
+        shaft_long: { bar: 14, n: 22, bundle: 1, Ast: 49.5, rho_l: 0.009 }, shaft_trans: { bar: 6, s: 6, ties: 0, rho_s: 0.005 } },
+      final_source: { col_long: 'LRFD', col_trans: 'Seismic', shaft_long: 'Override', shaft_trans: 'LRFD+Seismic' },
+      final_checks: [
+        { group: 'Seismic', name: 'Column shear', demand: 380, capacity: 600, ratio: 0.633, ok: true, detail: 'Vo=380 <x>', ref: ref },
+        { group: 'Seismic', name: 'Shaft flexure (capacity protection)', demand: 99000, capacity: 160000, ratio: 0.62, ok: true, detail: '', ref: 'Caltrans SDC 2.1 §6.2.5.3' },
+        { group: 'Seismic', name: 'Shaft oversize', demand: 24, capacity: 24, ratio: 1, ok: true, detail: 'unverified', ref: '' },
+        { group: 'Column LRFD', name: 'Row 1: Str-I (101 @ 0 ft)', demand: null, capacity: null, ratio: 0.5, ok: true, detail: '', ref: '' }]
+    }, { name: 'B2', status: 'NO SOLUTION', no_solution: ['Column seismic transverse: none'], warnings: [], axial: {},
+      lrfd: { col: { check_rows: [] } }, seismic: null, final: null, final_source: {}, final_checks: [] }]
+  };
+}
+const RPT_PAYLOAD = { bents: [{ name: 'B<1>', col_frames: ['101'], shaft_frames: [],
+  column: { D: 60, fc: 4, fy: 60, cover: 2, trans_type: 'hoop', hoop_closure: 'lap' },
+  shaft: { D: 84, fc: 4, fy: 60, cover: 3, trans_type: 'hoop' }, end_condition_long: 'fixed-free', end_condition_trans: 'fixed-free',
+  base_end: 'auto', H_in: null, L_embed_in: 720, soil_bounds: [2, 0.5], override: { shaft_long: { bar: 14, n: 22, bundle: 1 } },
+  soil: { J: 0.5, cyclic: true, layers: [{ thickness_ft: 80, py_model: 'api_sand', gamma_pcf: 125, phi_deg: 36, k_pci: 90, submerged: true }] } },
+{ name: 'B2' }] };
+
+test('M-phi chart marks phi_y, Mp, phi_u; shaft charts draw every bound (unstable dashed, unscaled)', () => {
+  const r = reportFixture(), S = r.bents[0].seismic;
+  const m = CS.mphiChart(S.mphi, 'Column M-φ');
+  assert.ok(m.startsWith('<svg') && m.indexOf('φy, Mp') > 0 && m.indexOf('φu') > 0 && m.indexOf('Mp = 6333') > 0, m);
+  assert.ok(m.indexOf('P = -1400 kip') > 0);
+  assert.ok(/No M-&phi; curve/.test(CS.mphiChart(null)));
+  const ser = CS.shaftSeries(S, 'M');
+  assert.strictEqual(ser.length, 2);
+  assert.ok(ser[0].label.indexOf('governing') > 0 && ser[0].width > ser[1].width);
+  assert.ok(ser[1].dash && ser[1].noScale && /unstable/.test(ser[1].label));
+  assert.deepStrictEqual(ser[0].points[0], [91200 / 12, 0]);           // kip-ft vs depth (ft) below top of shaft
+  const charts = CS.shaftCharts(S);
+  assert.strictEqual(charts.length, 3);                                  // M, V, y
+  assert.ok(charts[0].indexOf('stroke-dasharray="5,4"') > 0);
+  // the unstable 1e9 values do not set the axis: the largest tick is the stable maximum
+  assert.ok(charts[0].indexOf('>7917<') > 0 && charts[0].indexOf('166666667') < 0, charts[0]);
+  // cantilever basis (no pile): shaft_profile, M and V only
+  const cant = Object.assign({}, S, { pile: null });
+  assert.strictEqual(CS.shaftCharts(cant).length, 2);
+  assert.deepStrictEqual(CS.shaftSeries(cant, 'M')[0].points[1], [99000 / 12, 10]);
+});
+
+test('report: header, assumptions box, sections in order for every bent', () => {
+  const r = reportFixture();
+  const h = CS.reportHtml(r, RPT_PAYLOAD, { project: 'Bridge <1>', date: '2026-10-19' });
+  assert.ok(h.indexOf('Column on Shaft — Design Report') >= 0);
+  assert.ok(h.indexOf('Project: <b>Bridge &lt;1&gt;</b>') > 0 && h.indexOf('2026-10-19') > 0);
+  assert.ok(h.indexOf('Seismic code: Caltrans SDC 2.1') > 0);
+  // assumptions box: envelope bounding, S6, every open E DECIDE id
+  const a0 = h.indexOf('data-sec="assumptions"');
+  const box = h.slice(a0, h.indexOf('</ul></li></ul></div>', a0));
+  assert.ok(/envelope-bounded \(conservative\)/.test(box) && /S6/.test(box) && /not applied/.test(box), box);
+  CS.OPEN_DECIDE_E.forEach(e => assert.ok(box.indexOf('<b>' + e[0] + '</b>') > 0, e[0]));
+  // the 10 sections, in order, once per bent (including the NO SOLUTION bent)
+  const keys = CS.REPORT_SECTIONS.map(s => s[0]);
+  const seen = [...h.matchAll(/<h3 data-sec="([a-z]+)">/g)].map(x => x[1]);
+  assert.deepStrictEqual(seen, keys.concat(keys));
+  assert.ok(h.indexOf('Bent B&lt;1&gt; —') < h.indexOf('Bent B2 —'));
+  const b1 = h.slice(h.indexOf('Bent B&lt;1&gt; —'), h.indexOf('Bent B2 —'));
+  // parse summary: units, envelope notice, global + bent warnings (other bents' prefixed copies dropped)
+  assert.ok(b1.indexOf('envelope-bounded (conservative)') > 0);
+  assert.ok(b1.indexOf('No units row &lt;assumed&gt;') > 0 && b1.indexOf('B&lt;1&gt;: frame 999') < 0);
+  assert.ok(b1.indexOf('frame 999 not found') > 0);
+  // inputs / overrides / soil
+  assert.ok(b1.indexOf('auto, from the column frame stations') > 0 && b1.indexOf('shaft long 22-#14') > 0 && b1.indexOf('api_sand') > 0);
+  // slenderness per axis: axis 2 refined (120 >= 100), axis 3 neglect; S6 note
+  assert.deepStrictEqual(CS.slenderAxes(r.bents[0].lrfd.col.check_rows).map(a => [a.axis, a.klr, a.status]),
+    [['2', 120, ST.REFINED], ['3', 20, ST.NEGLECT]]);
+  assert.ok(b1.indexOf('moment magnification is NOT applied') > 0);
+  // M-phi table + Mo/Vo derivation + column shear breakdown
+  assert.ok(b1.indexOf('governs Mo') > 0 && b1.indexOf('9.000e-5') > 0);
+  assert.ok(b1.indexOf('Mo = λmo × Mp = 1.20 × 6333.3 = 7600.0 kip-ft') > 0, 'Mo line');
+  assert.ok(b1.indexOf('Vo = Mo / H = 7600.0 / 20.00 = 380.0 kip  (fixed-free)') > 0, 'Vo line');
+  assert.ok(b1.indexOf('Vc = 200.0 kip,  Vs = 466.7 kip,  φVn = 600.0 kip  vs  Vo = 380.0 kip  → OK') > 0);
+  // final cage with sources
+  assert.ok(b1.indexOf('Override') > 0 && b1.indexOf('LRFD+Seismic') > 0 && b1.indexOf('23.40') > 0);
+  // NO SOLUTION bent: listed, sections present but not available
+  const b2 = h.slice(h.indexOf('Bent B2 —'));
+  assert.ok(b2.indexOf('Column seismic transverse: none') > 0 && b2.indexOf('No final cage') > 0);
+  // fixed-fixed: Vo = 2*Mo/H
+  r.bents[0].seismic.end_condition = 'fixed-fixed';
+  assert.ok(CS.reportHtml(r, null, {}).indexOf('Vo = 2·Mo / H = 2 × 7600.0 / 20.00') > 0);
+  // slenderness off: one line; no payload -> inputs not available
+  r.settings.slenderness_on = false;
+  const off = CS.reportHtml(r, null, {});
+  assert.ok(off.indexOf('Slenderness screen off.') > 0 && off.indexOf('Inputs not available.') > 0);
+  assert.ok(/Run Design first/.test(CS.reportHtml(null, null, {})));
+});
+
+test('report: seismic refs carry the unverified suffix; LRFD refs do not; user text escaped', () => {
+  const r = reportFixture();
+  const SUF = '(unverified — see OPEN_VERIFICATION_ITEMS E)';
+  assert.strictEqual(CS.UNVERIFIED_SUFFIX, SUF);
+  assert.strictEqual(CS.seismicRef('X §1'), 'X §1 ' + SUF);
+  assert.strictEqual(CS.seismicRef(''), '—');
+  assert.strictEqual(CS.checkRef(r.bents[0].final_checks[0]), r.bents[0].final_checks[0].ref + ' ' + SUF);
+  assert.strictEqual(CS.checkRef(r.bents[0].final_checks[3]), '—');
+  const h = CS.reportHtml(r, RPT_PAYLOAD, { project: '<script>alert(1)</script>' });
+  // every occurrence of a ported ref string in the report is followed by the suffix
+  const refs = Object.values(r.bents[0].seismic.refs).concat(r.bents[0].final_checks.map(c => c.ref).filter(Boolean));
+  const ESUF = ' ' + CS.esc(SUF);
+  refs.forEach(x => {
+    const e = CS.esc(x);
+    let i = h.indexOf(e), k = 0;
+    while (i >= 0) {
+      const followed = h.slice(i + e.length, i + e.length + ESUF.length) === ESUF;
+      // a shorter ref inside a longer suffixed one (e.g. "§6.2.5.3" vs a longer text) is fine
+      const inLonger = refs.some(y => y.length > x.length && y.indexOf(x) >= 0 && h.indexOf(CS.esc(y) + ESUF) >= 0);
+      assert.ok(followed || inLonger, 'unsuffixed ref ' + x + ' @' + i);
+      if (followed) k += 1;
+      i = h.indexOf(e, i + 1);
+    }
+    assert.ok(k >= 1, 'ref not shown: ' + x);
+  });
+  assert.ok(h.split(CS.esc(SUF)).length - 1 >= 8);
+  assert.ok(h.indexOf('<script') < 0 && h.indexOf('&lt;script&gt;alert(1)&lt;/script&gt;') > 0);
+  assert.ok(h.indexOf('Vo=380 &lt;x&gt;') > 0 && h.indexOf('<x>') < 0);
+  assert.ok(h.indexOf('B<1>') < 0);
+});
+
 const di = process.argv.indexOf('--dump');
 if (di > 0) {
   fs.writeFileSync(process.argv[di + 1], JSON.stringify(CS.buildPayload(sampleState())));

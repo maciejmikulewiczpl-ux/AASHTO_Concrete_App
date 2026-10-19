@@ -197,3 +197,57 @@ def test_js_constants_mirror_python():
     import colshaft_engine as ee
     assert js["srank"] == ee.STATUS_RANK
     assert set(js["colors"]) == set(ee.STATUS_RANK)
+
+
+# ── Task 11: printable report ───────────────────────────────────────
+
+def _js_eval(expr_code, *args):
+    r = subprocess.run([NODE, "-e", expr_code, JS, *args], capture_output=True, text=True,
+                       cwd=ROOT, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+
+@needs_node
+def test_open_decide_e_mirrors_open_items():
+    """The report's DECIDE list equals the open E-section DECIDE rows of
+    OPEN_VERIFICATION_ITEMS.md (update both together)."""
+    with open(os.path.join(ROOT, "OPEN_VERIFICATION_ITEMS.md"), encoding="utf-8") as f:
+        text = f.read().split("## Resolved")[0]
+    open_e = re.findall(r"^\|\s*(E\d+)\s*\|\s*DECIDE\s*\|", text, re.M)
+    js = json.loads(_js_eval("const c=require(process.argv[1]);"
+                             "console.log(JSON.stringify(c.OPEN_DECIDE_E.map(e=>e[0])))"))
+    assert open_e and js == open_e
+
+
+@needs_node
+def test_report_from_real_run(tmp_path):
+    """reportHtml on the engine's real 2-bent result: every section in order per bent,
+    the ported refs suffixed, the real M-phi curve and per-bound shaft profiles drawn,
+    no 'undefined' / 'NaN' leaking into the page."""
+    from tests import test_colshaft_engine as te
+    res = te.run("2b")
+    pl = te.PAYLOADS["2b"]()
+    (tmp_path / "r.json").write_text(json.dumps(res), encoding="utf-8")
+    (tmp_path / "p.json").write_text(json.dumps(pl), encoding="utf-8")
+    code = ("const c=require(process.argv[1]),fs=require('fs');"
+            "const r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));"
+            "const p=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));"
+            "process.stdout.write(JSON.stringify({h:c.reportHtml(r,p,{project:'P',date:'2026-10-19'}),"
+            "s:c.REPORT_SECTIONS.map(x=>x[0]),suf:c.UNVERIFIED_SUFFIX}))")
+    out = json.loads(_js_eval(code, str(tmp_path / "r.json"), str(tmp_path / "p.json")))
+    h, keys, suf = out["h"], out["s"], out["suf"]
+    assert re.findall(r'<h3 data-sec="([a-z]+)">', h) == keys * 2
+    for bad in ("undefined", "NaN", "[object Object]"):
+        assert bad not in h, bad
+    b1, b2 = h.split("Bent B2 —")
+    for b, S in zip((b1, b2), (res["bents"][0]["seismic"], res["bents"][1]["seismic"])):
+        assert "Column M-φ at P = %.0f kip" % S["mphi"]["P"] in b
+        assert "Shaft M-φ at P = %.0f kip" % S["mphi_shaft"]["P"] in b
+        for k in ("overstrength", "shear", "flexure", "shaft_capacity", "transverse"):
+            esc = S["refs"][k].replace("&", "&amp;")
+            assert esc + " " + suf in b, k
+    # B2 is the soil basis: both bounds drawn, the governing one labelled
+    assert "×2 " in b2 or "×2<" in b2
+    assert "(governing)" in b2 and "(governing)" not in b1
+    assert "Vo = Mo / H" in b1 and "envelope-bounded (conservative)" in h
