@@ -212,6 +212,22 @@ def test_envelope_shear_uses_Pmax():
     assert tr.ok
 
 
+def test_search_judges_shear_at_Pmax():
+    """A transverse cage that passes at P_min fails at P_max; the envelope search
+    must pick the heavier cage that passes at P_max."""
+    Pmin, Pmax, Mu, Vu = -2500.0, -100.0, 8000.0, 600.0
+    lg_c, tr_c = cl.design_member(MEMBER, [row(Pmin, Mu, Vu=Vu)], {})
+    lg_e, tr_e = cl.design_member(MEMBER, [env(Pmin, Pmax, Mu, Vu=Vu)], {})
+    assert tr_c.ok and tr_e.ok
+    light = {"bar": lg_e.bar, "n": lg_e.n, "bundle": lg_e.bundle,
+             "trans_bar": tr_c.bar, "s": tr_c.s, "ties": tr_c.ties}
+    assert cl.check_cage(MEMBER, light, [row(Pmin, Mu, Vu=Vu)])[0]["shearStatus"] in ("OK", "NR")
+    assert cl.check_cage(MEMBER, light, [env(Pmin, Pmax, Mu, Vu=Vu)])[0]["shearStatus"] == "NG"
+    assert tr_e.Av / tr_e.s > tr_c.Av / tr_c.s
+    heavy = dict(light, trans_bar=tr_e.bar, s=tr_e.s, ties=tr_e.ties)
+    assert cl.check_cage(MEMBER, heavy, [env(Pmin, Pmax, Mu, Vu=Vu)])[0]["shearStatus"] in ("OK", "NR")
+
+
 def test_check_cage_concurrent_matches_engine():
     """Even bar count, concurrent rows: the two-face flexure equals the engine's own."""
     cage = {"bar": 10, "n": 20, "bundle": 1, "trans_bar": 5, "s": 6.0, "ties": 0}
@@ -260,20 +276,47 @@ def test_transverse_no_solution_reported():
 
 def test_long_vt_check_drives_longitudinal_steel():
     """Controller ruling on E12: the engine's longitudinal check for V(+T) (long_ok_2,
-    Eq. 5.7.3.5-1 / 5.7.3.6.3-1) is part of the pass; if only it fails, the
+    Eq. 5.7.3.5-1 / 5.7.3.6.3-1) is part of the pass; when it fails, the
     longitudinal cage is stepped up."""
     rows = [row(-200.0, 20000.0, Vu=400.0)]
     flex_only = cl.design_longitudinal(MEMBER, rows, {})
     alone = cl.design_transverse(MEMBER, flex_only, rows, {})
-    assert not alone.ok and alone.long_only_fail and alone.long_vt_ng_rows == [0]
+    assert not alone.ok and alone.fail_reasons == ["long"] and alone.long_vt_ng_rows == [0]
+    assert "NO SOLUTION" in alone.note and "Eq. 5.7.3.5-1 / 5.7.3.6.3-1" in alone.note
     lg, tr = cl.design_member(MEMBER, rows, {})
     assert lg.ok and tr.ok
     assert lg.Ast > flex_only.Ast
     assert cl.STEP_NOTE in lg.note
-    assert "Eq. 5.7.3.5-1 / 5.7.3.6.3-1" in cl.STEP_NOTE
+    assert "longitudinal reinforcement for V+T (Eq. 5.7.3.5-1 / 5.7.3.6.3-1)" in lg.note
     out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
                                  "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)[0]
     assert out["long_ok_2"] is True and out["shearStatus"] in ("OK", "NR")
+
+
+def _final_check(rows, lg, tr):
+    out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
+                                 "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)
+    for r, o in zip(rows, out):
+        assert o["flexStatus"] != "NG" and o["shearStatus"] in ("OK", "NR")
+        assert o["long_ok_2"] is not False
+        assert not o["torsionConsider"] or o["Tr"] >= abs(r["Tu"])
+
+
+@pytest.mark.parametrize("rows", [
+    # review repro 1: the second row fails shear (not only long_ok_2) on the flexure cage
+    [row(-200.0, 20000.0, Vu=400.0), row(-1000.0, 3000.0, Vu=990.0)],
+    # review repro 2: shear NG on the flexure cage; heavier long. steel raises Vr2
+    [row(-200.0, 20000.0, Vu=950.0)],
+])
+def test_shear_side_failure_steps_longitudinal(rows):
+    """Controller ruling 6-3: any shear-side failure steps the longitudinal cage."""
+    flex_only = cl.design_longitudinal(MEMBER, rows, {})
+    alone = cl.design_transverse(MEMBER, flex_only, rows, {})
+    assert not alone.ok and "shear" in alone.fail_reasons
+    lg, tr = cl.design_member(MEMBER, rows, {})
+    assert lg.ok and tr.ok, tr.note
+    assert lg.Ast > flex_only.Ast and cl.STEP_NOTE in lg.note and "shear (Vr" in lg.note
+    _final_check(rows, lg, tr)
 
 
 def test_design_member_no_step_when_not_needed():
@@ -304,3 +347,4 @@ def test_500_rows_under_20s():
                                  "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)
     assert all(o["long_ok_2"] is not False for o in out)
     assert all(o["shearStatus"] in ("OK", "NR") and o["flexStatus"] != "NG" for o in out)
+    assert all(not o["torsionConsider"] or o["Tr"] >= abs(r["Tu"]) for r, o in zip(rows, out))
