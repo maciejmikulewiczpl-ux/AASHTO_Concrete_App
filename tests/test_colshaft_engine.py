@@ -566,6 +566,9 @@ def test_ramp_guard_engine_soft_soil_ng():
     c = chk(b, "Shaft p-y strength solve")
     assert c["ok"] is False and c["demand"] == c["capacity"] == 3
     assert b["lrfd"]["shaft"] is None and b["status"] == "NG"
+    # Task 11: the unstable overstrength bound is still drawn (stable False, never governing)
+    pr = b["seismic"]["pile"]["profiles_by_bound"]
+    assert [(x["factor"], x["stable"], x["governing"]) for x in pr] == [(0.5, False, False)]
 
 
 def test_ramp_guard_accepts_stiff_case_unchanged():
@@ -752,3 +755,92 @@ def test_seismic_mc_cache_is_transparent():
     for r in (c1, c2):
         assert (r.Mo, r.shaft_Mp, r.EI_col, r.EI_shaft) == \
             (plain.Mo, plain.shaft_Mp, plain.EI_col, plain.EI_shaft)
+
+
+# ── Task 11: M-phi curves and per-bound p-y profiles in the result ──
+
+def test_mphi_curves_in_result():
+    """mphi = column M-phi at the P that set Mo; mphi_shaft = shaft M-phi at P_dead.
+    Both are read from the cached M-phi results (test_seismic_mc_cache_is_transparent
+    pins that the cache holds only the Mp samples + the shaft: no extra solves)."""
+    for b in run("2b")["bents"]:
+        S = b["seismic"]
+        m, ms = S["mphi"], S["mphi_shaft"]
+        assert m["P"] == S["Mp_P"] and m["Mp"] == S["Mp"]
+        assert S["Mo"] == pytest.approx(S["lambda_mo"] * m["Mp"])
+        assert ms["P"] == b["axial"]["P_dead"] and ms["Mp"] == S["shaft_Mp"]
+        for c in (m, ms):
+            assert 2 <= len(c["phi"]) == len(c["M"]) <= cs.MPHI_MAX_PTS
+            assert all(x < y for x, y in zip(c["phi"], c["phi"][1:]))
+            assert 0 < c["phi_y"] < c["phi_u"] and c["failure_mode"] in ("concrete", "steel")
+            assert c["phi"][-1] == pytest.approx(c["phi_u"], rel=0.05)
+        assert set(S["refs"]) >= {"overstrength", "shear", "shaft_capacity", "transverse"}
+        assert S["refs"]["overstrength"] == get_provisions("SDC 2.1").ref_overstrength
+
+
+def test_downsample_idx():
+    assert cs.downsample_idx(5, 80) == [0, 1, 2, 3, 4]
+    idx = cs.downsample_idx(500, 80, (123, 377))
+    assert len(idx) <= 80 and idx == sorted(set(idx))
+    assert {0, 499, 123, 377} <= set(idx)
+
+
+class _FakeMC:
+    def __init__(self, n):
+        self.phi = [i * 1e-5 for i in range(n)]
+        self.M = [1000.0 * math.sin(math.pi * i / (n - 1)) for i in range(n)]
+        self.phi_y, self.Mp, self.phi_u, self.failure_mode = 1e-4, 900.0, self.phi[-1], "steel"
+
+
+def test_mphi_dict_downsamples_keeping_peak_and_ends():
+    mc = _FakeMC(301)
+    d = cs.mphi_dict(mc, -500.0)
+    assert len(d["phi"]) <= cs.MPHI_MAX_PTS and d["P"] == -500.0
+    assert d["phi"][0] == 0.0 and d["phi"][-1] == mc.phi[-1]
+    assert max(d["M"]) == max(mc.M)
+    assert (d["phi_y"], d["Mp"], d["phi_u"], d["failure_mode"]) == (1e-4, 900.0, mc.phi[-1], "steel")
+
+
+def test_profiles_by_bound_datum_and_governing():
+    """Every overstrength soil bound's profile, z below the TOP OF SHAFT (the datum of
+    shaft_profile / profile_gov / Df_eq_gov); the governing one equals shaft_profile."""
+    b1, b2 = run("2b")["bents"]
+    assert b1["seismic"]["pile"] is None            # cantilever basis: no p-y profiles
+    S = b2["seismic"]
+    pile = S["pile"]
+    assert "top of shaft" in pile["profiles_datum"]
+    pr = pile["profiles_by_bound"]
+    assert [x["factor"] for x in pr] == [x["factor"] for x in pile["bounds"]] == [2.0, 0.5]
+    assert [x["stable"] for x in pr] == [x["stable"] for x in pile["bounds"]]
+    gov = [x for x in pr if x["governing"]]
+    assert len(gov) == 1
+    g = gov[0]
+    by_z = {round(z, 6): (m, v, y) for z, m, v, y in pile["profile_gov"]}
+    assert len(g["z"]) <= cs.PROFILE_MAX_PTS and g["z"][0] == pytest.approx(0.0)
+    assert g["z"][-1] == pytest.approx(pile["L_embed"])
+    sp = {round(z, 6): (m, v) for z, m, v in S["shaft_profile"]}
+    for z, m, v, y in zip(g["z"], g["M"], g["V"], g["y"]):
+        assert sp[round(z, 6)] == (m, v) and by_z[round(z, 6)] == (m, v, y)
+    assert max(abs(m) for m in g["M"]) == pytest.approx(pile["M_inground"])
+    for x in pr:
+        assert len(x["z"]) == len(x["M"]) == len(x["V"]) == len(x["y"])
+
+
+class _FakePile:
+    def __init__(self, n, g0, H):
+        self.x = [H * i / g0 for i in range(g0)] + [H + 3.0 * i for i in range(n - g0)]
+        self.moment = [float(i) for i in range(n)]
+        self.moment[250] = -1e6                       # extreme |M| deep in the shaft
+        self.shear = [1.0] * n
+        self.shear[311] = 5e4
+        self.y = [0.01] * n
+        self.ground_index, self.stable = g0, True
+
+
+def test_bound_profile_downsamples_keeping_extremes():
+    s = _FakePile(400, 10, 240.0)
+    p = cs._bound_profile(2.0, s, 240.0, True)
+    assert len(p["z"]) <= cs.PROFILE_MAX_PTS
+    assert p["z"][0] == 0.0 and p["z"][-1] == s.x[-1] - 240.0
+    assert -1e6 in p["M"] and 5e4 in p["V"]
+    assert p["factor"] == 2.0 and p["stable"] is True and p["governing"] is True

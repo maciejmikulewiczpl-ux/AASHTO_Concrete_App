@@ -72,6 +72,8 @@ END_FACTOR = {"fixed-free": 1.0, "fixed-fixed": 2.0}
 BASES = ("soil", "cantilever", "interface")
 N_EXT = 5                       # evenly spaced samples across [P_ext_min, P_ext_max]
 N_CANT = 11                     # points of the cantilever M(z) profile
+MPHI_MAX_PTS = 80               # M-phi curve points carried in the result (Task 11)
+PROFILE_MAX_PTS = 120           # per-bound p-y profile points carried in the result
 L_EQ_MSG = "Enter the pile equivalent cantilever length or a soil profile"
 UNSTABLE_MSG = "soil too soft or shaft too short"
 UNVERIFIED_REF = ("unverified; see OPEN_VERIFICATION_ITEMS E-row for SGS §8.8.12 / "
@@ -124,6 +126,15 @@ class SeismicResult:
     required_transverse: dict
     pile: Optional[dict] = None
     warnings: List[str] = field(default_factory=list)
+    # Task 11 (report / charts; additive).  mphi: the column M-phi curve at the
+    # governing P (the one that set Mo); mphi_shaft: the shaft M-phi at P_dead.
+    # {"P" (app convention), "phi" [1/in], "M" [kip-in], "phi_y", "Mp", "phi_u",
+    # "failure_mode"}, downsampled to <= MPHI_MAX_PTS points.  refs: the ported
+    # provisions ref_* strings used by the report lines, copied verbatim
+    # (unverified, OPEN_VERIFICATION_ITEMS section E).
+    mphi: Optional[dict] = None
+    mphi_shaft: Optional[dict] = None
+    refs: dict = field(default_factory=dict)
 
 
 # ─── Sections / soil ────────────────────────────────────────────────
@@ -178,6 +189,27 @@ def _axial_samples(axial: dict) -> List[float]:
             if not any(abs(p - q) <= 1e-9 for q in out):
                 out.append(p)
     return out
+
+
+def downsample_idx(n: int, k: int, keep=()) -> List[int]:
+    """Sorted indices of at most ``k`` points out of ``n``: both ends, evenly
+    spaced points, plus the ``keep`` indices (e.g. the extreme values)."""
+    if n <= k:
+        return list(range(n))
+    keep = sorted({i for i in keep if 0 <= i < n})
+    m = max(k - len(keep), 2)
+    idx = {round(j * (n - 1) / (m - 1)) for j in range(m)}
+    return sorted(idx | set(keep))
+
+
+def mphi_dict(mc, P_app: float) -> dict:
+    """Result form of a cached MomentCurvature (read only; Task 11)."""
+    n = len(mc.phi)
+    i_max = max(range(n), key=lambda i: mc.M[i]) if n else 0
+    idx = downsample_idx(n, MPHI_MAX_PTS, (i_max,))
+    return {"P": P_app, "phi": [mc.phi[i] for i in idx], "M": [mc.M[i] for i in idx],
+            "phi_y": mc.phi_y, "Mp": mc.Mp, "phi_u": mc.phi_u,
+            "failure_mode": mc.failure_mode}
 
 
 def _end_condition(bent: dict):
@@ -377,7 +409,11 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
         rho_s_col=col.rho_s, rho_s_min=rho_min, s_max_detailing=s_max, min_trans_bar=bar_min,
         shaft_basis=basis, shaft_profile=profile, shaft_Mdemand=shaft_Md,
         shaft_Mp=mc_sh.Mp, shaft_phiVn=sh_v[0], EI_col=EI_col, EI_shaft=EI_sh, Df=Df,
-        checks=checks, required_transverse=req_t, pile=pile, warnings=warnings)
+        checks=checks, required_transverse=req_t, pile=pile, warnings=warnings,
+        mphi=mphi_dict(mc_gov, Mp_P), mphi_shaft=mphi_dict(mc_sh, P_dead),
+        refs={k: getattr(prov, "ref_" + k) for k in
+              ("overstrength", "flexure", "shear", "shaft_capacity", "transverse",
+               "detailing", "longitudinal", "confined")})
 
 
 def _stability_check(bent, H, L_embed, EI_col, EI_sh, Ds, P_comp, prof, bounds, Mp):
@@ -428,6 +464,29 @@ def _stability_check(bent, H, L_embed, EI_col, EI_sh, Ds, P_comp, prof, bounds, 
     return gov, rows_by_end
 
 
+PROFILES_DATUM = ("z = depth below the top of shaft (in), the same datum as "
+                  "shaft_profile / profile_gov / Df_eq_gov; M kip-in, V kip, y in")
+
+
+def _bound_profile(f, s, H, governing):
+    """Per-bound p-y profile below the top of shaft (Task 11): {factor, stable,
+    governing, z, M, V, y}, downsampled to <= PROFILE_MAX_PTS points keeping the
+    nodes of max |M| and max |V|.  Read only on the cached PileSolution."""
+    g0 = s.ground_index
+    nodes = list(range(g0, len(s.x)))
+    n = len(nodes)
+    fin = lambda arr, i: math.isfinite(arr[nodes[i]])
+    keep = []
+    for arr in (s.moment, s.shear):
+        cand = [i for i in range(n) if fin(arr, i)]
+        if cand:
+            keep.append(max(cand, key=lambda i: abs(arr[nodes[i]])))
+    idx = [nodes[i] for i in downsample_idx(n, PROFILE_MAX_PTS, keep)]
+    return {"factor": f, "stable": bool(s.stable), "governing": bool(governing),
+            "z": [s.x[i] - H for i in idx], "M": [s.moment[i] for i in idx],
+            "V": [s.shear[i] for i in idx], "y": [s.y[i] for i in idx]}
+
+
 def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end, Mp_dead):
     """p-y shaft demand (upstream inground_demand semantics) + per-bound results."""
     prof = soil_profile(soil)
@@ -444,6 +503,7 @@ def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end, Mp_dead):
                                       bounds, M_head)
     rows, n_unstable = [], 0
     df_soft = None
+    by_bound, M_sel, gov_i = [], 0.0, None
     for f in bounds:
         p = replace(prof, stiffness_factor=prof.stiffness_factor * f)
         s = _cached_pile_solve(H, L_embed, EI_col, EI_sh, Ds, P_comp, p, Vo, M_head)
@@ -454,6 +514,11 @@ def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end, Mp_dead):
             df_soft = (f, df)
         if not s.stable:
             n_unstable += 1
+        # inground_demand's own selection rule (not object identity: the solve
+        # cache may be cleared between the two loops)
+        if s.stable and s.max_inground_moment >= M_sel:
+            M_sel, gov_i = s.max_inground_moment, len(by_bound)
+        by_bound.append((f, s))
         rows.append(dict(factor=f, stable=bool(s.stable), Df_eq=df,
                          Mmax=s.max_inground_moment if s.stable else None,
                          z_Mmax=s.max_moment_depth if s.stable else None,
@@ -481,7 +546,10 @@ def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end, Mp_dead):
                    "envelope, as upstream inground_demand does")
     # demand/capacity = unstable/total bounds (finite ratio); NG only at 1.0
     check = Check("Shaft p-y solve", n_unstable, n, ok, detail, "")
-    pile = dict(bounds=rows, profile_gov=prof_gov,
+    profiles = [_bound_profile(f, s, H, gov is not None and i == gov_i)
+                for i, (f, s) in enumerate(by_bound)]
+    pile = dict(bounds=rows, profile_gov=prof_gov, profiles_by_bound=profiles,
+                profiles_datum=PROFILES_DATUM,
                 Df_eq_gov=None if df_soft is None else df_soft[1],
                 M_inground=M_ig, V_inground=V_ig, L_embed=L_embed, end_condition=end,
                 M_head=M_head, V_head=Vo)
