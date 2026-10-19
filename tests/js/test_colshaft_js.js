@@ -14,6 +14,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const CS = require(path.join(ROOT, 'colshaft.js'));
+const ST = CS.SLENDER_STATUS;   // mirrors colshaft_slender (pinned by the pytest)
 const PASTE = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures_csi', 'colshaft_2bent.txt'), 'utf8');
 
 let n = 0;
@@ -211,10 +212,10 @@ test('result formatting (grid rows, kip-in -> kip-ft, drill-down rows, checks)',
       lrfd: { col: { long: { bar: 11, n: 15, bundle: 1 }, trans: { bar: 5, s: 4, ties: 0 },
         check_rows: [
           { Pu: -800, Mu: 24000, Vu: 100, Tu: 120, Mr: 36000, Vr2: 500, Tr: 1200, ratio: 0.5, ok: true,
-            _case: 'Str-I', _frame: '101', _station: 0, _klr2: 40.2, _klr3: 55.5, _slender_status: 'magnify',
+            _case: 'Str-I', _frame: '101', _station: 0, _klr2: 40.2, _klr3: 55.5, _slender_status: ST.PENDING,
             _Pmin: -1100, _Pmax: -800, _flexP: -1100, flexStatus: 'OK', shearStatus: 'NR' },
           { Pu: -900, Mu: 30000, Vu: 100, Tu: 0, Mr: 33000, Vr2: 500, Tr: 1200, ratio: 0.91, ok: true,
-            _case: 'Str-II', _frame: '101', _station: 240, _klr2: 20, _klr3: 21, _slender_status: 'neglect' }] } },
+            _case: 'Str-II', _frame: '101', _station: 240, _klr2: 20, _klr3: 21, _slender_status: ST.NEGLECT }] } },
       seismic: { Mp: 60000, Mo: 72000, Vo: 300, shaft_Mdemand: 84000, shaft_Mp: 120000,
         shaft_profile: [[0, 72000, 300], [120, 108000, 300]],
         required_transverse: { ok: true, bar: 6, s: 4.5, ties: 0 } },
@@ -238,7 +239,7 @@ test('result formatting (grid rows, kip-in -> kip-ft, drill-down rows, checks)',
   assert.strictEqual(r.Mp, '5000');
   assert.strictEqual(r.Mo, '6000');
   assert.strictEqual(r.Vo, '300');
-  assert.strictEqual(r.slender, '55.5 (magnify)');
+  assert.strictEqual(r.slender, '55.5 (magnification pending verification (S6))');
   assert.strictEqual(r.shaft_M, '7000 (10.0 ft) / 10000');
   assert.strictEqual(r.shaft_V, '300 / 900');
   assert.ok(r.final.indexOf('Shaft 22-#14 (bundles of 2) (LRFD), #5 @ 6.00 in + 2 ties (LRFD+Seismic)') >= 0, r.final);
@@ -258,6 +259,81 @@ test('result formatting (grid rows, kip-in -> kip-ft, drill-down rows, checks)',
   assert.deepStrictEqual(c[1].slice(2, 6), ['7000', '10000', '0.700', 'OK']);
   assert.strictEqual(c[2][4], '∞');
   assert.strictEqual(c[2][5], 'NG');
+});
+
+test('slenderness summary ranks the engine strings: refined > S6 pending > neglect', () => {
+  assert.deepStrictEqual(ST, { NEGLECT: 'neglect', PENDING: 'magnification pending verification (S6)',
+    REFINED: 'refined analysis required' });
+  const on = { slenderness_on: true };
+  const bent = rows => ({ lrfd: { col: { check_rows: rows } } });
+  // reviewer repro: a neglect row first, then a refined row at K*lu/r = 120
+  assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 20, _klr3: 18, _slender_status: ST.NEGLECT },
+    { _klr2: 120, _klr3: 90, _slender_status: ST.REFINED }]), on), '120.0 (refined analysis required)');
+  assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 120, _slender_status: ST.REFINED },
+    { _klr2: 40, _slender_status: ST.PENDING }, { _klr2: 10, _slender_status: ST.NEGLECT }]), on),
+  '120.0 (refined analysis required)');
+  assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 10, _slender_status: ST.NEGLECT },
+    { _klr2: 40, _slender_status: ST.PENDING }]), on), '40.0 (magnification pending verification (S6))');
+  assert.strictEqual(CS.slenderSummary(bent([{ _klr2: 10, _slender_status: ST.NEGLECT }]), on), '10.0 (neglect)');
+  assert.strictEqual(CS.slenderSummary(bent([]), { slenderness_on: false }), 'off');
+});
+
+test('setState robustness: malformed saved objects normalise without throwing', () => {
+  const bad = [
+    { parse: { frames: 'x', cases: 5, warnings: null } },
+    { parse: { frames: [null, 3, { name: '101', height_in: 240 }], cases: [{ name: 'D' }, 'y'], warnings: [1, 'w'] } },
+    { bents: 'nope', soils: { a: 1 } },
+    { bents: [null, 7], soils: [null, { layers: 'z' }] },
+    { settings: null, params: 'q', units: 3, categories: [] }];
+  for (const o of bad) {
+    const st = CS.normalizeState(o);
+    assert.ok(Array.isArray(st.bents) && Array.isArray(st.soils));
+    if (st.parse) {
+      for (const k of ['frames', 'cases', 'warnings']) assert.ok(Array.isArray(st.parse[k]), k);
+      CS.autoHeightFt(st, CS.defaultBent(0));
+    }
+    CS.validateState(st);
+    CS.buildPayload(st);
+  }
+  const p = CS.normalizeState(bad[1]).parse;
+  assert.deepStrictEqual(p.frames, [{ name: '101', height_in: 240 }]);
+  assert.deepStrictEqual(p.cases, [{ name: 'D' }]);
+  assert.deepStrictEqual(p.warnings, ['1', 'w']);
+  assert.deepStrictEqual(CS.normalizeState(bad[0]).parse, { frames: [], cases: [], warnings: [] });
+});
+
+test('override range checks', () => {
+  const b = CS.defaultBent(0);
+  assert.deepStrictEqual(CS.overrideErrors(b), []);
+  const cases = [
+    ['col_long', { bar: 12, n: 8, bundle: '' }, /bar must be one of/],
+    ['col_long', { bar: 8, n: 5, bundle: '' }, /n must be a whole number >= 6/],
+    ['col_long', { bar: 8, n: 7.5, bundle: '' }, /n must be a whole number >= 6/],
+    ['col_long', { bar: 8, n: 8, bundle: 4 }, /bundle must be 1, 2 or 3/],
+    ['shaft_long', { bar: 8, n: 8, bundle: 0 }, /bundle must be 1, 2 or 3/],
+    ['col_trans', { bar: 5, s: 0, ties: '' }, /s must be > 0/],
+    ['col_trans', { bar: 5, s: 4, ties: -1 }, /ties must be a whole number >= 0/],
+    ['shaft_trans', { bar: 5, s: 4, ties: 1.5 }, /ties must be a whole number >= 0/],
+    ['shaft_trans', { bar: 13, s: 4, ties: '' }, /bar must be one of/]];
+  for (const [part, val, re] of cases) {
+    const x = CS.defaultBent(0);
+    x.override[part] = val;
+    const e = CS.overrideErrors(x);
+    assert.strictEqual(e.length, 1, JSON.stringify(val));
+    assert.ok(re.test(e[0]) && e[0].startsWith(part.replace('_', ' ')), e[0]);
+  }
+  const ok = CS.defaultBent(0);
+  ok.override = { col_long: { bar: 18, n: 6, bundle: 3 }, col_trans: { bar: 5, s: 0.5, ties: 0 },
+    shaft_long: { bar: 2, n: 40, bundle: 1 }, shaft_trans: { bar: 8, s: 6, ties: 4 } };
+  assert.deepStrictEqual(CS.overrideErrors(ok), []);
+  assert.deepStrictEqual(CS.BAR_SIZES, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18]);
+});
+
+test('P_dead hint (ruling 10-6)', () => {
+  assert.strictEqual(CS.deadHint(null), '');
+  assert.strictEqual(CS.deadHint({ axial: { P_dead: -2500, dead_cases: {} } }), '');
+  assert.strictEqual(CS.deadHint({ axial: { P_dead: -1045, dead_cases: { DEAD: -990, DW: -55 } } }),
+    'from Dead cases: DEAD -990, DW -55 kip (sum -1045 kip); the entered value is not used');
 });
 
 test('svgPlot returns an inline SVG polyline and escapes text', () => {

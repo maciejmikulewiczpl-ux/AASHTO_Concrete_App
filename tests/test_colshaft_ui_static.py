@@ -177,3 +177,23 @@ def test_node_payload_runs_through_api(tmp_path, monkeypatch):
         assert got["final_source"] == exp["final_source"]
     assert res["bents"][1]["shaft_basis"] == "soil"
     assert res["bents"][0]["shaft_basis"] == "cantilever"
+
+
+# ── constants mirrored from Python (fix round 1) ────────────────────
+
+@needs_node
+def test_js_constants_mirror_python():
+    import calc_engine as ce
+    import colshaft_slender as csl
+    code = ("const c=require(process.argv[1]);console.log(JSON.stringify("
+            "{st:c.SLENDER_STATUS,rank:c.SLENDER_RANK,bars:c.BAR_SIZES,colors:c.STATUS_COLORS,"
+            "srank:c.STATUS_RANK}))")
+    r = subprocess.run([NODE, "-e", code, JS], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stderr
+    js = json.loads(r.stdout)
+    assert js["st"] == {"NEGLECT": csl.ST_NEGLECT, "PENDING": csl.ST_PENDING, "REFINED": csl.ST_REFINED}
+    assert js["rank"] == csl._RANK
+    assert js["bars"] == sorted(ce.BARS)
+    import colshaft_engine as ee
+    assert js["srank"] == ee.STATUS_RANK
+    assert set(js["colors"]) == set(ee.STATUS_RANK)

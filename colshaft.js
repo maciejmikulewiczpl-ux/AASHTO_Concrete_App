@@ -54,6 +54,19 @@
   // Ruling 8-9 precedence: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG > OK
   var STATUS_RANK = { 'OK': 0, 'NG': 1, 'REFINED ANALYSIS REQUIRED': 2, 'NO SOLUTION': 3 };
   var OV_PARTS = ['col_long', 'col_trans', 'shaft_long', 'shaft_trans'];
+  // colshaft_slender.ST_NEGLECT / ST_PENDING / ST_REFINED and _RANK (pinned equal by
+  // tests/test_colshaft_ui_static.py)
+  var SLENDER_STATUS = {
+    NEGLECT: 'neglect',
+    PENDING: 'magnification pending verification (S6)',
+    REFINED: 'refined analysis required'
+  };
+  var SLENDER_RANK = {};
+  SLENDER_RANK[SLENDER_STATUS.NEGLECT] = 0;
+  SLENDER_RANK[SLENDER_STATUS.PENDING] = 1;
+  SLENDER_RANK[SLENDER_STATUS.REFINED] = 2;
+  // calc_engine.BARS sizes (pinned equal by the pytest)
+  var BAR_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18];
 
   // ─── Small helpers ─────────────────────────────────────────────────
   function isObj(o) { return o !== null && typeof o === 'object' && !Array.isArray(o); }
@@ -164,6 +177,12 @@
     s.v = 1;
     s.paste = typeof obj.paste === 'string' ? obj.paste : '';
     s.parse = isObj(obj.parse) ? clone(obj.parse) : null;
+    if (s.parse) {
+      ['frames', 'cases', 'warnings'].forEach(function (k) { if (!Array.isArray(s.parse[k])) s.parse[k] = []; });
+      s.parse.frames = s.parse.frames.filter(isObj);
+      s.parse.cases = s.parse.cases.filter(isObj);
+      s.parse.warnings = s.parse.warnings.map(String);
+    }
     s.categories = isObj(obj.categories) ? clone(obj.categories) : {};
     if (!CODES.some(function (c) { return c.key === s.code; })) s.code = d.code;
     if (['station', 'member'].indexOf(s.settings.envelope_mode) < 0) s.settings.envelope_mode = 'station';
@@ -210,16 +229,32 @@
     // -> {value|null, error|null}
     if (!part) return { value: null, error: null };
     var bar = num(part.bar);
+    var isInt = function (x) { return Math.floor(x) === x; };
+    var barErr = bar !== null && BAR_SIZES.indexOf(bar) < 0 ? 'bar must be one of #' + BAR_SIZES.join(', #') : null;
     if (kind === 'long') {
       var n = num(part.n), bun = num(part.bundle);
       if (bar === null && n === null && bun === null) return { value: null, error: null };
       if (bar === null || n === null) return { value: null, error: 'bar and n are both required' };
+      if (barErr) return { value: null, error: barErr };
+      if (!isInt(n) || n < 6) return { value: null, error: 'n must be a whole number >= 6' };
+      if (bun !== null && (!isInt(bun) || bun < 1 || bun > 3)) return { value: null, error: 'bundle must be 1, 2 or 3' };
       return { value: { bar: bar, n: n, bundle: bun === null ? 1 : bun }, error: null };
     }
     var s = num(part.s), ties = num(part.ties);
     if (bar === null && s === null && ties === null) return { value: null, error: null };
     if (bar === null || s === null) return { value: null, error: 'bar and s are both required' };
+    if (barErr) return { value: null, error: barErr };
+    if (!(s > 0)) return { value: null, error: 's must be > 0' };
+    if (ties !== null && (!isInt(ties) || ties < 0)) return { value: null, error: 'ties must be a whole number >= 0' };
     return { value: { bar: bar, s: s, ties: ties === null ? 0 : ties }, error: null };
+  }
+  function overrideErrors(b) {
+    var out = [];
+    OV_PARTS.forEach(function (part) {
+      var r = overridePart(b.override && b.override[part], /long/.test(part) ? 'long' : 'trans');
+      if (r.error) out.push(part.replace('_', ' ') + ': ' + r.error);
+    });
+    return out;
   }
   function validateState(state) {
     var errs = [];
@@ -262,10 +297,7 @@
           else if (!a.braced && K < 1.0) errs.push(who + ': slenderness axis ' + ax + ': unbraced K must be >= 1.0.');
         });
       }
-      OV_PARTS.forEach(function (part) {
-        var r = overridePart(b.override[part], /long/.test(part) ? 'long' : 'trans');
-        if (r.error) errs.push(who + ': override ' + part.replace('_', ' ') + ': ' + r.error + '.');
-      });
+      overrideErrors(b).forEach(function (e) { errs.push(who + ': override ' + e + '.'); });
     });
     return errs;
   }
@@ -390,11 +422,11 @@
     if (!settings || !settings.slenderness_on) return 'off';
     var rows = (b.lrfd && b.lrfd.col && b.lrfd.col.check_rows) || [];
     var klr = null, st = null;
-    var rank = { neglect: 0, magnify: 1, refined: 2 };
+    var rk = function (x) { return SLENDER_RANK.hasOwnProperty(x) ? SLENDER_RANK[x] : -1; };
     rows.forEach(function (r) {
       [r._klr2, r._klr3].forEach(function (k) { if (isNum(k) && (klr === null || k > klr)) klr = k; });
       var s = r._slender_status;
-      if (s && (st === null || (rank[s] || 0) > (rank[st] || 0))) st = s;
+      if (s && (st === null || rk(s) > rk(st))) st = s;
     });
     return (klr === null ? '—' : fmt(klr, 1)) + (st ? ' (' + st + ')' : '');
   }
@@ -425,6 +457,13 @@
         shaft_V: vChk ? (fmt(vChk.demand, 0) + ' / ' + fmt(vChk.capacity, 0)) : '—'
       };
     });
+  }
+  // ruling 10-6: P_dead entered by the user is used only when there are no Dead rows
+  function deadHint(resultBent) {
+    var dc = resultBent && resultBent.axial && resultBent.axial.dead_cases;
+    if (!isObj(dc) || !Object.keys(dc).length) return '';
+    return 'from Dead cases: ' + Object.keys(dc).map(function (c) { return c + ' ' + fmt(dc[c], 0); }).join(', ') +
+      ' kip (sum ' + fmt(resultBent.axial.P_dead, 0) + ' kip); the entered value is not used';
   }
   function rowWhere(r) {
     if (isNum(r._station)) return r._frame + ' @ ' + fmt(r._station / 12.0, 1) + ' ft';
@@ -517,7 +556,9 @@
     shaftBasis: shaftBasis, validateState: validateState, buildPayload: buildPayload,
     mergeCategories: mergeCategories, statusColor: statusColor, worstStatus: worstStatus,
     longStr: longStr, transStr: transStr, resultRows: resultRows, governingRows: governingRows,
-    checkRow: checkRow, svgPlot: svgPlot, profileMax: profileMax
+    checkRow: checkRow, svgPlot: svgPlot, profileMax: profileMax,
+    SLENDER_STATUS: SLENDER_STATUS, SLENDER_RANK: SLENDER_RANK, BAR_SIZES: BAR_SIZES,
+    slenderSummary: slenderSummary, deadHint: deadHint, overrideErrors: overrideErrors
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -644,7 +685,7 @@
         field('Name', inp(P + 'name', 'str', ' style="width:110px"')),
         field('Column frames (comma list)', inp(P + 'col_frames', 'str', ' style="width:150px" list="cs-frame-list"')),
         field('Shaft frames (optional)', inp(P + 'shaft_frames', 'str', ' style="width:150px" list="cs-frame-list"')),
-        field('H', inp(P + 'H_ft', 'num', w) + '<span class="circ-info">blank = auto' + (aH !== null ? ' (' + fmt(aH, 2) + ' ft)' : '') + '</span>', 'ft'),
+        field('H', inp(P + 'H_ft', 'num', w) + '<span class="circ-info" id="cs-autoH-' + i + '">' + autoHText(aH) + '</span>', 'ft'),
         field('Base end', sel(P + 'base_end', ['auto', 'min', 'max'])),
         field('End cond. long', sel(P + 'end_long', ['fixed-free', 'fixed-fixed'])),
         field('End cond. trans', sel(P + 'end_trans', ['fixed-free', 'fixed-fixed']))
@@ -656,7 +697,8 @@
         field('Hoop closure', sel(P + 'col.hoop_closure', [['lap', 'Lap splice'], ['hooked', 'Welded / mechanical / hooked']])),
         field('&lambda;mo', inp(P + 'lambda_mo', 'num', w)),
         field('&mu;D (blank = code default)', inp(P + 'mu_d', 'num', w)),
-        field('P_dead override (compression &lt; 0)', inp(P + 'P_dead', 'num', w), 'kip')
+        field('P_dead (used only if no Dead rows; kip, compression &minus;)', inp(P + 'P_dead', 'num', w) +
+          '<span class="circ-info" id="cs-pdead-hint-' + i + '">' + esc(deadHint(resultBentFor(b))) + '</span>')
       ]) +
       '<div style="font-weight:600;font-size:0.78rem;">Shaft</div>' + grid([
         field('Ds', inp(P + 'shaft.D', 'num', w), 'in'), field("f'c", inp(P + 'shaft.fc', 'num', w), 'ksi'),
@@ -718,12 +760,13 @@
     var w = ' style="width:56px"';
     var rows = state.bents.map(function (b, i) {
       var P = 'bents.' + i + '.override.';
-      return '<tr><td>' + esc(b.name) + '</td>' +
+      return '<tr><td id="cs-ov-name-' + i + '">' + esc(b.name) + '</td>' +
         '<td>#' + inp(P + 'col_long.bar', 'num', w) + ' n ' + inp(P + 'col_long.n', 'num', w) + ' bundle ' + inp(P + 'col_long.bundle', 'num', w) + '</td>' +
         '<td>#' + inp(P + 'col_trans.bar', 'num', w) + ' s ' + inp(P + 'col_trans.s', 'num', w) + ' ties ' + inp(P + 'col_trans.ties', 'num', w) + '</td>' +
         '<td>#' + inp(P + 'shaft_long.bar', 'num', w) + ' n ' + inp(P + 'shaft_long.n', 'num', w) + ' bundle ' + inp(P + 'shaft_long.bundle', 'num', w) + '</td>' +
         '<td>#' + inp(P + 'shaft_trans.bar', 'num', w) + ' s ' + inp(P + 'shaft_trans.s', 'num', w) + ' ties ' + inp(P + 'shaft_trans.ties', 'num', w) + '</td>' +
-        '<td>' + btn('Clear override', 'clear-ov', ' data-i="' + i + '"') + '</td></tr>';
+        '<td>' + btn('Clear override', 'clear-ov', ' data-i="' + i + '"') + '<div id="cs-ov-msg-' + i +
+        '" style="color:#c0392b;font-size:0.74rem;white-space:normal;">' + esc(overrideErrors(b).join('; ')) + '</div></td></tr>';
     }).join('');
     var h = '<div class="circ-info">An override is used as entered (never "improved"); every check is re-run on it at the next Design. ' +
       'Blank = designed. Pitch s in inches.</div><table class="data-table" id="cs-overrides"><thead><tr><th>Bent</th><th>Column longitudinal</th>' +
@@ -742,7 +785,7 @@
     if (r.parse && r.parse.n_envelope > 0) h += notice('amber', 'Envelope output (Max/Min): bounded conservatively — see report. All rows are envelope-bounded (conservative).');
     h += '<div style="overflow-x:auto;"><table class="data-table" id="cs-results-table"><thead><tr><th></th><th>Bent</th><th>Status</th><th>LRFD column cage</th>' +
       '<th>Seismic column transverse</th><th>Override</th><th>Final cage (source)</th><th>Mp</th><th>Mo</th><th>Vo (kip)</th>' +
-      '<th>max K&#8467;u/r (&delta; status)</th><th>Shaft Mmax (depth) / Mn</th><th>Shaft V / &phi;Vn (kip)</th></tr></thead><tbody>' +
+      '<th>max K&#8467;u/r (&delta; status)</th><th>Shaft M demand (depth of Mmax) / Mp</th><th>Shaft V / &phi;Vn (kip)</th></tr></thead><tbody>' +
       rows.map(function (x, i) {
         return '<tr data-act="drill" data-i="' + i + '" style="cursor:pointer;' + (drillIdx === i ? 'background:#eaf2f8;' : '') + '">' +
           '<td><span title="' + esc(x.status) + '" style="display:inline-block;width:14px;height:14px;border-radius:50%;background:' + x.color + ';"></span></td>' +
@@ -820,6 +863,24 @@
     return h;
   }
 
+  function autoHText(aH) { return 'blank = auto' + (aH !== null ? ' (' + fmt(aH, 2) + ' ft)' : ''); }
+  function resultBentFor(b) {
+    if (!lastResult || !Array.isArray(lastResult.bents)) return null;
+    return lastResult.bents.filter(function (x) { return x.name === b.name; })[0] || null;
+  }
+  function setText(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; }
+  function updateHints() {
+    state.bents.forEach(function (b, i) { setText('cs-pdead-hint-' + i, deadHint(resultBentFor(b))); });
+  }
+  function renderSoilSelects() {
+    state.bents.forEach(function (b, i) {
+      var el = panel.querySelector('select[data-cs="bents.' + i + '.soil"]');
+      if (!el) return;
+      el.innerHTML = [['', '(none)']].concat(state.soils.map(function (q) { return [q.name, q.name]; })).map(function (o) {
+        return '<option value="' + esc(o[0]) + '"' + (b.soil === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+      }).join('');
+    });
+  }
   function renderAll() {
     panel.innerHTML = '<div style="padding:4px 0;">' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
       renderRun() + '<div id="cs-results"></div>' + renderOverrides() + '</div>';
@@ -847,6 +908,9 @@
       state.categories = mergeCategories(state.categories, r.cases);
       markDirty();
       renderAll();
+    }, function (e) {
+      var sm = document.getElementById('cs-parse-summary');
+      if (sm) sm.innerHTML = notice('red', '<b>Parse failed:</b> ' + esc(String(e)));
     });
   }
   function doDesign() {
@@ -873,6 +937,7 @@
       if (r.error) { setRunStatus(notice('red', '<b>Error:</b> ' + esc(r.error))); return; }
       lastResult = r;
       drillIdx = r.bents && r.bents.length ? 0 : null;
+      updateHints();
       setRunStatus('<div class="circ-info">Done: ' + (r.bents || []).length + ' bent(s), overall ' +
         esc(worstStatus((r.bents || []).map(function (x) { return x.status; }))) + '.</div>');
       renderResults();
@@ -915,11 +980,17 @@
     markDirty();
     // a renamed soil profile keeps the bents that point at it
     var m = /^soils\.(\d+)\.name$/.exec(path);
+    // targeted updates only (a full re-render would drop the focus the user just moved)
     if (m) {
       state.bents.forEach(function (b) { if (b.soil === old) b.soil = v; });
-      renderAll();
-    } else if (/^bents\.\d+\.(col_frames|name)$/.test(path)) {
-      renderAll();
+      renderSoilSelects();
+    }
+    var mb = /^bents\.(\d+)\.(col_frames|name|override\..*)$/.exec(path);
+    if (mb) {
+      var bi = Number(mb[1]), bb = state.bents[bi];
+      if (mb[2] === 'name') { setText('cs-ov-name-' + bi, bb.name); setText('cs-pdead-hint-' + bi, deadHint(resultBentFor(bb))); }
+      else if (mb[2] === 'col_frames') setText('cs-autoH-' + bi, autoHText(autoHeightFt(state, bb)));
+      else setText('cs-ov-msg-' + bi, overrideErrors(bb).join('; '));
     }
   }
   panel.addEventListener('click', onClick);
@@ -930,7 +1001,14 @@
 
   window.ColShaft = {
     getState: function () { var ta = document.getElementById('cs-paste'); if (ta) state.paste = ta.value; return serializeState(state); },
-    setState: function (obj) { state = normalizeState(obj); lastResult = null; drillIdx = null; renderAll(); }
+    setState: function (obj) {
+      // never let a malformed columnShaft abort the main project load
+      lastResult = null; drillIdx = null;
+      try { state = normalizeState(obj); renderAll(); } catch (e) {
+        try { console.warn('Column on Shaft: invalid saved state, tab reset (' + e + ')'); } catch (e2) { /* ignore */ }
+        try { state = defaultState(); renderAll(); } catch (e3) { /* ignore */ }
+      }
+    }
   };
   renderAll();
 })();
