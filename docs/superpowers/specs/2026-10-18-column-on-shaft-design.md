@@ -181,10 +181,20 @@ Verified from the Chapter 5 text (10th Ed.):
 - C5.6.4.3: circular `r = 0.25·D`. Braced K = 1.0 unless analysis shows lower; unbraced K ≥ 1.0. Mc per
   Art. 4.5.3.2.2b. EI for Pe (Eq. 4.5.3.2.2b-5) = the larger of the two §5.6.4.3 expressions in Ec, Ig, Es, Is and βd.
 
-**Not in our text (blocker — open item S6):** the two §5.6.4.3 EI equations (images) and every equation of
-Art. 4.5.3.2.2b (δb, δs, Cm, Pe, the φK factor and ΣPu/ΣPe). The magnification code is written against
-**user-supplied** equations only. Until they are supplied, the toggle runs the Kℓu/r screen and reports
-"magnification pending verification" with no magnified numbers.
+**User-supplied text (S6 resolved 2026-10-19):** Art. 4.5.3.2.2b (Eqs. 4.5.3.2.2b-1 … -6), Table C4.6.2.5-1 and the
+§5.6.4.3 EI equations (5.6.4.3-1 / -2) were transcribed from the user's page images into
+`AASHTO 10 Ch 5 MD/Art_4.5.3.2.2b_user_supplied.md`, the only citation source for them. Implemented
+(`colshaft_slender.make_magnifier`, rulings M1–M12 in the appendix):
+- EI = max(Eq. 5.6.4.3-1, 5.6.4.3-2) with the engine's Ec / Es, Ig = π·D⁴/64, Is of the candidate cage, βd per bent
+  (override, else min(1, γp·max|M_dead|/max|Mu|), γp default 1.25; no Dead rows → 1.0 with a warning).
+- Pe = π²·EI/(K·ℓu)² per axis; δb with the braced K (`K_braced`, default 1.0), δs with the unbraced K (default
+  Table C4.6.2.5-1 design value: fixed-free case (e) 2.1, fixed-fixed case (d) 1.2); φK = 0.75.
+- δb = Cm/(1 − Pu/(φK·Pe)) ≥ 1.0; Cm = 0.6 + 0.4·M1b/M2b on braced axes only, else 1.0. δs = 1/(1 − ΣPu/(φK·ΣPe))
+  on unbraced axes (1.0 when braced); ΣPu/ΣPe over a `sway_group` of bents by a two-pass approximation.
+- Mc = max(δb, δs)·M2 per axis (conservative bound of Eq. 4.5.3.2.2b-1: the CSiBridge rows do not separate M2b from
+  M2s); Mu = hypot of the magnified axis moments. Pu = row compression (envelope rows: P_min); tension → δ = 1.
+- 1 − Pu/(φK·Pe) ≤ 0 (or the Σ form) → the row fails ("magnification unstable (Pu ≥ φK·Pe)"); a final cage with
+  such a row → bent status "UNSTABLE (Pu ≥ φK·Pe)" (between NO SOLUTION and REFINED ANALYSIS REQUIRED).
 
 The CSiBridge analysis is linear (user, 2026-10-18), so magnification applies and no P-Δ flag is needed.
 Classification per axis: Kℓu/r below the §5.6.4.3 limit → neglect (δ = 1); from the limit up to 100 → magnify;
@@ -257,6 +267,7 @@ win over the text above.
 | 4-1 | Strict parse: unparseable data lines raise an error listing every bad line instead of being skipped with a warning (losing one Max/Min row would silently corrupt the envelope bound). |
 | 6-1 / 6-3 | The AASHTO longitudinal-reinforcement check for V(+T) (`long_ok_2`, Method 2) is part of the transverse pass criterion and drives the design: when the transverse search fails for any shear-side reason while flexure passes, heavier longitudinal candidates are tried; NO SOLUTION only after the list is exhausted. **Superseded 2026-10-19 by the user: enforced only when bars are terminated or torsion is considered** (per-member flag `bars_terminated`, default False, §5.7.3.5; torsion rows always, §5.7.3.6.3 / Eq. 5.7.3.6.3-1); otherwise reported "n/a: bars continuous (§5.7.3.5)" and it drives nothing (single helper `colshaft_lrfd.long_check_enforced`). |
 | K (2026-10-19, user) | Slenderness K per axis: `K_source` "default" (braced 1.0 per C5.6.4.3; unbraced = Euler ideal value for the axis `end_condition`: fixed-free 2.0 (default), fixed-fixed 1.0 — not the Table C4.6.2.5-1 design values, open item E19) or "analysis" (entered K > 0; unbraced K < 1.0 accepted with a warning). A legacy K without `K_source` is "analysis". |
+| M1–M14 (2026-10-19, user-approved) | Moment magnification (S6) implemented from the user-supplied Art. 4.5.3.2.2b / Table C4.6.2.5-1 / Eqs. 5.6.4.3-1/-2 (§4.4b above). **Supersedes the K row above in part:** unbraced default K = Table C4.6.2.5-1 design values (fixed-free (e) 2.1, fixed-fixed (d) 1.2; E19 resolved); new per-axis braced K (`K_braced_source` / `K_braced`, default 1.0) for δb and the braced screen; the existing K is the unbraced K (δs, unbraced screen); a legacy braced axis with an analysis K keeps it as the braced K. βd per M7 (`slender.beta_d` / `gamma_p`). New per-bent `sway_group` (M9, two-pass). Status "OK – MAGNIFICATION PENDING (S6)" and slender status "magnification pending verification (S6)" removed; slender status "magnified"; new bent status "UNSTABLE (Pu ≥ φK·Pe)" (M10/M11). Row tags `_delta2/3`, `_db/_ds`, `_Pe_b/_Pe_s`, `_Cm`, `_EI`, `_beta_d`; per-bent `magnification` summary (M12). Open DECIDE items E20 (max(δb, δs) bound), E21 (Cm = 1.0 unbraced), E22 (two-pass). |
 | 6A-1 | Single curvature = the same sign of the CSiBridge station (internal) moments at both column ends; opposite signs = double curvature. |
 | 7-1 | Ported upstream check "Soil-pile stability (p-y)": NG if any soil bound is unstable at the yield-level head force; the overstrength demand envelope still drops unstable bounds (upstream `inground_demand`), never as credit. |
 | 8-12 / 8-13 | §4.4a: strength rows through the pile load the shaft alone at its top (V_head = V_base, M_head giving the interface M_base in V's sense); column P-Δ is already in the CSiBridge forces. A governing row unstable on every bound makes "Shaft p-y strength solve" NG. |
