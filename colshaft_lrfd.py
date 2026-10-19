@@ -24,8 +24,14 @@ axial load in [P_min, P_max] for flexure (spec 4.1a); both faces' P-M curves
 are checked and the lower Mr is used (odd bar counts, open item D-C5).
 
 Transverse pass also requires the engine's longitudinal check for V(+T)
-(`long_ok_2`, Eq. 5.7.3.5-1 / 5.7.3.6.3-1); `design_member` steps the
-longitudinal cage up when only that check fails (controller ruling, 2026-10-18).
+(`long_ok_2`, Eq. 5.7.3.5-1 / 5.7.3.6.3-1) WHERE IT IS ENFORCED (see
+`long_check_enforced`; user decision 2026-10-19, superseding rulings 6-1 / 6-3 in
+part): only when the member's `bars_terminated` flag is set (S5.7.3.5: "Eq.
+5.7.3.5-1 shall be evaluated where simply-supported girders are made continuous
+for live loads and where longitudinal reinforcement is discontinuous") or the row
+requires torsion consideration (S5.7.3.6.3: "The longitudinal reinforcement in
+solid sections shall be proportioned to satisfy Eq. 5.7.3.6.3-1").  `design_member`
+steps the longitudinal cage up when an enforced check fails.
 
 Longitudinal steel is designed with a nominal transverse cage (#5 hoop @ 6 in,
 no ties, the member's `trans_type`/`hoop_closure`) unless the member supplies
@@ -53,6 +59,55 @@ DEFAULT_PARAMS = {
 }
 
 Transform = Optional[Callable[[dict, List[dict]], List[dict]]]
+
+
+# ─── Longitudinal reinforcement for V(+T): when it is enforced ───────
+# User decision 2026-10-19 (supersedes rulings 6-1 / 6-3 in part).  Verified text,
+# AASHTO LRFD 10th Ed. Chapter 5:
+#   S5.7.3.5   "Eq. 5.7.3.5-1 shall be evaluated where simply-supported girders are
+#               made continuous for live loads and where longitudinal reinforcement
+#               is discontinuous."
+#   S5.7.3.6.3 "The longitudinal reinforcement in solid sections shall be
+#               proportioned to satisfy Eq. 5.7.3.6.3-1" (no discontinuity exemption).
+LONG_NA = "n/a: bars continuous (§5.7.3.5)"
+LONG_NA_REASON = ('§5.7.3.5: "Eq. 5.7.3.5-1 shall be evaluated where simply-supported girders '
+                  'are made continuous for live loads and where longitudinal reinforcement is '
+                  'discontinuous."')
+
+
+def long_check_enforced(member: dict, res: dict) -> bool:
+    """True when the engine's longitudinal check for V(+T) (`long_ok_2`) governs a row:
+    the member's longitudinal bars are terminated / discontinuous within it
+    (`bars_terminated`, Eq. 5.7.3.5-1), or the row requires torsion consideration
+    (`torsionConsider`, Eq. 5.7.3.6.3-1 always applies to solid sections).  The single
+    source for every pass criterion, step, final check and status that uses long_ok_2."""
+    return bool((member or {}).get("bars_terminated")) or bool(res.get("torsionConsider"))
+
+
+def long_check_ok(member: dict, res: dict) -> bool:
+    """The row's longitudinal V(+T) criterion: passes when not enforced."""
+    return not long_check_enforced(member, res) or res.get("long_ok_2") is not False
+
+
+def long_check_summary(member: dict, results: list) -> dict:
+    """Per-member report entry: whether the longitudinal V(+T) check was enforced."""
+    bt = bool((member or {}).get("bars_terminated"))
+    n = len(results)
+    n_t = sum(1 for r in results if r.get("torsionConsider"))
+    if bt:
+        mode = "all"
+        note = ("enforced on every row: longitudinal bars terminated/discontinuous within the "
+                "member (Eq. 5.7.3.5-1 / 5.7.3.6.3-1)")
+    elif n_t:
+        mode = "torsion"
+        note = (f"enforced on the {n_t} of {n} row(s) where torsion is considered "
+                f"(§5.7.3.6.3, Eq. 5.7.3.6.3-1, solid sections); other rows {LONG_NA}. "
+                + LONG_NA_REASON)
+    else:
+        mode = "none"
+        note = f"not enforced, {LONG_NA}. " + LONG_NA_REASON
+    return {"bars_terminated": bt, "enforced": mode, "n_rows": n, "n_torsion_rows": n_t,
+            "note": note}
 
 
 @dataclass
@@ -342,6 +397,7 @@ def _row_key(r):
 
 class _Search:
     def __init__(self, member, rows, transform):
+        self.member = member
         self.base = base_circ_inputs(member)
         self.rows = rows
         self.transform = transform
@@ -402,8 +458,9 @@ class _Search:
 
         Row pass = shearStatus in {OK, NR}, Tr >= |Tu| where torsion is considered, and
         the engine's longitudinal check for V (+T) `long_ok_2` (Eq. 5.7.3.5-1 /
-        5.7.3.6.3-1, Method 2) not False.  The failing criteria (of the rows evaluated) are
-        returned as a subset of {"shear", "torsion", "long"}."""
+        5.7.3.6.3-1, Method 2) not False where it is enforced (long_check_enforced).  The
+        failing criteria (of the rows evaluated) are returned as a subset of
+        {"shear", "torsion", "long"}; the NG rows list holds enforced failures only."""
         I, sag, hog = cand["I"], cand["sag"], cand["hog"]
         ok_all, dv, dt, gov, gdc, long_ng = True, 0.0, 0.0, None, -1.0, []
         reasons = set()
@@ -415,7 +472,7 @@ class _Search:
             tors = bool(res["torsionConsider"])
             sh_ok = res["shearStatus"] in ("OK", "NR")
             t_ok = not tors or res["Tr"] >= Tu
-            long_ok = res.get("long_ok_2") is not False
+            long_ok = long_check_ok(self.member, res)
             ok = sh_ok and t_ok and long_ok
             if not sh_ok:
                 reasons.add("shear")
@@ -429,7 +486,7 @@ class _Search:
             dv, dt = max(dv, v), max(dt, t)
             if max(v, t) > gdc:
                 gdc, gov = max(v, t), cand["first"][u]
-            if res.get("long_ok_2") is False:
+            if not long_ok:
                 long_ng.append(cand["first"][u])
             if not ok:
                 if ok_all:
@@ -539,7 +596,7 @@ def design_transverse(member: dict, long: LongResult, rows: list, params: dict =
                       transform: Transform = None) -> TransResult:
     """First transverse cage (search order of transverse_candidates) for which flexure
     and shear (shearStatus in OK/NR, Tr >= |Tu| where torsion is considered, long_ok_2 not
-    False) pass on every row.  Does not change the longitudinal cage (see design_member)."""
+    False where enforced - long_check_enforced) pass on every row.  Does not change the longitudinal cage (see design_member)."""
     if not long.bar or not long.n:
         return TransResult(False, 0, 0.0, 0, 0.0, 0.0, math.inf, math.inf, None,
                            "NO SOLUTION: no longitudinal cage to design transverse steel for")
@@ -657,8 +714,8 @@ def design_member(member: dict, rows: list, params: dict = None,
     """Longitudinal then transverse design -> (LongResult, TransResult).
 
     Controller ruling 6-3: when the transverse search finds no passing candidate for
-    the flexure-designed cage, for any shear-side reason (shear NG, Tr < |Tu|,
-    long_ok_2 - Vr2, Tr and the Eq. 5.7.3.5-1 / 5.7.3.6.3-1 demand all depend on the
+    the flexure-designed cage, for any shear-side reason (shear NG, Tr < |Tu|, an
+    ENFORCED long_ok_2 (long_check_enforced; user decision 2026-10-19) - Vr2, Tr and the Eq. 5.7.3.5-1 / 5.7.3.6.3-1 demand all depend on the
     longitudinal cage, non-monotonically), every heavier fitting cage (bundle 1-3, bar
     sizes and counts within the rho_l / spacing range) is tried in order of increasing
     As (then fewer bars).  A step is screened with the strongest transverse candidate

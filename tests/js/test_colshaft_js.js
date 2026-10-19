@@ -63,8 +63,9 @@ test('payload keys match the run_colshaft schema', () => {
     'end_condition_trans', 'base_end', 'H_in', 'slender']) assert.ok(k in b1, k);
   assert.deepStrictEqual(b1.col_frames, ['101']);
   assert.deepStrictEqual(b1.shaft_frames, ['102']);
-  assert.deepStrictEqual(b1.column, { D: 60, fc: 4, fy: 60, cover: 2, trans_type: 'hoop', hoop_closure: 'lap' });
-  assert.deepStrictEqual(b1.shaft, { D: 84, fc: 4, fy: 60, cover: 3, trans_type: 'hoop' });
+  assert.deepStrictEqual(b1.column, { D: 60, fc: 4, fy: 60, cover: 2, trans_type: 'hoop', hoop_closure: 'lap',
+    bars_terminated: false });
+  assert.deepStrictEqual(b1.shaft, { D: 84, fc: 4, fy: 60, cover: 3, trans_type: 'hoop', bars_terminated: false });
   assert.strictEqual(b1.L_eq_in, 120);            // ft -> in
   assert.strictEqual(b1.shaft_basis, 'cantilever');
   assert.strictEqual(b1.H_in, null);              // blank = auto
@@ -73,7 +74,7 @@ test('payload keys match the run_colshaft schema', () => {
   assert.ok(!('P_dead' in b1));
   assert.ok(!('override' in b1));
   assert.ok(!('soil' in b1));
-  assert.deepStrictEqual(b1.slender['2'], { braced: false, K: null, lu: null });
+  assert.deepStrictEqual(b1.slender['2'], { braced: false, K_source: 'default', end_condition: 'fixed-free', K: null, lu: null });
   // bent 2: soil basis by default (auto), soil payload in engine units
   assert.ok(!('shaft_basis' in b2));
   assert.strictEqual(b2.L_embed_in, 720);
@@ -177,11 +178,16 @@ test('other validation: paste, frames, slenderness K', () => {
   assert.ok(e.some(x => /column frame/.test(x)));
   const t = sampleState();
   t.settings.slenderness_on = true;
-  assert.ok(CS.validateState(t).some(x => /enter K/.test(x)));
-  for (const b of t.bents) { b.slender['2'].K = 2.1; b.slender['3'].K = 0.8; }
-  assert.ok(CS.validateState(t).some(x => /unbraced K must be >= 1.0/.test(x)));
-  for (const b of t.bents) b.slender['3'].braced = true;
+  // 2026-10-19: K is not required with the default source
   assert.deepStrictEqual(CS.validateState(t), []);
+  for (const b of t.bents) { b.slender['2'].K_source = 'analysis'; b.slender['3'].K_source = 'analysis'; }
+  assert.ok(CS.validateState(t).some(x => /enter K > 0 from the buckling analysis/.test(x)));
+  for (const b of t.bents) { b.slender['2'].K = 2.1; b.slender['3'].K = 0.8; }
+  // unbraced K < 1.0 from analysis is a warning, not an error
+  assert.deepStrictEqual(CS.validateState(t), []);
+  assert.ok(CS.kInfoText(t.bents[0].slender['3']).indexOf('below the C5.6.4.3 floor') > 0);
+  for (const b of t.bents) b.slender['3'].K = 0;
+  assert.ok(CS.validateState(t).some(x => /axis 3: enter K > 0/.test(x)));
 });
 
 test('status colour map and precedence', () => {
@@ -598,6 +604,93 @@ test('report: shaft row source line (ruling F-4), amber pending status, stale me
   assert.ok(h.indexOf('Shaft (cantilever strength)') > 0 && h.indexOf('taken down the equivalent cantilever') > 0);
   assert.ok(h.indexOf('least compression of the Extreme rows, else P_dead') > 0);
   assert.ok(/stale/.test(CS.STALE_MSG) && /re-run Design/.test(CS.STALE_MSG));
+});
+
+test('bars_terminated checkbox (2026-10-19): default false, payload, round-trip, label', () => {
+  const s = sampleState();
+  assert.strictEqual(s.bents[0].col.bars_terminated, false);
+  assert.strictEqual(s.bents[0].shaft.bars_terminated, false);
+  s.bents[0].col.bars_terminated = true;
+  const p = CS.buildPayload(s);
+  assert.strictEqual(p.bents[0].column.bars_terminated, true);
+  assert.strictEqual(p.bents[0].shaft.bars_terminated, false);
+  assert.strictEqual(p.bents[1].column.bars_terminated, false);
+  const back = CS.normalizeState(JSON.parse(JSON.stringify(CS.serializeState(s))));
+  assert.strictEqual(back.bents[0].col.bars_terminated, true);
+  // an old saved state without the key -> false
+  const old = CS.normalizeState({ bents: [{ name: 'X', col: { D: 60 } }] });
+  assert.strictEqual(old.bents[0].col.bars_terminated, false);
+  assert.strictEqual(old.bents[0].shaft.bars_terminated, false);
+  assert.strictEqual(CS.BARS_TERMINATED_LABEL,
+    'Longitudinal bars terminated/discontinuous within the member (apply Eq. 5.7.3.5-1)');
+  assert.strictEqual(CS.LONG_NA, 'n/a: bars continuous (§5.7.3.5)');
+});
+
+test('K per axis (2026-10-19): defaults, analysis override, legacy state, payload fields', () => {
+  assert.deepStrictEqual(CS.K_SOURCES, ['default', 'analysis']);
+  assert.deepStrictEqual(CS.END_CONDITIONS, ['fixed-free', 'fixed-fixed']);
+  let k = CS.kInfo({ braced: true, K_source: 'default', end_condition: 'fixed-free', K: '' });
+  assert.strictEqual(k.K, 1.0); assert.strictEqual(k.warning, '');
+  k = CS.kInfo({ braced: false, K_source: 'default', end_condition: 'fixed-free', K: '' });
+  assert.strictEqual(k.K, 2.0);
+  assert.strictEqual(k.label, 'K = 2.0 (Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 design value)');
+  assert.strictEqual(k.warning, CS.DEFAULT_K_WARNING);
+  k = CS.kInfo({ braced: false, K_source: 'default', end_condition: 'fixed-fixed', K: 0.5 });
+  assert.strictEqual(k.K, 1.0); assert.ok(/Euler ideal, fixed-fixed/.test(k.label));
+  k = CS.kInfo({ braced: false, K_source: 'analysis', end_condition: 'fixed-free', K: 1.6 });
+  assert.strictEqual(k.K, 1.6); assert.strictEqual(k.warning, '');
+  k = CS.kInfo({ braced: false, K_source: 'analysis', K: 0.8 });
+  assert.strictEqual(k.K, 0.8); assert.strictEqual(k.warning, CS.UNBRACED_K_LT1_WARNING);
+  assert.strictEqual(CS.kInfo({ braced: true, K_source: 'analysis', K: 0.8 }).warning, CS.BRACED_K_LT1_NOTE);
+  assert.ok(CS.kInfo({ braced: false, K_source: 'analysis', K: -1 }).error);
+  // legacy saved state: numeric K, no K_source -> analysis; blank K -> default
+  const st = CS.normalizeState({ bents: [{ name: 'L', slender: { '2': { braced: false, K: 2.1, lu_ft: '' },
+    '3': { braced: true, K: '', lu_ft: '' } } }] });
+  assert.strictEqual(st.bents[0].slender['2'].K_source, 'analysis');
+  assert.strictEqual(st.bents[0].slender['3'].K_source, 'default');
+  assert.strictEqual(st.bents[0].slender['2'].end_condition, 'fixed-free');
+  const pl = CS.buildPayload(Object.assign(sampleState(), { bents: st.bents.map(b => Object.assign(b, { col_frames: '101', L_eq_ft: 10 })) }));
+  assert.deepStrictEqual(pl.bents[0].slender['2'], { braced: false, K_source: 'analysis', end_condition: 'fixed-free', K: 2.1, lu: null });
+  assert.deepStrictEqual(pl.bents[0].slender['3'], { braced: true, K_source: 'default', end_condition: 'fixed-free', K: null, lu: null });
+  // a garbage source / end condition normalises to the defaults
+  const g = CS.normalizeState({ bents: [{ slender: { '2': { K_source: 'x', end_condition: 'y' } } }] });
+  assert.strictEqual(g.bents[0].slender['2'].K_source, 'default');
+  assert.strictEqual(g.bents[0].slender['2'].end_condition, 'fixed-free');
+  // the payload carries the chosen end condition
+  const s2 = sampleState();
+  s2.bents[0].slender['3'].end_condition = 'fixed-fixed';
+  assert.strictEqual(CS.buildPayload(s2).bents[0].slender['3'].end_condition, 'fixed-fixed');
+});
+
+test('report: per-axis K table and the per-member longitudinal V+T note (2026-10-19)', () => {
+  const r = reportFixture();
+  r.bents[0].slender_K = {
+    '2': { K: 2.0, source: 'default', end_condition: 'fixed-free', braced: false,
+      label: 'K = 2.0 (Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 design value)' },
+    '3': { K: 0.8, source: 'analysis', end_condition: 'fixed-free', braced: false, label: 'K = 0.8 (buckling analysis)' } };
+  r.bents[0].lrfd.col.long_check = { bars_terminated: false, enforced: 'none', n_rows: 2, n_torsion_rows: 0,
+    note: 'not enforced, n/a: bars continuous (§5.7.3.5). §5.7.3.5: "Eq. 5.7.3.5-1 shall be evaluated where ... discontinuous."' };
+  const h = CS.reportHtml(r, RPT_PAYLOAD, {});
+  const sec4 = h.slice(h.indexOf('data-sec="slender"'), h.indexOf('data-sec="mphi"'));
+  assert.ok(sec4.indexOf('<th>K used</th>') > 0 && sec4.indexOf('<th>K source</th>') > 0 && sec4.indexOf('<th>End condition</th>') > 0, sec4);
+  assert.ok(sec4.indexOf('<td>Euler default</td>') > 0 && sec4.indexOf('<td>buckling analysis</td>') > 0);
+  assert.ok(sec4.indexOf('Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 design value') > 0);
+  assert.ok(sec4.indexOf('<td>120.0</td>') > 0);
+  const rows = CS.slenderKRows(r.bents[0], null);
+  assert.deepStrictEqual(rows.map(a => [a.axis, a.K, a.source, a.status]),
+    [['2', '2', 'Euler default', ST.REFINED], ['3', '0.8', 'buckling analysis', ST.NEGLECT]]);
+  // braced default
+  r.bents[0].slender_K['3'] = { K: 1.0, source: 'default', end_condition: 'fixed-free', braced: true, label: 'K = 1.0 (braced, C5.6.4.3)' };
+  assert.strictEqual(CS.slenderKRows(r.bents[0], null)[1].source, 'braced default (C5.6.4.3)');
+  // no engine K: fall back to the payload (legacy K -> analysis)
+  delete r.bents[0].slender_K;
+  const pk = CS.slenderKRows(r.bents[0], { slender: { '2': { braced: false, K: 2.1 }, '3': { braced: false, K_source: 'default' } } });
+  assert.deepStrictEqual(pk.map(a => [a.K, a.source]), [['2.1', 'buckling analysis'], ['2', 'Euler default']]);
+  // longitudinal V+T note per member in section 3, inputs echo the flags
+  const sec3 = h.slice(h.indexOf('data-sec="lrfd"'), h.indexOf('data-sec="slender"'));
+  assert.ok(sec3.indexOf('Longitudinal reinforcement for V+T (Eq. 5.7.3.5-1 / 5.7.3.6.3-1): not enforced, n/a: bars continuous (§5.7.3.5)') > 0, sec3);
+  assert.ok(h.indexOf('Longitudinal bars terminated/discontinuous (Eq. 5.7.3.5-1)') > 0);
+  assert.ok(/column no, shaft no/.test(h));
 });
 
 const di = process.argv.indexOf('--dump');

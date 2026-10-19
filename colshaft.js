@@ -81,6 +81,18 @@
   SLENDER_RANK[SLENDER_STATUS.REFINED] = 2;
   // calc_engine.BARS sizes (pinned equal by the pytest)
   var BAR_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 18];
+  // colshaft_slender K_SOURCES / END_CONDITIONS / EULER_K and the warning texts
+  // (user decision 2026-10-19; pinned equal by tests/test_colshaft_ui_static.py)
+  var K_SOURCES = ['default', 'analysis'];
+  var END_CONDITIONS = ['fixed-free', 'fixed-fixed'];
+  var EULER_K = { 'fixed-free': 2.0, 'fixed-fixed': 1.0 };
+  var DEFAULT_K_WARNING = 'Default K is the theoretical Euler value; AASHTO design values (Art. 4.6.2.5) are higher — ' +
+    'override with a buckling-analysis K if available';
+  var UNBRACED_K_LT1_WARNING = 'unbraced K < 1.0 from buckling analysis is below the C5.6.4.3 floor (\'taken as not less than 1.0\')';
+  var BRACED_K_LT1_NOTE = 'braced K < 1.0 requires supporting analysis';
+  // colshaft_lrfd.LONG_NA / LONG_NA_REASON (pinned equal by the pytest)
+  var LONG_NA = 'n/a: bars continuous (§5.7.3.5)';
+  var BARS_TERMINATED_LABEL = 'Longitudinal bars terminated/discontinuous within the member (apply Eq. 5.7.3.5-1)';
 
   // ─── Small helpers ─────────────────────────────────────────────────
   function isObj(o) { return o !== null && typeof o === 'object' && !Array.isArray(o); }
@@ -157,14 +169,15 @@
     return {
       name: 'Bent ' + ((i || 0) + 1),
       col_frames: '', shaft_frames: '',
-      col: { D: 48, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 2, trans_type: 'hoop', hoop_closure: 'lap' },
-      shaft: { D: 72, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 3, trans_type: 'hoop' },
+      col: { D: 48, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 2, trans_type: 'hoop', hoop_closure: 'lap',
+        bars_terminated: false },
+      shaft: { D: 72, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 3, trans_type: 'hoop', bars_terminated: false },
       end_long: 'fixed-free', end_trans: 'fixed-free',
       H_ft: '', base_end: 'auto', lambda_mo: 1.2, mu_d: '',
       shaft_basis: 'auto', L_eq_ft: '', soil: '', L_embed_ft: '', P_dead: '',
       slender: {
-        '2': { braced: false, K: '', lu_ft: '' },
-        '3': { braced: false, K: '', lu_ft: '' },
+        '2': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '' },
+        '3': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '' },
         beta_d: '', gamma_p: ''
       },
       override: emptyOverride()
@@ -203,7 +216,18 @@
     if (['station', 'member'].indexOf(s.settings.envelope_mode) < 0) s.settings.envelope_mode = 'station';
     s.settings.slenderness_on = !!s.settings.slenderness_on;
     s.bents = Array.isArray(obj.bents) ? obj.bents.map(function (b, i) {
-      return mergeDefaults(defaultBent(i), b);
+      var q = mergeDefaults(defaultBent(i), b);
+      // 2026-10-19: a saved axis with a numeric K but no K_source was typed by the
+      // user -> buckling-analysis K (colshaft_slender.resolve_K does the same)
+      ['2', '3'].forEach(function (ax) {
+        var raw = isObj(b) && isObj(b.slender) && isObj(b.slender[ax]) ? b.slender[ax] : {};
+        var a = q.slender[ax];
+        if ((raw.K_source === undefined || raw.K_source === null || raw.K_source === '') && num(raw.K) !== null) a.K_source = 'analysis';
+        if (K_SOURCES.indexOf(a.K_source) < 0) a.K_source = 'default';
+        if (END_CONDITIONS.indexOf(a.end_condition) < 0) a.end_condition = 'fixed-free';
+      });
+      ['col', 'shaft'].forEach(function (m) { q[m].bars_terminated = !!q[m].bars_terminated; });
+      return q;
     }) : d.bents;
     s.soils = Array.isArray(obj.soils) ? obj.soils.map(function (p, i) {
       var q = mergeDefaults(defaultSoil(i), p);
@@ -338,10 +362,13 @@
       }
       if (num(b.H_ft) !== null && !(num(b.H_ft) > 0)) errs.push(who + ': H must be > 0 (or blank for auto).');
       if (state.settings.slenderness_on) {
+        // K is required only for a buckling-analysis K; unbraced K < 1.0 is a warning
+        // (kInfo), not an error (user decision 2026-10-19)
         ['2', '3'].forEach(function (ax) {
-          var a = b.slender[ax], K = num(a.K);
-          if (K === null || !(K > 0)) errs.push(who + ': slenderness axis ' + ax + ': enter K.');
-          else if (!a.braced && K < 1.0) errs.push(who + ': slenderness axis ' + ax + ': unbraced K must be >= 1.0.');
+          var a = b.slender[ax];
+          if (a.K_source === 'analysis' && !(num(a.K) > 0)) {
+            errs.push(who + ': slenderness axis ' + ax + ': enter K > 0 from the buckling analysis (or use the default K).');
+          }
         });
       }
       overrideErrors(b).forEach(function (e) { errs.push(who + ': override ' + e + '.'); });
@@ -355,7 +382,41 @@
       trans_type: m.trans_type === 'spiral' ? 'spiral' : 'hoop' };
     if (isCol && out.trans_type === 'hoop') out.hoop_closure = m.hoop_closure || 'lap';
     ['fye', 'fue', 'fyh'].forEach(function (k) { if (num(m[k]) !== null) out[k] = num(m[k]); });
+    out.bars_terminated = !!m.bars_terminated;
     return out;
+  }
+  // K for one slenderness axis as the engine resolves it (mirror of
+  // colshaft_slender.resolve_K) -> {K|null, source, end_condition, label, warning, error}
+  function kInfo(a) {
+    a = a || {};
+    var braced = !!a.braced;
+    var src = K_SOURCES.indexOf(a.K_source) >= 0 ? a.K_source : (num(a.K) !== null ? 'analysis' : 'default');
+    var end = END_CONDITIONS.indexOf(a.end_condition) >= 0 ? a.end_condition : 'fixed-free';
+    var out = { K: null, source: src, end_condition: end, braced: braced, label: '', warning: '', error: '' };
+    if (src === 'analysis') {
+      var K = num(a.K);
+      if (!(K > 0)) { out.error = 'enter K > 0 from the buckling analysis'; return out; }
+      out.K = K;
+      out.label = 'K = ' + K + ' (buckling analysis)';
+      if (K < 1.0) out.warning = braced ? BRACED_K_LT1_NOTE : UNBRACED_K_LT1_WARNING;
+    } else if (braced) {
+      out.K = 1.0;
+      out.label = 'K = 1.0 (braced, C5.6.4.3)';
+    } else {
+      out.K = EULER_K[end];
+      out.label = 'K = ' + out.K.toFixed(1) + ' (Euler ideal, ' + end + '; not the AASHTO Table C4.6.2.5-1 design value)';
+      out.warning = DEFAULT_K_WARNING;
+    }
+    return out;
+  }
+  function kInfoText(a) {
+    var k = kInfo(a);
+    return k.error ? k.error : k.label + (k.warning ? ' — ' + k.warning : '');
+  }
+  // per-member note for the longitudinal V(+T) check (engine lrfd[part].long_check)
+  function longCheckText(lc) {
+    if (!isObj(lc)) return '';
+    return 'Longitudinal reinforcement for V+T (Eq. 5.7.3.5-1 / 5.7.3.6.3-1): ' + (lc.note || '');
   }
   function soilPayload(p) {
     var layers = p.layers.map(function (l) {
@@ -396,7 +457,9 @@
     var sl = {};
     ['2', '3'].forEach(function (ax) {
       var a = b.slender[ax];
-      sl[ax] = { braced: !!a.braced, K: num(a.K), lu: num(a.lu_ft) === null ? null : num(a.lu_ft) * 12.0 };
+      var k = kInfo(a);
+      sl[ax] = { braced: !!a.braced, K_source: k.source, end_condition: k.end_condition, K: num(a.K),
+        lu: num(a.lu_ft) === null ? null : num(a.lu_ft) * 12.0 };
     });
     sl.beta_d = num(b.slender.beta_d);
     sl.gamma_p = num(b.slender.gamma_p);
@@ -713,6 +776,28 @@
     });
     return out;
   }
+  var K_SOURCE_TEXT = { 'default': 'Euler default', 'analysis': 'buckling analysis' };
+  // per axis: K used, its source, end condition, Kℓu/r, limit, status (report + drill-down).
+  // K from the engine (result bent.slender_K), else as the payload implies (kInfo).
+  function slenderKRows(b, pb) {
+    var L = (b && b.lrfd) || {};
+    var axs = slenderAxes(L.col && L.col.check_rows);
+    var byAx = {};
+    axs.forEach(function (a) { byAx[a.axis] = a; });
+    var out = [];
+    ['2', '3'].forEach(function (ax) {
+      var eng = b && isObj(b.slender_K) ? b.slender_K[ax] : null;
+      var k = isObj(eng) ? eng : (pb && isObj(pb.slender) ? kInfo(pb.slender[ax]) : null);
+      var a = byAx[ax];
+      if (!a && !k) return;
+      var src = k ? (k.source === 'default' && k.braced ? 'braced default (C5.6.4.3)' : (K_SOURCE_TEXT[k.source] || k.source)) : '—';
+      out.push({ axis: ax, K: k && isNum(k.K) ? String(k.K) : '—', source: src,
+        end_condition: k && !(k.source === 'default' && k.braced) ? k.end_condition : (k ? 'braced' : '—'),
+        klr: a ? fmt(a.klr, 1) : '—', limit: a ? fmt(a.limit, 1) : '—', status: a ? a.status : '—',
+        label: k ? k.label : '' });
+    });
+    return out;
+  }
   function codeLabel(key) {
     var c = CODES.filter(function (x) { return x.key === key; })[0];
     return c ? c.label : String(key || '');
@@ -803,6 +888,8 @@
       if (pb.soil_bounds) i1.push(['Soil-stiffness bounds', pb.soil_bounds.map(function (x) { return '×' + x; }).join(', ')]);
       i1.push(['P_dead entered (used only without Dead rows)', isNum(pb.P_dead) ? fmt(pb.P_dead, 0) + ' kip' : '—']);
       i1.push(['Overrides', ovStr(pb.override)]);
+      i1.push(['Longitudinal bars terminated/discontinuous (Eq. 5.7.3.5-1)', 'column ' + (pb.column && pb.column.bars_terminated ? 'yes' : 'no') +
+        ', shaft ' + (pb.shaft && pb.shaft.bars_terminated ? 'yes' : 'no')]);
     }
     var h1 = pb ? rptKV(i1) : rptNote('Inputs not available.');
     if (pb && pb.soil && Array.isArray(pb.soil.layers)) {
@@ -835,9 +922,11 @@
     sec.parse = h2;
     // 3. LRFD rows
     var L = b.lrfd || {};
-    var h3 = '<h4>Column (final cage)</h4>' + lrfdRowsTable(L.col && L.col.check_rows);
+    var lcNote = function (part) { return part && part.long_check ? rptNote(longCheckText(part.long_check)) : ''; };
+    var h3 = '<h4>Column (final cage)</h4>' + lrfdRowsTable(L.col && L.col.check_rows) + lcNote(L.col);
     if (L.shaft && L.shaft.check_rows) {
-      h3 += '<h4>Shaft (' + esc(L.shaft.source || '') + ')</h4>' + rptNote(shaftSourceNote(L.shaft.source)) + lrfdRowsTable(L.shaft.check_rows);
+      h3 += '<h4>Shaft (' + esc(L.shaft.source || '') + ')</h4>' + rptNote(shaftSourceNote(L.shaft.source)) + lrfdRowsTable(L.shaft.check_rows) +
+        lcNote(L.shaft);
     } else h3 += '<h4>Shaft</h4>' + rptNote('No shaft LRFD rows.');
     sec.lrfd = h3;
     // 4. slenderness
@@ -845,10 +934,11 @@
     var h4;
     if (!on) h4 = rptNote('Slenderness screen off.');
     else {
-      var axs = slenderAxes(L.col && L.col.check_rows);
-      h4 = axs.length ? rptTable(['Axis', 'Kℓu/r', 'Limit', 'Status'], axs.map(function (a) {
-        return [a.axis, fmt(a.klr, 1), fmt(a.limit, 1), a.status];
+      var axs = slenderKRows(b, pb);
+      h4 = axs.length ? rptTable(['Axis', 'K used', 'K source', 'End condition', 'Kℓu/r', 'Limit', 'Status'], axs.map(function (a) {
+        return [a.axis, a.K, a.source, a.end_condition, a.klr, a.limit, a.status];
       })) : rptNote('No screened rows.');
+      axs.forEach(function (a) { if (a.label) h4 += rptNote('Axis ' + a.axis + ': ' + a.label + '.'); });
       h4 += '<div class="rpt-eq">' + esc('S6: moment magnification is NOT applied — AASHTO Art. 4.5.3.2.2b and the §5.6.4.3 EI equations ' +
         'are not available (open item S6). Screen only: Kℓu/r is classified, the factored moments are not magnified.') + '</div>' +
         rptNote('r = 0.25·D; ℓu default = H + Df (Df = ' + (isNum(b.Df_for_lu) ? fmt(b.Df_for_lu / 12.0, 2) + ' ft' : '—') +
@@ -980,7 +1070,11 @@
     shaftSeries: shaftSeries, shaftCharts: shaftCharts, reportHtml: reportHtml, codeLabel: codeLabel,
     ST_OK_PENDING: ST_OK_PENDING, statusClass: statusClass, expectedErrors: expectedErrors, layerErrors: layerErrors,
     expectedStr: expectedStr, shaftSourceNote: shaftSourceNote, GR60_EXPECTED: GR60_EXPECTED,
-    EXPECTED_HINT: EXPECTED_HINT, STALE_MSG: STALE_MSG
+    EXPECTED_HINT: EXPECTED_HINT, STALE_MSG: STALE_MSG,
+    K_SOURCES: K_SOURCES, END_CONDITIONS: END_CONDITIONS, EULER_K: EULER_K, DEFAULT_K_WARNING: DEFAULT_K_WARNING,
+    UNBRACED_K_LT1_WARNING: UNBRACED_K_LT1_WARNING, BRACED_K_LT1_NOTE: BRACED_K_LT1_NOTE, LONG_NA: LONG_NA,
+    BARS_TERMINATED_LABEL: BARS_TERMINATED_LABEL, kInfo: kInfo, kInfoText: kInfoText, longCheckText: longCheckText,
+    slenderKRows: slenderKRows
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -1125,7 +1219,8 @@
         field('&lambda;mo', inp(P + 'lambda_mo', 'num', w)),
         field('&mu;D (blank = code default)', inp(P + 'mu_d', 'num', w)),
         field('P_dead (used only if no Dead rows; kip, compression &minus;)', inp(P + 'P_dead', 'num', w) +
-          '<span class="circ-info" id="cs-pdead-hint-' + i + '">' + esc(deadHint(resultBentFor(b))) + '</span>')
+          '<span class="circ-info" id="cs-pdead-hint-' + i + '">' + esc(deadHint(resultBentFor(b))) + '</span>'),
+        field(esc(BARS_TERMINATED_LABEL), inp(P + 'col.bars_terminated', 'bool', ' id="cs-col-barsterm-' + i + '"'))
       ]) +
       '<div style="font-weight:600;font-size:0.78rem;">Shaft</div>' + grid([
         field('Ds', inp(P + 'shaft.D', 'num', w), 'in'), field("f'c", inp(P + 'shaft.fc', 'num', w), 'ksi'),
@@ -1135,13 +1230,23 @@
         field('Shaft basis', sel(P + 'shaft_basis', [['auto', 'auto'], ['soil', 'soil (p-y)'], ['cantilever', 'cantilever (L_eq)'], ['interface', 'interface only']])),
         field('<b>Pile equivalent cantilever length L_eq</b>', inp(P + 'L_eq_ft', 'num', w), 'ft'),
         field('Soil profile', sel(P + 'soil', soilOpts)),
-        field('Embedded length', inp(P + 'L_embed_ft', 'num', w), 'ft')
-      ]) + '<div class="circ-info">L_eq is required when the bent has no soil profile (shaft basis auto/cantilever).</div>' +
-      '<div style="font-weight:600;font-size:0.78rem;">Slenderness (used only when the screen is on)</div>' + grid([
-        field('Axis 2 braced', inp(P + 'slender.2.braced', 'bool')), field('K (axis 2)', inp(P + 'slender.2.K', 'num', w)),
-        field('&#8467;u axis 2 (blank = H + Df)', inp(P + 'slender.2.lu_ft', 'num', w), 'ft'),
-        field('Axis 3 braced', inp(P + 'slender.3.braced', 'bool')), field('K (axis 3)', inp(P + 'slender.3.K', 'num', w)),
-        field('&#8467;u axis 3 (blank = H + Df)', inp(P + 'slender.3.lu_ft', 'num', w), 'ft'),
+        field('Embedded length', inp(P + 'L_embed_ft', 'num', w), 'ft'),
+        field(esc(BARS_TERMINATED_LABEL), inp(P + 'shaft.bars_terminated', 'bool', ' id="cs-shaft-barsterm-' + i + '"'))
+      ]) + '<div class="circ-info">L_eq is required when the bent has no soil profile (shaft basis auto/cantilever). ' +
+      'Unticked (default): the longitudinal V+T check is enforced only on rows where torsion is considered (Eq. 5.7.3.6.3-1); ' +
+      'elsewhere it is reported as ' + esc(LONG_NA) + '.</div>' +
+      '<div style="font-weight:600;font-size:0.78rem;">Slenderness (used only when the screen is on)</div>' +
+      ['2', '3'].map(function (ax) {
+        var A = P + 'slender.' + ax + '.';
+        return grid([
+          field('Axis ' + ax + ' braced', inp(A + 'braced', 'bool')),
+          field('K source (axis ' + ax + ')', sel(A + 'K_source', [['default', 'default (C5.6.4.3 / Euler)'], ['analysis', 'buckling analysis']])),
+          field('End condition (axis ' + ax + ', unbraced default K)', sel(A + 'end_condition', [['fixed-free', 'fixed-free (K = 2.0)'], ['fixed-fixed', 'fixed-fixed, sway (K = 1.0)']])),
+          field('K (axis ' + ax + ', buckling analysis)', inp(A + 'K', 'num', w)),
+          field('&#8467;u axis ' + ax + ' (blank = H + Df)', inp(A + 'lu_ft', 'num', w), 'ft'),
+          '<span class="circ-info" id="cs-k-hint-' + i + '-' + ax + '" style="max-width:420px;white-space:normal;">' + esc(kInfoText(b.slender[ax])) + '</span>'
+        ]);
+      }).join('') + grid([
         field('&beta;d (blank = auto)', inp(P + 'slender.beta_d', 'num', w)),
         field('&gamma;p', inp(P + 'slender.gamma_p', 'num', w))
       ]) + '</div>';
@@ -1262,8 +1367,18 @@
       (isNum(b.Df_for_lu) ? fmt(b.Df_for_lu / 12.0, 2) + ' ft' : '—') + '.</div>';
     var col = b.lrfd && b.lrfd.col;
     h += '<div style="font-weight:600;margin-top:8px;">Column LRFD rows (final cage)</div>' + rowsTable(col && col.check_rows, 'cs-col-rows');
+    if (col && col.long_check) h += '<div class="circ-info" id="cs-col-longchk">' + esc(longCheckText(col.long_check)) + '</div>';
     var sh = b.lrfd && b.lrfd.shaft;
     if (sh && sh.check_rows) h += '<div style="font-weight:600;margin-top:8px;">Shaft LRFD rows (' + esc(sh.source || '') + ')</div>' + rowsTable(sh.check_rows, 'cs-shaft-rows');
+    if (sh && sh.long_check) h += '<div class="circ-info" id="cs-shaft-longchk">' + esc(longCheckText(sh.long_check)) + '</div>';
+    if (lastResult.settings && lastResult.settings.slenderness_on) {
+      var sk = slenderKRows(b, null);
+      if (sk.length) h += '<div style="font-weight:600;margin-top:8px;">Slenderness screen per axis</div><table class="data-table" id="cs-slender-axes"><thead><tr>' +
+        ['Axis', 'K used', 'K source', 'End condition', 'K&#8467;u/r', 'Limit', 'Status'].map(function (x) { return '<th>' + x + '</th>'; }).join('') +
+        '</tr></thead><tbody>' + sk.map(function (a) {
+          return '<tr>' + [a.axis, a.K, a.source, a.end_condition, a.klr, a.limit, a.status].map(function (x) { return '<td>' + esc(x) + '</td>'; }).join('') + '</tr>';
+        }).join('') + '</tbody></table>' + sk.map(function (a) { return a.label ? '<div class="circ-info">Axis ' + esc(a.axis) + ': ' + esc(a.label) + '.</div>' : ''; }).join('');
+    }
     h += '<div style="font-weight:600;margin-top:8px;">Final checks</div><div style="overflow-x:auto;"><table class="data-table" id="cs-checks"><thead><tr>' +
       ['Group', 'Check', 'Demand', 'Capacity', 'Ratio', '', 'Detail', 'Reference'].map(function (x) { return '<th>' + x + '</th>'; }).join('') +
       '</tr></thead><tbody>' + (b.final_checks || []).map(function (c) {
@@ -1511,6 +1626,8 @@
       else if (mb[2] === 'col_frames') setText('cs-autoH-' + bi, autoHText(autoHeightFt(state, bb)));
       else setText('cs-ov-msg-' + bi, overrideErrors(bb).join('; '));
     }
+    var mk = /^bents\.(\d+)\.slender\.([23])\./.exec(path);
+    if (mk) setText('cs-k-hint-' + mk[1] + '-' + mk[2], kInfoText(state.bents[Number(mk[1])].slender[mk[2]]));
     var me = /^bents\.(\d+)\.(col|shaft)\.(fy|fye|fue|fyh)$/.exec(path);
     if (me) setText('cs-exp-msg-' + me[2] + '-' + me[1], expectedErrors(state.bents[Number(me[1])][me[2]]).join('; '));
     var ml = /^soils\.(\d+)\.layers\.(\d+)\./.exec(path);

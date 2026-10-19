@@ -36,10 +36,68 @@ def test_klr_100_requires_refined():
 
 
 def test_k_validation_and_zero_m2():
+    # user decision 2026-10-19: unbraced K < 1.0 (buckling analysis) accepted with a warning
+    s = cs.slenderness_screen(48, 0.9, 100, False, 0, 1)
+    assert s["note"] == cs.UNBRACED_K_LT1_WARNING and "C5.6.4.3 floor" in s["note"]
+    assert s["klr"] == pytest.approx(0.9 * 100 / 12.0)
     with pytest.raises(ValueError):
-        cs.slenderness_screen(48, 0.9, 100, False, 0, 1)
-    assert "note" in cs.slenderness_screen(48, 0.8, 100, True, 0, 1)
+        cs.slenderness_screen(48, 0.0, 100, False, 0, 1)
+    assert cs.slenderness_screen(48, 0.8, 100, True, 0, 1)["note"] == cs.BRACED_K_LT1_NOTE
     assert cs.slenderness_screen(48, 1, 1, True, 0.3, 0)["limit"] == 22.0  # +1
+
+
+# ── K per axis (user decision 2026-10-19) ───────────────────────────
+
+def test_resolve_K_defaults():
+    k = cs.resolve_K({"braced": True, "K_source": "default"}, "2")
+    assert k["K"] == 1.0 and k["source"] == "default" and k["warnings"] == []
+    assert "C5.6.4.3" in k["label"]
+    k = cs.resolve_K({"braced": False, "K_source": "default", "end_condition": "fixed-free"}, "2")
+    assert k["K"] == 2.0 and k["end_condition"] == "fixed-free"
+    assert k["label"] == ("K = 2.0 (Euler ideal, fixed-free; not the AASHTO Table C4.6.2.5-1 "
+                          "design value)")
+    assert k["warnings"] == ["slenderness axis 2: " + cs.DEFAULT_K_WARNING]
+    k = cs.resolve_K({"braced": False, "K_source": "default", "end_condition": "fixed-fixed"})
+    assert k["K"] == 1.0 and "Euler ideal, fixed-fixed" in k["label"]
+    # end condition defaults to fixed-free (conservative); K ignored for the default source
+    k = cs.resolve_K({"braced": False, "K_source": "default", "K": 0.5})
+    assert k["K"] == 2.0 and k["end_condition"] == "fixed-free"
+    # nothing given at all -> default source
+    assert cs.resolve_K({"braced": False})["K"] == 2.0
+
+
+def test_resolve_K_analysis_and_legacy():
+    k = cs.resolve_K({"braced": False, "K_source": "analysis", "K": 1.7})
+    assert k["K"] == 1.7 and k["source"] == "analysis" and k["warnings"] == []
+    k = cs.resolve_K({"braced": False, "K_source": "analysis", "K": 0.8}, "3")
+    assert k["K"] == 0.8 and k["warnings"] == ["slenderness axis 3: " + cs.UNBRACED_K_LT1_WARNING]
+    k = cs.resolve_K({"braced": True, "K_source": "analysis", "K": 0.8})
+    assert k["K"] == 0.8 and k["warnings"] == [cs.BRACED_K_LT1_NOTE]
+    for bad in (0.0, -1.0, None, "1.2"):
+        with pytest.raises(ValueError, match="buckling analysis"):
+            cs.resolve_K({"braced": False, "K_source": "analysis", "K": bad})
+    with pytest.raises(ValueError, match="K_source"):
+        cs.resolve_K({"braced": False, "K_source": "table", "K": 1.0})
+    with pytest.raises(ValueError, match="end_condition"):
+        cs.resolve_K({"braced": False, "end_condition": "pinned"})
+    # legacy payload: numeric K and no K_source -> analysis (the user typed it)
+    k = cs.resolve_K({"braced": False, "K": 2.1})
+    assert k["source"] == "analysis" and k["K"] == 2.1
+
+
+def test_make_magnifier_K_default_and_warnings():
+    b = {"slender": {"2": {"braced": False, "K_source": "default", "end_condition": "fixed-free",
+                           "lu": 240.0},
+                     "3": {"braced": False, "K_source": "analysis", "K": 0.8, "lu": 240.0}}}
+    w = []
+    (t,) = cs.make_magnifier(b, {}, {"slenderness_on": True}, w)(CGE, [_row()])
+    assert t["_klr2"] == pytest.approx(2.0 * 240.0 / 12.0)
+    assert t["_klr3"] == pytest.approx(0.8 * 240.0 / 12.0)      # accepted as entered
+    assert any(cs.DEFAULT_K_WARNING in x for x in w)
+    assert any(cs.UNBRACED_K_LT1_WARNING in x for x in w)
+    b["slender"]["3"]["K"] = None
+    with pytest.raises(ValueError):
+        cs.make_magnifier(b, {}, {"slenderness_on": True})
 
 
 def test_curvature_sign_convention_pinned():

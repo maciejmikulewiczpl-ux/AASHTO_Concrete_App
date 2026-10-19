@@ -1059,3 +1059,99 @@ def test_moment_details_quote_kip_ft():
     assert "kip-in (" in c["detail"] and "kip-ft) at P_dead" in c["detail"]
     ng = ee.py_check([{"_case": "S1", "Mu": 12000.0, "Vu": 100.0}], 4)
     assert "M=12000 kip-in (1000 kip-ft)" in ng["detail"]
+
+
+# ── follow-ups 2026-10-19: longitudinal V(+T) check enforcement, K default ──
+
+LMEM = dict(D=48.0, fc=4.0, fy=60.0, fyt=60.0, cover=2.0, ag=0.75, trans_type="hoop",
+            hoop_closure="lap")
+LROW = {"Pu": -200.0, "Mu": 20000.0, "Vu": 400.0, "Tu": 0.0, "Vp": 0, "Ms": 0, "Ps": 0,
+        "_frame": "F1", "_station": 0.0, "_case": "STR", "_bound": "concurrent",
+        "_Pmin": -200.0, "_Pmax": -200.0}
+LCAGE = {"bar": 11, "n": 12, "bundle": 1, "trans_bar": 5, "s": 5.0, "ties": 0}
+
+
+def test_row_pass_ignores_non_enforced_long_check():
+    """User decision 2026-10-19: a failing long_ok_2 counts only where enforced
+    (bars_terminated or torsion considered); the final check / status ignore it otherwise."""
+    summ, checks, _ = ee.lrfd_check_rows(LMEM, LCAGE, [LROW], None, "Column LRFD")
+    assert summ[0]["long_ok_2"] is False and summ[0]["long_enforced"] is False
+    assert summ[0]["ok"] and checks[0]["ok"] and summ[0]["ratio"] < 1.0
+    assert "long. V+T " + cl.LONG_NA in checks[0]["detail"]
+    assert ee.bent_status(False, False, any(not c["ok"] for c in checks)) == "OK"
+    term = dict(LMEM, bars_terminated=True)
+    summ_t, checks_t, _ = ee.lrfd_check_rows(term, LCAGE, [LROW], None, "Column LRFD")
+    assert summ_t[0]["long_enforced"] is True and not summ_t[0]["ok"] and not checks_t[0]["ok"]
+    assert "long. V+T NG" in checks_t[0]["detail"] and summ_t[0]["ratio"] > 1.0
+    assert ee.bent_status(False, False, any(not c["ok"] for c in checks_t)) == "NG"
+    assert ee.rows_pass(LMEM, LCAGE, [LROW], None) and not ee.rows_pass(term, LCAGE, [LROW], None)
+
+
+def test_engine_status_ignores_failing_non_enforced_long_check(monkeypatch):
+    """End to end: every row's long_ok_2 forced False (no torsion) -> bars continuous
+    (default) gives the same cages and status as the base run, the rows report the
+    check as not enforced; the per-member summary carries the §5.7.3.5 reason."""
+    real = cl.cc.compute_row_capacities_circ
+
+    def fake(*a, **k):
+        res = real(*a, **k)
+        res["long_ok_2"], res["long_dc_2"] = False, 1.5
+        return res
+    monkeypatch.setattr(cl.cc, "compute_row_capacities_circ", fake)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    base = run("2b")["bents"][0]
+    assert b["status"] == base["status"] == "OK"
+    assert b["final"] == base["final"]
+    for part in ("col", "shaft"):
+        rows = b["lrfd"][part]["check_rows"]
+        assert rows and all(x["long_ok_2"] is False and x["long_enforced"] is False and x["ok"]
+                            for x in rows)
+        lc = b["lrfd"][part]["long_check"]
+        assert lc["enforced"] == "none" and lc["bars_terminated"] is False
+        assert "§5.7.3.5" in lc["note"] and "discontinuous" in lc["note"]
+    assert all(cl.LONG_NA in c["detail"] for c in b["final_checks"] if c["group"] != "Seismic")
+
+
+def test_long_check_summary_follows_flag():
+    b = run("2b")["bents"][0]
+    assert b["lrfd"]["col"]["long_check"]["enforced"] == "none"
+    assert b["lrfd"]["shaft"]["long_check"]["enforced"] == "none"
+    assert cl.long_check_summary({"bars_terminated": True}, [])["enforced"] == "all"
+
+
+def test_slender_K_default_and_report_fields():
+    """K_source default: unbraced fixed-free Euler 2.0 with the bent warning; the result
+    lists K / source / end condition per axis (user decision 2026-10-19)."""
+    sl = {"2": {"braced": False, "K_source": "default", "end_condition": "fixed-free", "K": None,
+                "lu": None},
+          "3": {"braced": True, "K_source": "default", "end_condition": "fixed-fixed", "K": None,
+                "lu": None}}
+    r = ee.run_colshaft(payload([bent1(slender=sl)], settings={"slenderness_on": True}))
+    b = r["bents"][0]
+    k2, k3 = b["slender_K"]["2"], b["slender_K"]["3"]
+    assert (k2["K"], k2["source"], k2["end_condition"]) == (2.0, "default", "fixed-free")
+    assert "Euler ideal" in k2["label"] and "Table C4.6.2.5-1" in k2["label"]
+    assert (k3["K"], k3["braced"]) == (1.0, True)
+    # lu = H + L_eq = 360 in, r = 15 in -> K lu / r = 48 (axis 2), 24 (axis 3)
+    rows = b["lrfd"]["col"]["check_rows"]
+    assert rows[0]["_klr2"] == pytest.approx(48.0) and rows[0]["_klr3"] == pytest.approx(24.0)
+    assert any("Default K is the theoretical Euler value" in w for w in b["warnings"])
+    # legacy payload (K, no K_source) -> analysis: no default-K warning, K as entered
+    legacy = run("slender")["bents"][0]
+    assert legacy["slender_K"]["2"]["source"] == "analysis"
+    assert legacy["slender_K"]["2"]["K"] == 2.1
+    assert not any("Default K" in w for w in legacy["warnings"])
+    # slenderness off: no slender_K
+    assert "slender_K" not in run("2b")["bents"][0]
+
+
+def test_slender_unbraced_analysis_K_below_one_warns():
+    sl = {"2": {"braced": False, "K_source": "analysis", "K": 0.8, "lu": None},
+          "3": {"braced": False, "K_source": "analysis", "K": 1.2, "lu": None}}
+    b = ee.run_colshaft(payload([bent1(slender=sl)], settings={"slenderness_on": True}))["bents"][0]
+    assert b["slender_K"]["2"]["K"] == 0.8
+    assert any("below the C5.6.4.3 floor" in w for w in b["warnings"])
+    bad = {"2": {"braced": False, "K_source": "analysis", "K": 0.0, "lu": None},
+           "3": {"braced": False, "K_source": "analysis", "K": 1.2, "lu": None}}
+    with pytest.raises(ValueError, match="buckling analysis"):
+        ee.run_colshaft(payload([bent1(slender=bad)], settings={"slenderness_on": True}))

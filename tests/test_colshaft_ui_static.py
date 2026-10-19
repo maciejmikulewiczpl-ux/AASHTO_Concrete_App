@@ -200,6 +200,25 @@ def test_js_constants_mirror_python():
     assert set(js["colors"]) == set(ee.STATUS_RANK)
 
 
+@needs_node
+def test_js_k_and_long_check_constants_mirror_python():
+    """Follow-ups 2026-10-19: K sources / end conditions / Euler K / warning texts and the
+    'n/a' long-check text are one value in Python and JS."""
+    import colshaft_lrfd as cl
+    import colshaft_slender as csl
+    code = ("const c=require(process.argv[1]);console.log(JSON.stringify("
+            "{src:c.K_SOURCES,end:c.END_CONDITIONS,euler:c.EULER_K,dw:c.DEFAULT_K_WARNING,"
+            "uw:c.UNBRACED_K_LT1_WARNING,bn:c.BRACED_K_LT1_NOTE,na:c.LONG_NA}))")
+    r = subprocess.run([NODE, "-e", code, JS], capture_output=True, text=True, cwd=ROOT,
+                       encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    js = json.loads(r.stdout)
+    assert js["src"] == list(csl.K_SOURCES) and js["end"] == list(csl.END_CONDITIONS)
+    assert js["euler"] == csl.EULER_K
+    assert js["dw"] == csl.DEFAULT_K_WARNING and js["uw"] == csl.UNBRACED_K_LT1_WARNING
+    assert js["bn"] == csl.BRACED_K_LT1_NOTE and js["na"] == cl.LONG_NA
+
+
 # ── Task 11: printable report ───────────────────────────────────────
 
 def _js_eval(expr_code, *args):

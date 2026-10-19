@@ -19,6 +19,9 @@ Per bent (spec 4.3-4.5, controller rulings 8-1 .. 8-11):
      (transverse_candidates order, Av/s >= the LRFD one) until the shaft shear and
      confinement checks pass.
   6. Re-run check_cage (LRFD rows) and seismic_design on the final cages.
+The longitudinal V(+T) check (long_ok_2) counts only where it is enforced
+(colshaft_lrfd.long_check_enforced: member `bars_terminated` or torsion considered;
+user decision 2026-10-19); lrfd[col|shaft]["long_check"] reports it per member.
 Status precedence (ruling F-3): NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
 OK – MAGNIFICATION PENDING (S6) > OK.  Overrides are never altered; with an
 override the status reflects the checks.
@@ -144,23 +147,25 @@ def rho_l_check(lg, prov, who="Column"):
 def rows_pass(member, cage, rows, transform):
     """Every LRFD row passes on `cage` (the search criterion, see row_ok)."""
     res = cl.check_cage(member, cage, rows, transform)
-    return all(row_ok(x, r) for x, r in zip(res, rows))
+    return all(row_ok(member, x, r) for x, r in zip(res, rows))
 
 
-def row_ok(res, row):
+def row_ok(member, res, row):
+    """The LRFD row pass; the longitudinal V(+T) check counts only where it is
+    enforced (cl.long_check_enforced, user decision 2026-10-19)."""
     return (res.get("flexStatus") != "NG" and res.get("shearStatus") in ("OK", "NR")
             and (not res.get("torsionConsider") or res.get("Tr", 0) >= abs(row["Tu"]))
-            and res.get("long_ok_2") is not False)
+            and cl.long_check_ok(member, res))
 
 
-def _ratio(res, row):
+def _ratio(member, res, row):
     out = [res.get("_flexDC") or 0.0]
     vr = res.get("Vr2") or 0.0
     out.append(abs(row["Vu"]) / vr if vr > 0 else (math.inf if row["Vu"] else 0.0))
     if res.get("torsionConsider") and abs(row["Tu"]) > 0:
         tr = res.get("Tr") or 0.0
         out.append(abs(row["Tu"]) / tr if tr > 0 else math.inf)
-    if res.get("long_dc_2") is not None:
+    if res.get("long_dc_2") is not None and cl.long_check_enforced(member, res):
         out.append(res["long_dc_2"])
     return max(out)
 
@@ -174,11 +179,13 @@ def lrfd_check_rows(member, cage, rows, transform, group):
         rows_t = transform(dict(cage, inputs=raw), [dict(r) for r in rows])
     summ, checks = [], []
     for i, (r, x) in enumerate(zip(rows_t, res)):
-        ok = row_ok(x, r)
-        ratio = _ratio(x, r)
+        ok = row_ok(member, x, r)
+        ratio = _ratio(member, x, r)
+        enf = cl.long_check_enforced(member, x)
         s = {k: r[k] for k in ROW_KEYS if k in r}
         s.update({k: x.get(k) for k in RES_KEYS})
-        s.update(ok=ok, ratio=ratio)
+        s.update(ok=ok, ratio=ratio, long_enforced=enf)
+        long_txt = ("OK" if x.get("long_ok_2") is not False else "NG") if enf else cl.LONG_NA
         summ.append(s)
         st = r.get("_station")
         where = f"{r.get('_frame')} @ {st / 12.0:g} ft" if isinstance(st, (int, float)) else \
@@ -189,7 +196,7 @@ def lrfd_check_rows(member, cage, rows, transform, group):
                        "detail": (f"flexure {x.get('flexStatus')} (D/C {x.get('_flexDC') or 0:.3f} at "
                                   f"P={x.get('_flexP') or 0:.0f} kip), shear {x.get('shearStatus')}, "
                                   f"torsion {'considered' if x.get('torsionConsider') else 'neglected'}, "
-                                  f"long. V+T {'OK' if x.get('long_ok_2') is not False else 'NG'}"),
+                                  f"long. V+T {long_txt}"),
                        "ref": ""})
     return summ, checks, rows_t
 
@@ -329,7 +336,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
             return None
         if not bent.get("slender"):
             raise ValueError(f"Bent {name}: slenderness is on but bent.slender is missing")
-        return csl.make_magnifier(dict(bent, lu_default_in=H + Df), rbc, settings)
+        return csl.make_magnifier(dict(bent, lu_default_in=H + Df), rbc, settings, w)
 
     # design pass: Df is known up front only for the cantilever basis; the
     # transform only tags rows (S6), so the final check below is authoritative
@@ -531,6 +538,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
                                                        "Column LRFD") if col_rows else ([], [], [])
     final_checks += col_checks
     lrfd["col"]["check_rows"] = col_summ
+    lrfd["col"]["long_check"] = cl.long_check_summary(column, col_summ)
     if py_ctx is not None:
         final_checks.append(py_check(skipped, len(skipped) + len(sh_rows)))
     if sh_rows:
@@ -539,6 +547,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
         if lrfd["shaft"] is None:
             lrfd["shaft"] = {"long": None, "trans": None, "n_rows": len(sh_rows), "source": sh_src}
         lrfd["shaft"]["check_rows"] = sh_summ
+        lrfd["shaft"]["long_check"] = cl.long_check_summary(shaft, sh_summ)
         lrfd["shaft"]["rows"] = sh_rows
 
     # ── status (ruling 8-9) ──
@@ -556,6 +565,9 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     out["shaft_basis"] = basis
     out["H_auto"] = H_auto
     out["expected_steel"] = exp_steel
+    if slender_on:      # K per axis as used (user decision 2026-10-19)
+        out["slender_K"] = {ax: {k: v for k, v in csl.resolve_K(bent["slender"][ax], ax).items()
+                                 if k != "warnings"} for ax in ("2", "3")}
     return out
 
 

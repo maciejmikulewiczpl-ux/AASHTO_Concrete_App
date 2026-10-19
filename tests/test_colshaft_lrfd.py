@@ -15,6 +15,8 @@ from tests.fixtures import make_inputs
 
 MEMBER = dict(D=48.0, fc=4.0, fy=60.0, fyt=60.0, cover=2.0, ag=0.75,
               trans_type="hoop", hoop_closure="lap")
+# bars terminated / discontinuous within the member: Eq. 5.7.3.5-1 enforced on every row
+MEMBER_T = dict(MEMBER, bars_terminated=True)
 
 
 def row(Pu=-800.0, Mu=0.0, Vu=0.0, Tu=0.0, Pmin=None, Pmax=None, bound="concurrent"):
@@ -275,48 +277,91 @@ def test_transverse_no_solution_reported():
 
 
 def test_long_vt_check_drives_longitudinal_steel():
-    """Controller ruling on E12: the engine's longitudinal check for V(+T) (long_ok_2,
-    Eq. 5.7.3.5-1 / 5.7.3.6.3-1) is part of the pass; when it fails, the
-    longitudinal cage is stepped up."""
+    """Controller ruling on E12 (6-1), now only where enforced: with the member's bars
+    terminated (bars_terminated True, Eq. 5.7.3.5-1) the engine's longitudinal check
+    for V(+T) (long_ok_2) is part of the pass; when it fails, the longitudinal cage is
+    stepped up (the old behaviour)."""
     rows = [row(-200.0, 20000.0, Vu=400.0)]
-    flex_only = cl.design_longitudinal(MEMBER, rows, {})
-    alone = cl.design_transverse(MEMBER, flex_only, rows, {})
+    flex_only = cl.design_longitudinal(MEMBER_T, rows, {})
+    alone = cl.design_transverse(MEMBER_T, flex_only, rows, {})
     assert not alone.ok and alone.fail_reasons == ["long"] and alone.long_vt_ng_rows == [0]
     assert "NO SOLUTION" in alone.note and "Eq. 5.7.3.5-1 / 5.7.3.6.3-1" in alone.note
-    lg, tr = cl.design_member(MEMBER, rows, {})
+    lg, tr = cl.design_member(MEMBER_T, rows, {})
     assert lg.ok and tr.ok
     assert lg.Ast > flex_only.Ast
     assert cl.STEP_NOTE in lg.note
     assert "longitudinal reinforcement for V+T (Eq. 5.7.3.5-1 / 5.7.3.6.3-1)" in lg.note
-    out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
-                                 "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)[0]
+    out = cl.check_cage(MEMBER_T, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
+                                   "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)[0]
     assert out["long_ok_2"] is True and out["shearStatus"] in ("OK", "NR")
 
 
-def _final_check(rows, lg, tr):
+def test_long_vt_check_not_enforced_by_default():
+    """User decision 2026-10-19: bars_terminated defaults to False; without torsion the
+    long_ok_2 failure (same numbers as above) no longer steps the cage: the flexure-only
+    cage is returned, with no step note."""
+    rows = [row(-200.0, 20000.0, Vu=400.0)]
+    assert "bars_terminated" not in MEMBER
+    flex_only = cl.design_longitudinal(MEMBER, rows, {})
+    lg, tr = cl.design_member(MEMBER, rows, {})
+    assert lg.ok and tr.ok and tr.long_vt_ng_rows == []
+    assert (lg.bar, lg.n, lg.bundle, lg.Ast) == (flex_only.bar, flex_only.n, flex_only.bundle,
+                                                 flex_only.Ast)
+    assert cl.STEP_NOTE not in lg.note and "Eq. 5.7.3.5-1" not in tr.note
     out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
+                                 "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)[0]
+    # the engine still reports the failing check; it is simply not enforced
+    assert out["long_ok_2"] is False and not out["torsionConsider"]
+    assert not cl.long_check_enforced(MEMBER, out) and cl.long_check_ok(MEMBER, out)
+    assert cl.long_check_enforced(MEMBER_T, out) and not cl.long_check_ok(MEMBER_T, out)
+    s = cl.long_check_summary(MEMBER, [out])
+    assert s["enforced"] == "none" and cl.LONG_NA in s["note"] and "discontinuous" in s["note"]
+    assert cl.long_check_summary(MEMBER_T, [out])["enforced"] == "all"
+
+
+def test_long_vt_check_enforced_where_torsion_is_considered():
+    """Eq. 5.7.3.6.3-1 always applies to solid sections with torsion considered: the
+    check is enforced with bars_terminated False and still steps the cage."""
+    rows = [row(-200.0, 20000.0, Vu=400.0, Tu=2000.0)]
+    flex_only = cl.design_longitudinal(MEMBER, rows, {})
+    alone = cl.design_transverse(MEMBER, flex_only, rows, {})
+    assert not alone.ok and alone.fail_reasons == ["long"] and alone.long_vt_ng_rows == [0]
+    lg, tr = cl.design_member(MEMBER, rows, {})
+    assert lg.ok and tr.ok and lg.Ast > flex_only.Ast and cl.STEP_NOTE in lg.note
+    out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
+                                 "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)[0]
+    assert out["torsionConsider"] and cl.long_check_enforced(MEMBER, out)
+    assert out["long_ok_2"] is True
+    s = cl.long_check_summary(MEMBER, [out, {"torsionConsider": False}])
+    assert s["enforced"] == "torsion" and s["n_torsion_rows"] == 1
+
+
+def _final_check(rows, lg, tr, member=MEMBER):
+    out = cl.check_cage(member, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
                                  "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)
     for r, o in zip(rows, out):
         assert o["flexStatus"] != "NG" and o["shearStatus"] in ("OK", "NR")
-        assert o["long_ok_2"] is not False
+        assert cl.long_check_ok(member, o)
         assert not o["torsionConsider"] or o["Tr"] >= abs(r["Tu"])
 
 
+@pytest.mark.parametrize("member", [MEMBER_T, MEMBER], ids=["terminated", "continuous"])
 @pytest.mark.parametrize("rows", [
     # review repro 1: the second row fails shear (not only long_ok_2) on the flexure cage
     [row(-200.0, 20000.0, Vu=400.0), row(-1000.0, 3000.0, Vu=990.0)],
     # review repro 2: shear NG on the flexure cage; heavier long. steel raises Vr2
     [row(-200.0, 20000.0, Vu=950.0)],
 ])
-def test_shear_side_failure_steps_longitudinal(rows):
-    """Controller ruling 6-3: any shear-side failure steps the longitudinal cage."""
-    flex_only = cl.design_longitudinal(MEMBER, rows, {})
-    alone = cl.design_transverse(MEMBER, flex_only, rows, {})
+def test_shear_side_failure_steps_longitudinal(rows, member):
+    """Controller ruling 6-3: any shear-side failure steps the longitudinal cage (with
+    or without the enforced long_ok_2 check)."""
+    flex_only = cl.design_longitudinal(member, rows, {})
+    alone = cl.design_transverse(member, flex_only, rows, {})
     assert not alone.ok and "shear" in alone.fail_reasons
-    lg, tr = cl.design_member(MEMBER, rows, {})
+    lg, tr = cl.design_member(member, rows, {})
     assert lg.ok and tr.ok, tr.note
     assert lg.Ast > flex_only.Ast and cl.STEP_NOTE in lg.note and "shear (Vr" in lg.note
-    _final_check(rows, lg, tr)
+    _final_check(rows, lg, tr, member)
 
 
 def test_design_member_no_step_when_not_needed():
@@ -345,6 +390,6 @@ def test_500_rows_under_20s():
     assert dt < 20.0, f"{dt:.1f} s"
     out = cl.check_cage(MEMBER, {"bar": lg.bar, "n": lg.n, "bundle": lg.bundle,
                                  "trans_bar": tr.bar, "s": tr.s, "ties": tr.ties}, rows)
-    assert all(o["long_ok_2"] is not False for o in out)
+    assert all(cl.long_check_ok(MEMBER, o) for o in out)
     assert all(o["shearStatus"] in ("OK", "NR") and o["flexStatus"] != "NG" for o in out)
     assert all(not o["torsionConsider"] or o["Tr"] >= abs(r["Tu"]) for r, o in zip(rows, out))
