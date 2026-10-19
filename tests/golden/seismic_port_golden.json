@@ -6426,6 +6426,98 @@
           }
         }
       }
+    },
+    "stability": {
+      "soft_clay|free": {
+        "V_head": 417.8183436150286,
+        "bounds": [
+          {
+            "bound": 2.0,
+            "stable": true,
+            "Df_eq": 355.9275889400892
+          },
+          {
+            "bound": 0.5,
+            "stable": false,
+            "Df_eq": 4800.0
+          }
+        ]
+      },
+      "soft_clay|fixed": {
+        "V_head": 835.6366872300572,
+        "bounds": [
+          {
+            "bound": 2.0,
+            "stable": true,
+            "Df_eq": 403.2114028930664
+          },
+          {
+            "bound": 0.5,
+            "stable": true,
+            "Df_eq": 1186.5788269042969
+          }
+        ]
+      },
+      "stiff_clay_over_sand|free": {
+        "V_head": 417.8183436150286,
+        "bounds": [
+          {
+            "bound": 2.0,
+            "stable": true,
+            "Df_eq": 196.24224347336042
+          },
+          {
+            "bound": 0.5,
+            "stable": true,
+            "Df_eq": 344.9315048797421
+          }
+        ]
+      },
+      "stiff_clay_over_sand|fixed": {
+        "V_head": 835.6366872300572,
+        "bounds": [
+          {
+            "bound": 2.0,
+            "stable": true,
+            "Df_eq": 218.32483291625977
+          },
+          {
+            "bound": 0.5,
+            "stable": true,
+            "Df_eq": 366.5562057495117
+          }
+        ]
+      },
+      "sand_water_table|free": {
+        "V_head": 417.8183436150286,
+        "bounds": [
+          {
+            "bound": 2.0,
+            "stable": true,
+            "Df_eq": 250.65234558884015
+          },
+          {
+            "bound": 0.5,
+            "stable": true,
+            "Df_eq": 379.0339961551283
+          }
+        ]
+      },
+      "sand_water_table|fixed": {
+        "V_head": 835.6366872300572,
+        "bounds": [
+          {
+            "bound": 2.0,
+            "stable": true,
+            "Df_eq": 263.28975677490234
+          },
+          {
+            "bound": 0.5,
+            "stable": true,
+            "Df_eq": 404.4510269165039
+          }
+        ]
+      }
     }
   }
 }

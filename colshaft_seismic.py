@@ -17,8 +17,18 @@ in the app convention.
 
 References.  Every `Check.ref` is a ported provisions ``ref_*`` string, copied
 verbatim (unverified, OPEN_VERIFICATION_ITEMS section E).  The shaft confinement
-and oversize checks carry ``ref_shaft_capacity`` (no dedicated ref_* field exists
-upstream; see E5 / E6).  No new citations are added here.
+and oversize checks have no dedicated ref_* field upstream, so they carry ref=""
+and point to the open items in their detail.  No new citations are added here.
+
+Soil stability.  Two checks, as upstream:
+  * "Soil-pile stability (p-y)" -- port of upstream evaluate_column check 13
+    (sdc_capacity.py:1077-1093): every soil bound must give a physical solution
+    at the YIELD-level head force F_y = Mp/H (2*F_y with head_fixed=True for a
+    fixed-fixed direction), Mp and EI from M-phi at P_dead; NG if ANY bound is
+    unstable, enveloped over the two directions.
+  * "Shaft p-y solve" -- the overstrength (Vo) in-ground solve: unstable bounds
+    are dropped from the demand envelope (upstream inground_demand); NG only when
+    every bound is unstable (no demand could be established).
 
 Df_eq.  The equivalent depth to fixity is only meaningful for a free head
 (M_head = 0).  ``pile["Df_eq_gov"]`` (used later for the slenderness length lu) is
@@ -26,7 +36,10 @@ therefore taken from a FIXED-FREE solve (V_head = Mo/H, M_head = 0) at the same
 EI / axial / profile, on the softest STABLE soil bound, even when the governing
 end condition is fixed-fixed.  Each entry of ``pile["bounds"]`` likewise reports
 the fixed-free Df_eq of that bound, while its Mmax / z_Mmax / Vmax come from the
-governing end condition's solve.
+governing end condition's solve.  The fixed-free solve can be stable on a bound
+that is unstable (and so excluded) in the fixed-fixed overstrength envelope; its
+Df_eq is still used (conservative: a softer bound gives a deeper Df).  The
+fixed-free stability at V = Mo/H is independent of "Soil-pile stability (p-y)".
 
 Cached PileSolution objects returned by the port are shared; this module only
 reads them and builds new lists/tuples.
@@ -61,6 +74,9 @@ N_EXT = 5                       # evenly spaced samples across [P_ext_min, P_ext
 N_CANT = 11                     # points of the cantilever M(z) profile
 L_EQ_MSG = "Enter the pile equivalent cantilever length or a soil profile"
 UNSTABLE_MSG = "soil too soft or shaft too short"
+UNVERIFIED_REF = ("unverified; see OPEN_VERIFICATION_ITEMS E-row for SGS §8.8.12 / "
+                  "SDC §6.2.5.1")
+DIRECTIONS = (("longitudinal", "end_condition_long"), ("transverse", "end_condition_trans"))
 
 
 @dataclass
@@ -285,10 +301,11 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
                    for i in range(N_CANT)]
         Df = L
     else:
-        profile, pile, py_check, M_env, V_env = _soil_basis(bent, soil, H, EI_col, EI_sh, sh.D,
-                                              P_dead_c, Mo, Vo, end)
+        profile, pile, py_check, M_env, V_env, stab = _soil_basis(
+            bent, soil, H, EI_col, EI_sh, sh.D, P_dead_c, Mo, Vo, end, mc_dead.Mp)
         Df = pile["Df_eq_gov"]
         checks.append(py_check)
+        checks.append(stab)
         if py_check.ok and py_check.demand:
             warnings.append("Shaft p-y solve: " + py_check.detail)
 
@@ -330,15 +347,16 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
         req = prov.shaft_confinement_fraction * col.rho_s
         checks.append(Check(
             "Shaft confinement (oversized)", req, sh.rho_s, sh.rho_s >= req,
-            f"rho_s,shaft={sh.rho_s:.4f} >= {prov.shaft_confinement_fraction:g}*rho_s,col={req:.4f}",
-            prov.ref_shaft_capacity))
+            f"rho_s,shaft={sh.rho_s:.4f} >= {prov.shaft_confinement_fraction:g}*rho_s,col={req:.4f} "
+            f"({UNVERIFIED_REF})",
+            "", ))
     gap = sh.D - col.D
     need = prov.min_shaft_oversize
     ok_gap = gap > 0.0 if need <= 0 else gap >= need - 1e-9
     checks.append(Check(
         "Shaft oversize", need, gap, ok_gap,
-        f"Ds - D = {gap:g} in " + (f">= {need:g} in" if need > 0 else "> 0 (shaft larger than column)"),
-        prov.ref_shaft_capacity))
+        f"Ds - D = {gap:g} in " + (f">= {need:g} in" if need > 0 else "> 0 (shaft larger than column)")
+        + f" ({UNVERIFIED_REF})", ""))
 
     req_t = required_transverse(column, col_cage, prov, Vo, P_vc_c, mu_d, rho_min, s_max,
                                 bar_min, params)
@@ -352,11 +370,63 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
         checks=checks, required_transverse=req_t, pile=pile, warnings=warnings)
 
 
-def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end):
+def _stability_check(bent, H, L_embed, EI_col, EI_sh, Ds, P_comp, prof, bounds, Mp):
+    """Port of upstream evaluate_column check 13 "Soil-pile stability (p-y)".
+
+    Per direction, the yield-level solve of upstream ``_specs_for``:
+    V = (2 if fixed else 1) * Mp/H with ``head_fixed`` = fixed (no applied head
+    moment), on every soil bound.  NG if any bound is unstable.
+    Returns (check, {end condition: [{factor, stable, Df_eq}]}).  The two
+    directions are enveloped as upstream ``_envelope_checks`` does (failed beats
+    passed, then the larger ratio), with "[<direction> governs]" appended when
+    the directions differ.  Upstream gives this check no reference (ref="").
+    """
+    F_y = Mp / H
+    per_dir = []
+    cache = {}
+    rows_by_end = {}
+    for name, key in DIRECTIONS:
+        fixed = bent.get(key, "fixed-free") == "fixed-fixed"
+        if fixed not in cache:
+            V = (2.0 if fixed else 1.0) * F_y
+            sols = []
+            for f in bounds:
+                p = replace(prof, stiffness_factor=prof.stiffness_factor * f)
+                sols.append(_cached_pile_solve(H, L_embed, EI_col, EI_sh, Ds, P_comp, p, V,
+                                               head_fixed=fixed))
+            rows_by_end["fixed-fixed" if fixed else "fixed-free"] = [
+                dict(factor=f, stable=bool(x.stable), Df_eq=x.Df_eq if x.stable else None)
+                for f, x in zip(bounds, sols)]
+            unstable = [x for x in sols if not x.stable]
+            n_ok = len(sols) - len(unstable)
+            note = f"{n_ok}/{len(sols)} soil bounds converged to a physical solution"
+            if unstable:
+                note += ("; UNSTABLE: soil too soft / shaft too short or slender for "
+                         "the pile-head force (increase embedment or shaft size, or "
+                         "improve the soil)")
+            cache[fixed] = Check("Soil-pile stability (p-y)", len(unstable), 0,
+                                 not unstable, note, "")
+        per_dir.append((name, cache[fixed]))
+    gname, gov = per_dir[0]
+    for name, c in per_dir[1:]:
+        if (gov.ok and not c.ok) or (gov.ok == c.ok and c.ratio > gov.ratio):
+            gname, gov = name, c
+    differs = any(abs(c.ratio - gov.ratio) > 1e-9 or c.ok != gov.ok
+                  for n, c in per_dir if n != gname)
+    if differs:
+        gov = replace(gov, detail=f"{gov.detail}  [{gname} governs]".strip())
+    return gov, rows_by_end
+
+
+def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end, Mp_dead):
     """p-y shaft demand (upstream inground_demand semantics) + per-bound results."""
     prof = soil_profile(soil)
-    L_embed = float(bent.get("L_embed_in") or prof.depth)
-    bounds = tuple(float(b) for b in bent.get("soil_bounds", (2.0, 0.5)))
+    L_embed = bent.get("L_embed_in")
+    if not (_num(L_embed) and L_embed > 0):
+        raise ValueError("Enter the shaft embedded length L_embed_in (> 0) for the soil basis")
+    L_embed = float(L_embed)
+    sb = bent.get("soil_bounds")
+    bounds = tuple(float(b) for b in (sb if sb else (2.0, 0.5)))
     M_head = Mo if end == "fixed-fixed" else 0.0
     V_ff = Mo / H
 
@@ -399,14 +469,17 @@ def _soil_basis(bent, soil, H, EI_col, EI_sh, Ds, P_comp, Mo, Vo, end):
         bad = ", ".join(f"x{r['factor']:g}" for r in rows if not r["stable"])
         detail += (f"; bound(s) {bad} unstable ({UNSTABLE_MSG}) and excluded from the "
                    "envelope, as upstream inground_demand does")
-    check = Check("Shaft p-y solve", n_unstable, 0, ok, detail, "")
+    # demand/capacity = unstable/total bounds (finite ratio); NG only at 1.0
+    check = Check("Shaft p-y solve", n_unstable, n, ok, detail, "")
     pile = dict(bounds=rows, profile_gov=prof_gov,
                 Df_eq_gov=None if df_soft is None else df_soft[1],
                 M_inground=M_ig, V_inground=V_ig, L_embed=L_embed, end_condition=end,
                 M_head=M_head, V_head=Vo)
     # upstream envelope over the stable bounds: M_ig / V_ig (the max V may sit on
     # a bound other than the governing-moment one, so it is carried separately)
-    return profile, pile, check, M_ig, V_ig
+    stab, pile["stability"] = _stability_check(bent, H, L_embed, EI_col, EI_sh, Ds, P_comp,
+                                               prof, bounds, Mp_dead)
+    return profile, pile, check, M_ig, V_ig, stab
 
 
 def required_transverse(column, col_cage, prov, Vo, P_vc_comp, mu_d, rho_min, s_max,
@@ -414,9 +487,11 @@ def required_transverse(column, col_cage, prov, Vo, P_vc_comp, mu_d, rho_min, s_
     """FIRST (lightest) hoop/spiral in colshaft_lrfd.transverse_candidates order with
     seismic phiVn >= Vo, rho_s >= rho_s,min and s <= the detailing max spacing.
     The longitudinal cage is kept fixed (Mp feedback ignored; Task 8 re-checks)."""
+    seen = set()        # the port section ignores cross-ties: solve each (bar, s) once
     for bar, ties, s in cl.transverse_candidates(params):
-        if bar < bar_min:
+        if bar < bar_min or (bar, s) in seen:
             continue
+        seen.add((bar, s))
         if s_max is not None and s > s_max + 1e-9:
             continue
         sec = to_section(column, dict(col_cage, trans_bar=bar, s=s, ties=ties), prov)

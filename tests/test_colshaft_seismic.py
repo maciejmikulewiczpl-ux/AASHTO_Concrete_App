@@ -208,6 +208,8 @@ def test_shaft_confinement_and_oversize_checks():
     assert c.capacity == pytest.approx(g["shaft_rho_s"], rel=REL)
     o = chk(sgs, "Shaft oversize")
     assert o.demand == pytest.approx(0.0) and o.capacity == pytest.approx(24.0) and o.ok
+    for x in (c, o):
+        assert x.ref == "" and cs.UNVERIFIED_REF in x.detail
     sdc = run("SDC 2.1")
     assert not [x for x in sdc.checks if x.name == "Shaft confinement (oversized)"]
     o = chk(sdc, "Shaft oversize")          # Caltrans: Ds - D >= 24 in
@@ -305,22 +307,68 @@ def test_unstable_soil_is_NG_not_pass():
             soil_bounds=(0.5,))
     c = chk(r, "Shaft p-y solve")
     assert c.ok is False and "soil too soft or shaft too short" in c.detail
+    assert c.ratio == 1.0                                 # finite
+    assert chk(r, "Soil-pile stability (p-y)").ok is False
     assert r.pile["Df_eq_gov"] is None and r.Df is None
     assert r.shaft_Mdemand > 0.0                          # never zero demand
     assert not all(x.ok for x in r.checks)
 
 
-def test_partially_unstable_envelope_follows_upstream_with_warning():
-    """Golden soft clay: the x0.5 bound is unstable at Vo; upstream inground_demand
-    skips it, so the check passes on the stable bound but a warning is raised."""
+def test_partially_unstable_soil_is_NG_demand_from_stable_bound():
+    """Golden soft clay (ruling 7-1): the x0.5 bound is unstable.  Upstream
+    inground_demand drops it from the overstrength envelope (the demand comes
+    from the stable bound), but upstream check 13 "Soil-pile stability (p-y)"
+    fails because a bound is unstable at the yield force F_y = Mp/H."""
+    g = SEIS["by_code"]["SDC 2.1"]["soil"]["fixed-free"]
     r = run(shaft_basis="soil", soil=soil(), L_embed_in=SEIS["L_embed"])
     st = {b["factor"]: b["stable"] for b in r.pile["bounds"]}
     assert st == {2.0: True, 0.5: False}
-    c = chk(r, "Shaft p-y solve")
-    assert c.ok is True and c.demand == 1 and "x0.5" in c.detail
+    stab = chk(r, "Soil-pile stability (p-y)")
+    assert stab.ok is False and stab.demand == 1 and stab.capacity == 0
+    assert stab.ref == ""
+    assert stab.detail == ("1/2 soil bounds converged to a physical solution; UNSTABLE: "
+                           "soil too soft / shaft too short or slender for the pile-head "
+                           "force (increase embedment or shaft size, or improve the soil)")
+    c = chk(r, "Shaft p-y solve")              # demand was established
+    assert c.ok is True and c.demand == 1 and c.capacity == 2 and "x0.5" in c.detail
+    assert c.ratio == 0.5
+    assert r.pile["M_inground"] == pytest.approx(g["M"], rel=REL)   # stable bound only
     assert any("x0.5" in w for w in r.warnings)
     soft = [b for b in r.pile["bounds"] if not b["stable"]][0]
     assert soft["Df_eq"] is None and soft["Mmax"] is None
+    assert not all(x.ok for x in r.checks)
+
+
+STAB = SEIS["stability"]
+
+
+@pytest.mark.parametrize("key", list(STAB))
+def test_soil_pile_stability_matches_upstream_yield_level(key):
+    """Per-bound stability at F_y (x2, head fixed for fixed-fixed) = upstream _specs_for."""
+    pname, head = key.split("|")
+    end = "fixed-fixed" if head == "fixed" else "fixed-free"
+    r = run(shaft_basis="soil", soil=soil(pname), L_embed_in=SEIS["L_embed"],
+            end_condition_long=end, end_condition_trans=end)
+    exp = STAB[key]["bounds"]
+    got = r.pile["stability"][end]
+    assert [b["factor"] for b in got] == [b["bound"] for b in exp]
+    assert [b["stable"] for b in got] == [b["stable"] for b in exp]
+    for gb, eb in zip(got, exp):
+        if eb["stable"]:
+            assert gb["Df_eq"] == pytest.approx(eb["Df_eq"], rel=REL)
+    n_bad = sum(not b["stable"] for b in exp)
+    c = chk(r, "Soil-pile stability (p-y)")
+    assert c.demand == n_bad and c.ok == (n_bad == 0)
+    assert "governs" not in c.detail                    # both directions identical
+
+
+def test_soil_pile_stability_envelopes_directions():
+    """soft clay: fixed-free unstable at F_y, fixed-fixed stable -> NG, longitudinal governs."""
+    r = run(shaft_basis="soil", soil=soil(), L_embed_in=SEIS["L_embed"],
+            end_condition_long="fixed-free", end_condition_trans="fixed-fixed")
+    c = chk(r, "Soil-pile stability (p-y)")
+    assert c.ok is False and c.detail.endswith("  [longitudinal governs]")
+    assert set(r.pile["stability"]) == {"fixed-free", "fixed-fixed"}
 
 
 def test_cached_pile_solutions_not_mutated():
@@ -338,26 +386,63 @@ def test_cached_pile_solutions_not_mutated():
 # ── required transverse ───────────────────────────────────────────
 
 @pytest.mark.parametrize("code", CODES)
-def test_required_transverse_meets_shear(code):
+@pytest.mark.parametrize("probe", range(4))
+def test_required_transverse_matches_upstream_probes(code, probe):
+    """Upstream cross-check: each golden (bar, pitch) probe's phiVn and rho_s.  With the
+    search limited to that one candidate, required_transverse accepts it just below
+    the upstream phiVn / rho_s and rejects it just above."""
+    g = SEIS["by_code"][code]
+    pr = g["trans_probes"][probe]
     prov = get_provisions(code)
+    params = dict(stirMin=pr["bar"], stirMax=pr["bar"], sMax=pr["s"], sMin=pr["s"], maxLegs=2)
+    P = SEIS["P_dead"]
+    mu = prov.mu_d_limit_single
+
+    def req(Vo, rho_min):
+        return cs.required_transverse(COLUMN, COL_CAGE, prov, Vo, P, mu, rho_min, None, 0, params)
+
+    ok = req(pr["phiVn"] * (1 - 1e-2), pr["rho_s"] * (1 - 1e-2))
+    assert ok["ok"] and (ok["bar"], ok["s"]) == (pr["bar"], pr["s"])
+    assert ok["phiVn"] == pytest.approx(pr["phiVn"], rel=REL)
+    assert ok["rho_s"] == pytest.approx(pr["rho_s"], rel=REL)
+    assert req(pr["phiVn"] * (1 + 1e-2), 0.0)["ok"] is False
+    assert req(0.0, pr["rho_s"] * (1 + 1e-2))["ok"] is False
+
+
+@pytest.mark.parametrize("code", CODES)
+def test_required_transverse_meets_criteria(code):
     r = run(code, end_condition_long="fixed-fixed")
-    req = r.required_transverse
-    assert req["ok"] is True
-    sec = cs.to_section(COLUMN, dict(COL_CAGE, trans_bar=req["bar"], s=req["s"]), prov)
-    phi_vn = shear_capacity(sec, -r.P_vc, prov.mu_d_limit_single, True, prov)[0]
-    assert phi_vn >= r.Vo and req["phiVn"] == pytest.approx(phi_vn)
-    assert sec.rho_s >= r.rho_s_min and req["s"] <= r.s_max_detailing + 1e-9
-    # it is the FIRST passing candidate in the Task-6 search order
-    for bar, ties, s in cl.transverse_candidates(None):
-        if (bar, ties, s) == (req["bar"], req["ties"], req["s"]):
-            break
-        c = cs.to_section(COLUMN, dict(COL_CAGE, trans_bar=bar, s=s), prov)
-        ok = (shear_capacity(c, -r.P_vc, prov.mu_d_limit_single, True, prov)[0] >= r.Vo
-              and c.rho_s >= r.rho_s_min and s <= r.s_max_detailing + 1e-9
-              and bar >= r.min_trans_bar)
-        assert not ok, (bar, ties, s)
-    else:
-        pytest.fail("required transverse not among the candidates")
+    q = r.required_transverse
+    assert q["ok"] is True and q["phiVn"] >= r.Vo
+    assert q["rho_s"] >= r.rho_s_min and q["s"] <= r.s_max_detailing + 1e-9
+    assert q["bar"] >= r.min_trans_bar
+
+
+def test_required_transverse_solves_each_bar_pitch_once(monkeypatch):
+    calls = []
+    real = cs.shear_capacity
+
+    def counting(sec, *a, **k):
+        calls.append((sec.spiral_bar_no, sec.spiral_spacing))
+        return real(sec, *a, **k)
+
+    monkeypatch.setattr(cs, "shear_capacity", counting)
+    prov = get_provisions("SDC 2.1")
+    out = cs.required_transverse(COLUMN, COL_CAGE, prov, 1e9, 800.0, 5.0, 0.0, None, 0,
+                                 dict(maxLegs=4))
+    assert out["ok"] is False
+    assert len(calls) == len(set(calls)) > 0
+
+
+def test_soil_input_validation():
+    r = run(shaft_basis="soil", soil=soil(), L_embed_in=SEIS["L_embed"], soil_bounds=None)
+    assert [b["factor"] for b in r.pile["bounds"]] == [2.0, 0.5]
+    for bad in (None, 0.0, -10.0):
+        with pytest.raises(ValueError, match="L_embed_in"):
+            run(shaft_basis="soil", soil=soil(), L_embed_in=bad)
+    with pytest.raises(ValueError, match="L_embed_in"):
+        cs.seismic_design(COLUMN, SHAFT, COL_CAGE, SHAFT_CAGE, DEAD_ONLY,
+                          {"H_in": 240.0, "soil": soil()}, get_provisions("SDC 2.1"))
 
 
 def test_required_transverse_none_when_unreachable():

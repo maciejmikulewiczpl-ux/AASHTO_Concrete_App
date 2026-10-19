@@ -271,6 +271,8 @@ def _seismic_block(CircularSection, moment_curvature, get_provisions):
                              gov_none=gov is None,
                              gov_Df_eq=None if gov is None else float(gov.Df_eq),
                              gov_depth=None if gov is None else float(gov.max_moment_depth))
+        if pk == PROV_KEYS[0]:
+            out["stability"] = _stability(sc, SoilLayer, SoilProfile, mc, ms, sh.D, P)
         out["by_code"][pk] = dict(
             Mp_col=float(mc.Mp), phi_y_col=float(mc.phi_y), Mo=float(Mo), Vo=Vo,
             mu_d=mu, col_shear=col_v, col_rho_s=float(col.rho_s),
@@ -279,6 +281,30 @@ def _seismic_block(CircularSection, moment_curvature, get_provisions):
             shaft_demand_interface=float(prov.shaft_demand_factor * Mo),
             shaft_demand_factor=prov.shaft_demand_factor,
             rho_s_min=rmin, s_max=float(s_max), trans_probes=probes, soil=soil)
+    return out
+
+
+def _stability(sc, SoilLayer, SoilProfile, mc, ms, D_shaft, P):
+    """Upstream evaluate_column check 13 inputs: per-bound p-y stability at the
+    YIELD-level head force F_y = Mp/H (x2 and head_fixed=True for fixed-fixed),
+    as in sdc_capacity._specs_for, for every golden profile."""
+    from dataclasses import replace
+    EI_col, EI_sh = mc.EI_eff, ms.EI_eff
+    F_y = mc.Mp / SEIS_H
+    out = {}
+    for pname, layers in PILE_PROFILES.items():
+        base = SoilProfile(tuple(SoilLayer.from_engineering(t, m, g, **kw)
+                                 for t, m, g, kw in layers))
+        for fixed in (False, True):
+            V = (2.0 if fixed else 1.0) * F_y
+            rows = []
+            for b in PILE_BOUNDS:
+                prof = replace(base, stiffness_factor=base.stiffness_factor * b)
+                sol = sc._cached_pile_solve(SEIS_H, SEIS_L_EMBED, EI_col, EI_sh,
+                                            D_shaft, P, prof, V, head_fixed=fixed)
+                rows.append(dict(bound=b, stable=bool(sol.stable),
+                                 Df_eq=float(sol.Df_eq)))
+            out[f"{pname}|{'fixed' if fixed else 'free'}"] = dict(V_head=V, bounds=rows)
     return out
 
 
