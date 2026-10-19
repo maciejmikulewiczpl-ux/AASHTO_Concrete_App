@@ -294,10 +294,12 @@ def _ov_trans(ov):
 
 # ─── Bent run ───────────────────────────────────────────────────────
 
-def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=None):
+def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=None,
+             lu_iter=0):
     """One bent.  `sway`: the sway-group context of pass 2 (colshaft_slender
     make_magnifier; None = the bent alone).  `design_Df`: the Df for the design-pass
-    ℓu (ruling MF-5 redesign; None = the up-front estimate)."""
+    ℓu (rulings MF-5 / MF-5b redesign; None = the up-front estimate); `lu_iter`: the
+    redesign iteration count."""
     name = str(bent.get("name") or "")
     w = []
     nosol = []
@@ -377,8 +379,9 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=
         long_cage(col_lg.bar, col_lg.n, col_lg.bundle, Dc) if col_lg and col_lg.bar else None)
     col_trans_lrfd = _ov_trans(ov.get("col_trans")) or (
         trans_cage(col_tr.bar, col_tr.s, col_tr.ties) if col_tr and col_tr.bar else None)
-    source = {"col_long": "Override" if ov.get("col_long") else "LRFD",
-              "col_trans": "Override" if ov.get("col_trans") else "LRFD"}
+    ov_label = SRC_CHECK_ONLY if bent.get("_check_only") else "Override"   # ruling MF-2
+    source = {"col_long": ov_label if ov.get("col_long") else "LRFD",
+              "col_trans": ov_label if ov.get("col_trans") else "LRFD"}
     if col_long is None or col_trans_lrfd is None:
         return _bent_result(name, "NO SOLUTION", lrfd, None, None, source, [], nosol, w, axial, H)
 
@@ -580,18 +583,32 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=
                  f"max δ axis 2 = {dmax['2']:.3f}, axis 3 = {dmax['3']:.3f}")
     status = bent_status(bool(nosol), csl.ST_REFINED in sl,
                          any(not c["ok"] for c in final_checks), unstable)
-    # ruling MF-5: the design pass used ℓu = H + Df0; when the final check (ℓu = H + Df)
-    # fails only on magnified column rows, redesign the column once with the final ℓu
-    if (slender_on and design_Df is None and not ov.get("col_long") and not ov.get("col_trans")
-            and abs(Df - Df0) > 1e-9 and magnified_only_ng(col_summ, final_checks, nosol)):
-        out = run_bent(bent, pr, cats, prov, params, settings, mode, sway=sway, design_Df=Df)
-        out["warnings"].insert(0, f"slenderness: column redesigned once with the final ℓu (Df = "
-                               f"{Df / 12.0:.2f} ft; the design pass used Df = {Df0 / 12.0:.2f} ft)")
-        out["redesigned_final_lu"] = True
-        return out
+    # rulings MF-5 / MF-5b: the design pass used ℓu = H + Df0; while the final check
+    # (ℓu = H + Df) fails only on magnified column rows and ℓu moved by > 1 %, redesign the
+    # column with the final ℓu (max LU_MAX_ITER times: the heavier column deepens Df)
+    mag_ng = (slender_on and not ov.get("col_long") and not ov.get("col_trans")
+              and magnified_only_ng(col_summ, final_checks, nosol))
+    if mag_ng and lu_iter and not lu_not_settled(Df, Df0, H):
+        w.append(f"slenderness: ℓu settled within {LU_TOL:.0%} (design Df = {Df0 / 12.0:.2f} ft, "
+                 f"final Df = {Df / 12.0:.2f} ft) but the column still fails on magnified rows at "
+                 "the final ℓu")
+    if mag_ng and lu_not_settled(Df, Df0, H):
+        if lu_iter < LU_MAX_ITER:
+            return run_bent(bent, pr, cats, prov, params, settings, mode, sway=sway,
+                            design_Df=Df, lu_iter=lu_iter + 1)
+        w.append(f"slenderness: ℓu/Df did not converge (column ↔ fixity coupling) after "
+                 f"{LU_MAX_ITER} redesigns (design Df = {Df0 / 12.0:.2f} ft, final Df = "
+                 f"{Df / 12.0:.2f} ft); last result kept")
+    if lu_iter:
+        w.insert(0, f"slenderness: column redesigned {lu_iter} time(s) with the final ℓu (final "
+                    f"Df = {Df / 12.0:.2f} ft, design Df = {Df0 / 12.0:.2f} ft)")
     w += S.warnings
     out = _bent_result(name, status, lrfd, S, final, source, final_checks, nosol, w, axial, H)
     out["Df_for_lu"] = Df
+    if slender_on:
+        out["lu_iterations"] = lu_iter
+        if lu_iter:
+            out["redesigned_final_lu"] = True
     out["shaft_basis"] = basis
     out["H_auto"] = H_auto
     out["expected_steel"] = exp_steel
@@ -605,6 +622,14 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=
 
 
 WALK_NOSOL = "Column transverse: no candidate from the merged cage on"
+LU_MAX_ITER = 4
+LU_TOL = 0.01
+SRC_CHECK_ONLY = "LRFD (sway check-only)"
+
+
+def lu_not_settled(Df, Df0, H):
+    """Ruling MF-5b: the final ℓu = H + Df differs from the design-pass H + Df0 by > 1 %."""
+    return abs(Df - Df0) > LU_TOL * (H + Df)
 
 
 def magnified_only_ng(col_summ, final_checks, nosol):
@@ -754,7 +779,7 @@ def _check_only_spec(spec, res):
         cl_, ct = F["col_long"], F["col_trans"]
         ov["col_long"] = {"bar": cl_["bar"], "n": cl_["n"], "bundle": cl_.get("bundle", 1)}
         ov["col_trans"] = {"bar": ct["bar"], "s": ct["s"], "ties": ct.get("ties", 0)}
-    return dict(spec, override=ov)
+    return dict(spec, override=ov, _check_only=True)
 
 
 def sway_pass2(specs, results, rerun, max_iter=SWAY_MAX_ITER):

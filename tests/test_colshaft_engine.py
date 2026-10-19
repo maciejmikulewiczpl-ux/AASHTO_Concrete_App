@@ -1257,7 +1257,10 @@ def test_sway_pass2_inconsistent_after_max_iter_check_only():
     calls = []
     pe = {"A": 1000.0}
 
+    seen_specs = []
+
     def rerun(spec, ctx):
+        seen_specs.append(spec)
         calls.append((spec["name"], ctx["Pe_others"]["2"], spec.get("override")))
         if spec["name"] == "A" and not spec.get("override"):
             pe["A"] -= 100.0
@@ -1268,6 +1271,7 @@ def test_sway_pass2_inconsistent_after_max_iter_check_only():
     assert last_b[1] == pytest.approx(700.0)            # the minimum A value
     assert calls[-2][2]["col_long"] == {"bar": 11, "n": 15, "bundle": 1}
     assert calls[-2][2]["col_trans"] == {"bar": 5, "s": 6.0, "ties": 0}
+    assert all(sp.get("_check_only") for sp in seen_specs[-2:])
     assert any("not consistent after 3 pass-2 runs" in w for w in results[1]["warnings"])
 
 
@@ -1304,12 +1308,56 @@ def test_redesign_with_final_lu():
     r = ee.run_colshaft(payload([bent2(slender=sl)], settings={"slenderness_on": True}))
     strict_json(r)
     b = r["bents"][0]
-    assert b["redesigned_final_lu"] is True
+    assert b["redesigned_final_lu"] is True and b["lu_iterations"] == 1
     assert b["no_solution"] == [] and b["status"] != "NO SOLUTION"
     assert b["final"]["col_long"]["Ast"] > run("2b")["bents"][1]["final"]["col_long"]["Ast"]
-    assert b["warnings"][0].startswith("slenderness: column redesigned once with the final ℓu")
+    assert b["warnings"][0].startswith("slenderness: column redesigned 1 time(s) with the final ℓu")
     assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
     # an override is never redesigned
     ov = {"col_long": {"bar": 11, "n": 15, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
     r2 = ee.run_colshaft(payload([bent2(slender=sl, override=ov)], settings={"slenderness_on": True}))
     assert "redesigned_final_lu" not in r2["bents"][0]
+
+
+# ── review fix round 2 (rulings MF-5b, MF-2 label) ──────────────────
+
+def _sl(K):
+    return {"2": {"braced": False, "K": K, "lu": None}, "3": {"braced": False, "K": K, "lu": None}}
+
+
+def test_lu_iteration_converges_or_reports():
+    """MF-5b: bent 2, K = 2.3 needs two redesigns (the heavier column deepens Df) and then
+    passes the LRFD rows; K = 2.4 settles within 1 % but still fails -> clearly reported."""
+    b = ee.run_colshaft(payload([bent2(slender=_sl(2.3))],
+                                settings={"slenderness_on": True}))["bents"][0]
+    assert b["lu_iterations"] == 2 and b["no_solution"] == []
+    assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
+    assert b["warnings"][0].startswith("slenderness: column redesigned 2 time(s)")
+    assert not any("did not converge" in w for w in b["warnings"])
+    b = ee.run_colshaft(payload([bent2(slender=_sl(2.4))],
+                                settings={"slenderness_on": True}))["bents"][0]
+    assert b["lu_iterations"] >= 1 and b["status"] == "NO SOLUTION"
+    assert any("ℓu settled within 1%" in w and "still fails on magnified rows" in w
+               for w in b["warnings"])
+    # off / no redesign needed: 0 iterations
+    assert run("slender")["bents"][0]["lu_iterations"] == 0
+
+
+def test_lu_iteration_stops_at_max(monkeypatch):
+    """MF-5b: never more than LU_MAX_ITER redesigns; then the non-convergence warning."""
+    monkeypatch.setattr(ee, "lu_not_settled", lambda Df, Df0, H: True)
+    monkeypatch.setattr(ee, "magnified_only_ng", lambda *a: True)
+    b = ee.run_colshaft(payload([bent1()], settings={"slenderness_on": True}))["bents"][0]
+    assert b["lu_iterations"] == ee.LU_MAX_ITER == 4
+    assert any("ℓu/Df did not converge (column ↔ fixity coupling)" in w for w in b["warnings"])
+
+
+def test_check_only_source_label():
+    """MF-2: the sway check-only run labels the column cages "LRFD (sway check-only)",
+    never "Override"; a real user override still says "Override"."""
+    ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    b = ee.run_colshaft(payload([bent1(override=ov, _check_only=True)]))["bents"][0]
+    assert b["final_source"]["col_long"] == ee.SRC_CHECK_ONLY == "LRFD (sway check-only)"
+    assert b["final_source"]["col_trans"] == ee.SRC_CHECK_ONLY
+    b = ee.run_colshaft(payload([bent1(override=ov)]))["bents"][0]
+    assert b["final_source"]["col_long"] == "Override"

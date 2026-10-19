@@ -310,8 +310,8 @@ def test_js_unstable_status_and_gr60_mirror_python():
     import colshaft_engine as ee
     import colshaft_seismic as cs
     out = json.loads(_js_eval("const c=require(process.argv[1]);console.log(JSON.stringify("
-                              "{p:c.ST_UNSTABLE,g:c.GR60_EXPECTED}))"))
-    assert out["p"] == ee.ST_UNSTABLE
+                              "{p:c.ST_UNSTABLE,g:c.GR60_EXPECTED,s:c.SRC_CHECK_ONLY}))"))
+    assert out["p"] == ee.ST_UNSTABLE and out["s"] == ee.SRC_CHECK_ONLY
     assert out["g"] == {"fye": cs.FYE, "fue": cs.FUE, "fyh": cs.FYH}
 
 

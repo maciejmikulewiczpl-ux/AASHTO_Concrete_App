@@ -778,6 +778,20 @@ test('magnification rows (ruling M12): per axis table cells and the EI / beta_d 
   assert.ok(CS.MAG_EQ.some(x => /component maxima/.test(x)));
 });
 
+test('sway check-only source label (ruling MF-2): not shown as an override', () => {
+  assert.strictEqual(CS.SRC_CHECK_ONLY, 'LRFD (sway check-only)');
+  const res = { settings: { slenderness_on: true }, bents: [{ name: 'B', status: 'OK', lrfd: { col: {} }, seismic: null,
+    final: { col_long: { bar: 11, n: 15, bundle: 1 }, col_trans: { bar: 5, s: 6, ties: 0 },
+      shaft_long: { bar: 14, n: 22, bundle: 1 }, shaft_trans: { bar: 5, s: 6, ties: 0 } },
+    final_source: { col_long: CS.SRC_CHECK_ONLY, col_trans: CS.SRC_CHECK_ONLY, shaft_long: 'LRFD', shaft_trans: 'LRFD' },
+    final_checks: [] }] };
+  const r = CS.resultRows(res)[0];
+  assert.strictEqual(r.override, '—');
+  assert.ok(r.final.indexOf('(LRFD (sway check-only))') > 0, r.final);
+  const h = CS.reportHtml(Object.assign(reportFixture(), {}), RPT_PAYLOAD, {});
+  assert.ok(h.indexOf('LRFD (sway check-only) (the LRFD column cage re-checked') > 0);
+});
+
 const di = process.argv.indexOf('--dump');
 if (di > 0) {
   fs.writeFileSync(process.argv[di + 1], JSON.stringify(CS.buildPayload(sampleState())));

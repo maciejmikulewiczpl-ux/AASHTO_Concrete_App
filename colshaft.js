@@ -91,6 +91,9 @@
   var DEFAULT_K_WARNING = 'Default K values are Table C4.6.2.5-1 design values for idealised end conditions — ' +
     'override with a buckling-analysis K if the restraint differs';
   var UNSTABLE_REASON = 'magnification unstable (Pu ≥ φK·Pe)';
+  // colshaft_engine.SRC_CHECK_ONLY (ruling MF-2; pinned equal by the pytest): a column cage
+  // re-checked in the sway-group check-only run is the LRFD design, not a user override
+  var SRC_CHECK_ONLY = 'LRFD (sway check-only)';
   var UNBRACED_K_LT1_WARNING = 'unbraced K < 1.0 from buckling analysis is below the C5.6.4.3 floor (\'taken as not less than 1.0\')';
   var BRACED_K_LT1_NOTE = 'braced K < 1.0 requires supporting analysis';
   // colshaft_lrfd.LONG_NA / LONG_NA_REASON (pinned equal by the pytest)
@@ -1123,7 +1126,8 @@
       ['Column transverse', transStr(F.col_trans), src.col_trans || '—', 'ρs = ' + fmt(F.col_trans && F.col_trans.rho_s, 4)],
       ['Shaft longitudinal', longStr(F.shaft_long), src.shaft_long || '—', 'Ast = ' + fmt(F.shaft_long && F.shaft_long.Ast, 2) + ' in², ρl = ' + fmt(F.shaft_long && F.shaft_long.rho_l, 4)],
       ['Shaft transverse', transStr(F.shaft_trans), src.shaft_trans || '—', 'ρs = ' + fmt(F.shaft_trans && F.shaft_trans.rho_s, 4)]]) +
-      rptNote('Source: LRFD, Seismic, LRFD+Seismic (merged cage re-walked, ruling 8-15) or Override (used as entered).')
+      rptNote('Source: LRFD, Seismic, LRFD+Seismic (merged cage re-walked, ruling 8-15), Override (used as entered) or ' +
+        SRC_CHECK_ONLY + ' (the LRFD column cage re-checked with the sway-group minimum Pe,s, ruling MF-2).')
       : rptNote('No final cage (no solution).');
     var h = '<div class="cs-rpt-bent' + (k ? ' cs-rpt-break' : '') + '"><h2>Bent ' + esc(b.name) + ' — <span class="' +
       statusClass(b.status) + '">' + esc(b.status) + '</span></h2>';
@@ -1180,7 +1184,7 @@
     UNVERIFIED_SUFFIX: UNVERIFIED_SUFFIX, OPEN_DECIDE_E: OPEN_DECIDE_E, REPORT_SECTIONS: REPORT_SECTIONS,
     seismicRef: seismicRef, checkRef: checkRef, slenderAxes: slenderAxes, mphiChart: mphiChart,
     shaftSeries: shaftSeries, shaftCharts: shaftCharts, reportHtml: reportHtml, codeLabel: codeLabel,
-    ST_UNSTABLE: ST_UNSTABLE, statusClass: statusClass, expectedErrors: expectedErrors, layerErrors: layerErrors,
+    ST_UNSTABLE: ST_UNSTABLE, SRC_CHECK_ONLY: SRC_CHECK_ONLY, statusClass: statusClass, expectedErrors: expectedErrors, layerErrors: layerErrors,
     expectedStr: expectedStr, shaftSourceNote: shaftSourceNote, GR60_EXPECTED: GR60_EXPECTED,
     EXPECTED_HINT: EXPECTED_HINT, STALE_MSG: STALE_MSG,
     K_SOURCES: K_SOURCES, END_CONDITIONS: END_CONDITIONS, TABLE_K: TABLE_K, TABLE_CASE: TABLE_CASE, UNSTABLE_REASON: UNSTABLE_REASON, DEFAULT_K_WARNING: DEFAULT_K_WARNING,
