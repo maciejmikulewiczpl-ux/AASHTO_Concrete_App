@@ -87,7 +87,7 @@ PAYLOADS = {
     "2b": lambda: payload([bent1(), bent2()]),
     # 6-#5 column override + #4 @ 6 shaft transverse override + a missing frame
     "ov": lambda: payload([bent1(col_frames=["101", "999"], override={
-        "col_long": {"bar": 5, "n": 6, "bundle": 1},
+        "col_long": {"bar": 5, "n": 6, "bundle": 1}, "col_trans": {"bar": 4, "s": 6.0},
         "shaft_trans": {"bar": 4, "s": 6.0}})]),
     "mo_hi": lambda: payload([bent1(override={"col_long": {"bar": 10, "n": 22, "bundle": 1}})]),
     # SGS + heavy column transverse override: drives shaft long + trans sizing
@@ -97,7 +97,7 @@ PAYLOADS = {
     "nosol": lambda: payload([bent1(shaft_frames=[], L_eq_in=2400.0)]),
     "slender": lambda: payload([bent1(), bent1(name="B1R", slender=BIG)],
                                settings={"slenderness_on": True}),
-    "member": lambda: payload([bent1()], settings={"envelope_mode": "member"}),
+    "member": lambda: payload([bent1(), bent2()], settings={"envelope_mode": "member"}),
 }
 RUNS = {}
 
@@ -208,6 +208,14 @@ def test_override_transverse_kept():
     assert sh["final_source"]["shaft_trans"] == "Override"
     t = sh["final"]["shaft_trans"]
     assert (t["bar"], t["s"], t["ties"]) == (4, 6.0, 0)
+    # weak COLUMN transverse override #4 @ 6: kept as entered (never upgraded by the
+    # seismic merge or the 8-15 walk), checks fail -> NG, not NO SOLUTION
+    assert sh["final_source"]["col_trans"] == "Override"
+    t = sh["final"]["col_trans"]
+    assert (t["bar"], t["s"], t["ties"]) == (4, 6.0, 0)
+    assert sh["lrfd"]["col"]["trans"] is None
+    assert chk(sh, "Transverse steel ratio (min)")["ok"] is False      # rho_s #4 @ 6 too low
+    assert sh["status"] == "NG" and sh["no_solution"] == []
     col = run("sgs")["bents"][0]                         # col_trans #8 @ 3 override
     assert col["final_source"]["col_trans"] == "Override"
     t = col["final"]["col_trans"]
@@ -284,6 +292,43 @@ def test_merged_cage_failing_lrfd_walks_to_next(monkeypatch):
     k = seq.index((bad[0], bad[2], round(bad[1], 2)))
     assert seq.index((t["bar"], t["ties"], round(t["s"], 2))) > k
     assert b["status"] == "OK"
+
+
+def test_merged_shaft_cage_failing_lrfd_walks_to_next(monkeypatch):
+    """Shaft branch of ruling 8-15: the shaft cage fails its LRFD rows on the final
+    cages although the LRFD design passed -> walk to the next candidate passing the
+    shaft LRFD rows and the shaft seismic checks."""
+    base = run("2b")["bents"][0]["final"]["shaft_trans"]
+    bad = (base["bar"], base["s"], base["ties"])
+    real = ee.rows_pass
+
+    def fake(member, cage, rows, tf):
+        if float(member["D"]) == 84.0 and (cage["trans_bar"], cage["s"], cage["ties"]) == bad:
+            return False
+        return real(member, cage, rows, tf)
+    monkeypatch.setattr(ee, "rows_pass", fake)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    strict_json(b)
+    t = b["final"]["shaft_trans"]
+    assert b["final_source"]["shaft_trans"] == "LRFD+Seismic"
+    seq = [(x[0], x[1], round(x[2], 2)) for x in cl.transverse_candidates({"code": "SDC 2.1"})]
+    assert seq.index((t["bar"], t["ties"], round(t["s"], 2))) > \
+        seq.index((bad[0], bad[2], round(bad[1], 2)))
+    assert b["status"] == "OK"
+    assert b["Df_for_lu"] == 120.0                  # recomputed after the walk (cantilever L_eq)
+
+
+def test_walk_trans_start_not_in_candidates():
+    """A merged cage with extra ties is not a candidate: the walk starts at the
+    first candidate whose Av/s >= the merged cage's, never at index 0."""
+    start = csh.trans_cage(5, 4.0, 3)               # maxLegs 2 -> ties 0 only in the list
+    floor = csh.av_per_s(start)
+    seq = list(cl.transverse_candidates(None))
+    first = next(c for c in seq if csh.av_per_s({"bar": c[0], "s": c[2], "ties": c[1]}) >= floor)
+    seen = []
+    csh.walk_trans(start, None, lambda t: seen.append((t["bar"], t["ties"], t["s"])) or True)
+    assert seen == [first] and seq.index(first) > 0
+    assert csh.walk_trans(csh.trans_cage(8, 0.5, 6), None, lambda t: True) is None
 
 
 def test_mo_uses_final_cage():
@@ -493,6 +538,74 @@ def test_py_strength_check_ng_when_row_skipped(monkeypatch):
     assert r0["_klr2"] == pytest.approx(2.1 * (300.0 + Df) / (0.25 * 54.0))
 
 
+SOFT2 = {"layers": [{"thickness_ft": 80.0, "py_model": "matlock_soft_clay", "gamma_pcf": 110.0,
+                     "su_top_ksf": 0.3, "su_bot_ksf": 0.5, "eps50": 0.02, "submerged": True}],
+         "J": 0.5, "cyclic": True}
+
+
+@pytest.mark.parametrize("P", [8000.0, 12000.0])
+def test_ramp_guard_rejects_post_buckled_state(P):
+    """Ruling 8-16: soft clay x0.5, M 5000 / V 400.  The solver reports a stable
+    (post-buckled, wavy) state at the full axial load, but the solve at P = 0
+    runs away: the axial-ramp guard rejects the bound and the row is skipped."""
+    prof = cs.soil_profile(SOFT2)
+    p = replace(prof, stiffness_factor=prof.stiffness_factor * 0.5)
+    assert csh._cached_pile_solve(0.0, 720.0, 9e8, 9e8, 84.0, P, p, 400.0, -5000.0).stable
+    row = {"Pu": -P, "Mu": 5000.0, "Vu": 400.0, "Tu": 0.0, "_case": "X", "_Pmin": -P}
+    out, info = csh.pile_strength_row(row, 720.0, 9e8, 84.0, prof, (0.5,))
+    assert out is None and info["bounds"][0]["stable"] is False
+    assert "unstable at P = 0" in info["bounds"][0]["reject"]
+    rows, skipped = csh.strength_rows_through_pile([row], 720.0, 9e8, 84.0, prof, (0.5,))
+    assert rows == [] and skipped == [row]
+    assert ee.py_check(skipped, 1)["ok"] is False
+
+
+def test_ramp_guard_engine_soft_soil_ng():
+    b = ee.run_colshaft(payload([bent2(soil=copy.deepcopy(SOFT2), soil_bounds=[0.5])]))["bents"][0]
+    strict_json(b)
+    c = chk(b, "Shaft p-y strength solve")
+    assert c["ok"] is False and c["demand"] == c["capacity"] == 3
+    assert b["lrfd"]["shaft"] is None and b["status"] == "NG"
+
+
+def test_ramp_guard_accepts_stiff_case_unchanged():
+    prof = cs.soil_profile(SOIL)
+    p = replace(prof, stiffness_factor=prof.stiffness_factor * 2.0)
+    row = {"Pu": -12000.0, "Mu": 5000.0, "Vu": 400.0, "Tu": 0.0, "_Pmin": -12000.0}
+    out, info = csh.pile_strength_row(row, 720.0, 9e8, 84.0, prof, (2.0,))
+    full = csh._cached_pile_solve(0.0, 720.0, 9e8, 9e8, 84.0, 12000.0, p, 400.0, -5000.0)
+    assert info["bounds"][0]["stable"] and info["bounds"][0]["reject"] is None
+    assert out["Mu"] == full.max_inground_moment and out["Vu"] == max(full.max_inground_shear, 400.0)
+
+
+class _Sol:
+    def __init__(self, stable, y, m):
+        self.stable, self.head_deflection, self.moment = stable, y, [m, m]
+
+
+@pytest.mark.parametrize("sols, why", [
+    ([(True, 1.0, 5000.0)] * 5, None),
+    ([(True, 1.0, 5000.0), (True, 1.1, 5000.0), (False, 9.0, 5000.0)] + [(True, 2.0, 5000.0)] * 2,
+     "solver unstable"),
+    ([(True, 1.0, 5000.0), (True, 1.2, 5000.0), (True, 0.9, 5000.0)] + [(True, 2.0, 5000.0)] * 2,
+     "head deflection decreases"),
+    ([(True, 1.0, 5000.0), (True, 1.1, -5000.0)] + [(True, 2.0, 5000.0)] * 3, "top-of-shaft moment"),
+    ([(True, 1.0, 5000.0), (True, 1.1, 4900.0)] + [(True, 2.0, 5000.0)] * 3, "top-of-shaft moment"),
+])
+def test_ramp_stable_criteria(monkeypatch, sols, why):
+    calls = []
+
+    def fake(Hcol, L, EIc, EIs, Ds, P, prof, V, M):
+        calls.append(P)
+        return _Sol(*sols[len(calls) - 1])
+    monkeypatch.setattr(csh, "_cached_pile_solve", fake)
+    s, reason = csh.ramp_stable(720.0, 9e8, 84.0, 8000.0, None, 400.0, -5000.0, 5000.0)
+    if why is None:
+        assert reason is None and calls == [0.0, 2000.0, 4000.0, 6000.0, 8000.0]
+    else:
+        assert reason.startswith(why)
+
+
 def test_py_check_unit():
     ok = ee.py_check([], 4)
     assert ok["ok"] and ok["name"] == "Shaft p-y strength solve" and ok["group"] == "Shaft LRFD"
@@ -537,16 +650,19 @@ def test_bent_status_precedence():
 # ── envelope mode (ruling 8-8) ──────────────────────────────────────
 
 def test_member_mode_never_less_steel_than_station_mode():
-    s = run("2b")["bents"][0]
     r = run("member")
     strict_json(r)
     assert r["settings"]["envelope_mode"] == "member"
-    m = r["bents"][0]
-    assert m["lrfd"]["col"]["n_rows"] == 1 and m["lrfd"]["shaft"]["n_rows"] == 1
-    assert m["lrfd"]["col"]["long"]["Ast"] >= s["lrfd"]["col"]["long"]["Ast"] - 1e-9
-    assert m["final"]["col_long"]["Ast"] >= s["final"]["col_long"]["Ast"] - 1e-9
-    assert m["final"]["col_trans"]["Av_s"] >= s["final"]["col_trans"]["Av_s"] - 1e-12
-    assert m["final"]["shaft_long"]["Ast"] >= s["final"]["shaft_long"]["Ast"] - 1e-9
+    for s, m in zip(run("2b")["bents"], r["bents"]):     # bent 1 (shaft frames), bent 2 (p-y)
+        assert m["lrfd"]["col"]["n_rows"] == 1
+        assert m["lrfd"]["col"]["long"]["Ast"] >= s["lrfd"]["col"]["long"]["Ast"] - 1e-9
+        assert m["final"]["col_long"]["Ast"] >= s["final"]["col_long"]["Ast"] - 1e-9
+        assert m["final"]["col_trans"]["Av_s"] >= s["final"]["col_trans"]["Av_s"] - 1e-12
+        assert m["final"]["shaft_long"]["Ast"] >= s["final"]["shaft_long"]["Ast"] - 1e-9
+    assert r["bents"][0]["lrfd"]["shaft"]["n_rows"] == 1
+    # p-y bent: base rows come from the station rows, so the same governing rows are solved
+    assert r["bents"][1]["lrfd"]["shaft"]["source"] == csh.PY_SOURCE
+    assert len(r["bents"][1]["lrfd"]["shaft"]["rows"]) == 3
 
 
 def test_envelope_mode_validated():

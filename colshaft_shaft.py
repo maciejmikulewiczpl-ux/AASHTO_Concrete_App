@@ -186,11 +186,16 @@ def merge_trans(lrfd: dict, seis: dict):
 
 def walk_trans(start: dict, params: dict, ok):
     """First transverse_candidates entry at or after `start` (in that order) for
-    which ok(trans cage) is True; None if none passes.  A start not in the list
-    walks the whole list."""
+    which ok(trans cage) is True; None if none passes.  A start that is not in the
+    list (e.g. a merged cage with extra ties) starts at the first candidate whose
+    Av/s >= the start's; none such -> None."""
     seq = list(cl.transverse_candidates(params))
     key = (int(start["bar"]), int(start.get("ties", 0) or 0), round(float(start["s"]), 2))
-    k = next((i for i, c in enumerate(seq) if (c[0], c[1], round(c[2], 2)) == key), 0)
+    k = next((i for i, c in enumerate(seq) if (c[0], c[1], round(c[2], 2)) == key), None)
+    if k is None:
+        floor = av_per_s(start)
+        k = next((i for i, c in enumerate(seq)
+                  if av_per_s({"bar": c[0], "s": c[2], "ties": c[1]}) >= floor - 1e-12), len(seq))
     for bar, ties, s in seq[k:]:
         t = trans_cage(bar, s, ties)
         if ok(t):
@@ -224,10 +229,41 @@ def interface_forces(sol, prof, Ds: float) -> tuple:
     return sol.moment[0], sol.shear[0] + k * sol.y[0]
 
 
+N_RAMP = 4          # axial ramp P_k = P*k/N_RAMP, k = 0..N_RAMP (ruling 8-16)
+
+
+def ramp_stable(L_embed, EI_sh, Ds, axial_comp, prof, V_h, M_h, M_b):
+    """Axial-ramp stability guard for a shaft-alone strength solve (ruling 8-16).
+
+    The solver's `stable` flag (y_top * V > 0) can accept a post-buckled (wavy)
+    state at high axial load.  The bound is accepted only if, at every ramp level
+    P_k = P*k/4 (k = 0..4, cached solves):
+      * the solver reports stable;
+      * |y_top| does not decrease along the ramp (P-Delta can only amplify);
+      * the top-of-shaft moment keeps the sign of M_b and is >= (1 - 0.005)*|M_b|.
+    -> (solution at the full axial load, None) or (last solution, reason)."""
+    prev_y = None
+    s = None
+    for k in range(N_RAMP + 1):
+        P = axial_comp * k / N_RAMP + 0.0
+        s = _cached_pile_solve(0.0, L_embed, EI_sh, EI_sh, Ds, P, prof, V_h, M_h)
+        if not s.stable:
+            return s, f"solver unstable at P = {P:.0f} kip"
+        y = abs(s.head_deflection)
+        if prev_y is not None and y < prev_y * (1.0 - 1e-9):
+            return s, f"head deflection decreases along the axial ramp at P = {P:.0f} kip"
+        prev_y = y
+        if M_b > 0:
+            Mi = s.moment[0]
+            if Mi <= 0 or abs(Mi) < (1.0 - 0.005) * M_b:
+                return s, f"top-of-shaft moment {Mi:.0f} != M_base {M_b:.0f} at P = {P:.0f} kip"
+    return s, None
+
+
 def pile_strength_row(row: dict, L_embed: float, EI_sh: float, Ds: float, prof, bounds,
                       axial_comp: float = None):
-    """Shaft demand row for one column-base Strength row, or None if the solver
-    reports every soil bound unstable.  axial_comp (compression +) defaults to
+    """Shaft demand row for one column-base Strength row, or None if every soil
+    bound fails the axial-ramp guard (ramp_stable).  axial_comp (compression +) defaults to
     -_Pmin (most compression).  Mu / Vu = the max below-ground |M| / |V| over the
     stable bounds (upstream inground_demand envelope), never less than the base
     values.  Returns (row | None, info) with the interface (M, V) per bound."""
@@ -240,12 +276,13 @@ def pile_strength_row(row: dict, L_embed: float, EI_sh: float, Ds: float, prof, 
     n_ok = 0
     for f in bounds:
         p = replace(prof, stiffness_factor=prof.stiffness_factor * f)
-        s = _cached_pile_solve(0.0, L_embed, EI_sh, EI_sh, Ds, axial_comp, p, V_h, M_h)
-        Mi, Vi = interface_forces(s, p, Ds) if s.stable else (None, None)
-        info["bounds"].append({"factor": f, "stable": bool(s.stable),
-                               "M_interface": Mi, "V_interface": Vi,
-                               "Mmax": s.max_inground_moment if s.stable else None})
-        if s.stable:
+        s, why = ramp_stable(L_embed, EI_sh, Ds, axial_comp, p, V_h, M_h, M_b)
+        ok = why is None
+        Mi, Vi = interface_forces(s, p, Ds) if ok else (None, None)
+        info["bounds"].append({"factor": f, "stable": ok, "solver_stable": bool(s.stable),
+                               "reject": why, "M_interface": Mi, "V_interface": Vi,
+                               "Mmax": s.max_inground_moment if ok else None})
+        if ok:
             n_ok += 1
             M_ig = max(M_ig, s.max_inground_moment)
             V_ig = max(V_ig, s.max_inground_shear)

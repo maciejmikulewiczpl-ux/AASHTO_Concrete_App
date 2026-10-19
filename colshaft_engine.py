@@ -491,6 +491,8 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     col_full, sh_full = full_cage(col_long, col_trans), full_cage(sh_long, sh_trans)
     if changed:
         S = seis(col_full, sh_full)
+        Df = S.Df if S.Df is not None else 0.0
+        tf_final = transform_for(Df)
         if py_ctx is not None:
             sh_rows, skipped = py_rows(py_ctx, S.EI_shaft, Ds)
 
