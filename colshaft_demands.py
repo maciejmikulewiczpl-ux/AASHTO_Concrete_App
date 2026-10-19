@@ -233,11 +233,28 @@ def column_height_in(rows, frames):
     return h
 
 
+# Ruling C-1: CSiBridge "correspondence" output (StepType "Max P", "Min M3", "Max V2", ...).
+# Each row is one concurrent state, so the rows are concurrent design rows, but the
+# correspondence is computed PER STATION: the "Max P" rows at the two column ends need
+# not be the same load state, so they give no end-moment pair (M1/M2 = +1, like envelope
+# rows).  Plain "Max" / "Min" are envelope rows (csi_import).
+_CORRESPONDENCE = re.compile(r"^(max|min)\s+\S+", re.IGNORECASE)
+
+
+def is_correspondence_step(step) -> bool:
+    """True for a correspondence StepType such as "Max P" / "Min M3" (ruling C-1)."""
+    return bool(_CORRESPONDENCE.match(str(step or "").strip()))
+
+
 def end_moments(rows, frames, case, step, warnings=None, categories=None):
     """{"M2": (top, bottom), "M3": (top, bottom)} signed kip-in for one
     concurrent (case, step), or None if the case has only envelope rows or the
     step is missing at either end.  Bottom = base end of the bottom frame of
-    the stack; top = the non-base end of the top frame (see column_stack)."""
+    the stack; top = the non-base end of the top frame (see column_stack).
+    A correspondence step ("Max P", ...; ruling C-1) -> None (ends may be different
+    load states)."""
+    if is_correspondence_step(step):
+        return None
     st = column_stack(rows, frames, warnings, categories)
     if not st:
         return None

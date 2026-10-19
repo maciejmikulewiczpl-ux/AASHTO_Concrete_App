@@ -185,3 +185,37 @@ def test_base_vote_excludes_extreme_rows():
     assert cd.detect_base_end(rows, ["F1"]) == "max"
     assert cd.base_axial(rows, ["F1"], {}, "Strength", "auto") == [-20]
     assert cd.base_axial(rows, ["F1"], {}, "Extreme", "auto") == [-5]
+
+
+
+# ── Ruling C-1: correspondence step types ("Max P", "Min P", ...) ────
+
+def _read_fixture(name):
+    here = os.path.dirname(__file__)
+    with open(os.path.join(here, "fixtures_csi", name), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_concurrent_fixture_parses():
+    pr = parse_csi_frame_forces(_read_fixture("frame1227_strI1_concurrent.txt"))
+    assert len(pr.rows) == 6 and pr.n_envelope == 0
+    r = pr.rows[0]
+    assert (r.frame, r.station_in, r.case, r.step_type) == ("1227", 0.0, "Str-I1", "Max P")
+    assert r.P == pytest.approx(-2948.927) and r.V2 == pytest.approx(507.258)
+    assert r.V3 == pytest.approx(-252.651)
+    assert r.T == pytest.approx(1670.0422 * 12.0)              # kip-ft -> kip-in
+    assert r.M2 == pytest.approx(-1509.5659 * 12.0)
+    assert r.M3 == pytest.approx(-2851.8496 * 12.0)
+    assert not r.envelope
+
+
+def test_correspondence_step_end_moments_none():
+    assert [cd.is_correspondence_step(x) for x in ("Max P", "min m3", " Max V2 ", "Max", "Min",
+                                                  "", None, "Step 1")] == \
+        [True, True, True, False, False, False, False, False]
+    pr = parse_csi_frame_forces(_read_fixture("frame1227_strI1_concurrent.txt"))
+    for step in ("Max P", "Min P"):
+        assert cd.end_moments(pr.rows, ["1227"], "Str-I1", step) is None
+    # the design rows stay concurrent (one per station and step)
+    rows = cd.demand_rows(pr.rows, ["1227"], None, "Strength")
+    assert len(rows) == 6 and all(d["_bound"] == "concurrent" for d in rows)

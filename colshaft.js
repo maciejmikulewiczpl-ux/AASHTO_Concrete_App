@@ -815,7 +815,9 @@
       'separate the gravity moment M2b from the sway moment M2s).'],
     ['E21', 'Cm = 1.0 for the δb of an unbraced axis (conservative reading of "For all other cases, Cm shall be taken as 1.0").'],
     ['E22', 'Sway groups: δs from ΣPu / ΣPe by a two-pass approximation (pass 1 each bent alone; pass 2 with the other members\' ' +
-      'pass-1 Pe,s and their Pu of the same load case).']
+      'pass-1 Pe,s and their Pu of the same load case).'],
+    ['E23', 'Column ↔ fixity iteration: the column is redesigned with the final ℓu while ℓu moves > 1 % (max 4), then once ' +
+      'for max(ℓu) × 1.02 when it still fails on magnified rows (kept only if it passes).']
   ];
   var REPORT_SECTIONS = [
     ['inputs', '1. Inputs'], ['parse', '2. Parse summary'], ['lrfd', '3. LRFD strength design — governing rows'],
@@ -880,7 +882,7 @@
         db: !isNum(a.db) ? (a.unstable ? 'unstable' : a.neglect_note ? 'n/a' : '—') : fmtD(a.db, 3),
         ds: !isNum(a.ds) ? (a.unstable ? 'unstable' : a.neglect_note ? 'n/a' : '—') : fmtD(a.ds, 3),
         delta: a.unstable && !isNum(a.delta) ? UNSTABLE_REASON :
-          (a.neglect_note && (!isNum(a.db) || !isNum(a.ds)) ? fmtD(a.delta, 3) + ' (' + a.neglect_note + ')' : fmtD(a.delta, 3)),
+          (a.neglect_note ? fmtD(a.delta, 3) + ' (' + a.neglect_note + ')' : fmtD(a.delta, 3)),
         row: a.row ? String(a.row) + (a.case ? ' (' + a.case + ')' : '') : '—',
         Pu: isNum(a.Pu) ? fmt(a.Pu, 0) + (isNum(a.sPu) && Math.abs(a.sPu - a.Pu) > 1e-6 ? ' (Σ ' + fmt(a.sPu, 0) + ')' : '') : '—' };
     });

@@ -774,6 +774,10 @@ test('magnification rows (ruling M12): per axis table cells and the EI / beta_d 
     neglect_note: 'neglected per §5.6.4.3 screen (δ would be unstable)' };
   const n = CS.magRows(b)[0];
   assert.deepStrictEqual([n.ds, n.delta], ['n/a', '1.000 (neglected per §5.6.4.3 screen (δ would be unstable))']);
+  // re-review 6: the governing row is a different (numeric) row -> the note still shows
+  b.magnification.axes['2'].ds = 1.02;
+  const n2 = CS.magRows(b)[0];
+  assert.deepStrictEqual([n2.ds, n2.delta], ['1.020', '1.000 (neglected per §5.6.4.3 screen (δ would be unstable))']);
   // minor 4 documented in the report equations
   assert.ok(CS.MAG_EQ.some(x => /component maxima/.test(x)));
 });

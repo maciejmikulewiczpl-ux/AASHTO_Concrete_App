@@ -81,6 +81,7 @@ Ported verbatim from `Seismic Column` @ 9265d67 into `seismic_port/provisions.py
 | E20 | DECIDE | Column-on-shaft moment magnification (ruling M6, 2026-10-19): CSiBridge combinations do not separate the gravity moment M<sub>2b</sub> from the sway moment M<sub>2s</sub>, so Eq. 4.5.3.2.2b-1 (M<sub>c</sub> = δ<sub>b</sub>M<sub>2b</sub> + δ<sub>s</sub>M<sub>2s</sub>) is replaced by the conservative bound M<sub>c</sub> = max(δ<sub>b</sub>, δ<sub>s</sub>)·M<sub>2</sub> per axis (valid because δ<sub>b</sub>, δ<sub>s</sub> ≥ 1 and both moments are positive); M2 and M3 are magnified separately and Mu = hypot. Accept, or supply separate gravity/sway cases? (`colshaft_slender.make_magnifier`.) |
 | E21 | DECIDE | Column-on-shaft Cm (ruling M5, 2026-10-19): Eq. 4.5.3.2.2b-6 (C<sub>m</sub> = 0.6 + 0.4·M<sub>1b</sub>/M<sub>2b</sub>) is used only on axes braced against sidesway (no transverse loads between supports assumed for columns); the δ<sub>b</sub> of an UNBRACED axis uses C<sub>m</sub> = 1.0 (conservative reading of "For all other cases, Cm shall be taken as 1.0"). Envelope rows / no end moments → M1b/M2b = +1 → C<sub>m</sub> = 1.0. |
 | E22 | DECIDE | Column-on-shaft sway groups (ruling M9, 2026-10-19): δ<sub>s</sub> for a group of bents (`sway_group`) uses ΣPu / ΣPe by a two-pass approximation — pass 1 designs each bent alone; pass 2 re-runs each member with ΣPe = own candidate Pe,s + the other members' pass-1 final-cage Pe,s, and ΣPu = own row Pu + the other members' most compressive Pu of the same load case and step (envelope rows: same case); an unmatched case falls back to Pu × n<sub>members</sub> with a warning; member-mode rows use the others' maximum compression over all cases (MF-3). Consistency (MF-2): pass 2 is repeated (max 3) until every member's Pe,s ≥ the value the others counted, else a warning and a check-only run with the minimum values. (`colshaft_engine.sway_pass2`.) |
+| E23 | DECIDE | Column-on-shaft column ↔ fixity iteration (rulings MF-5 / MF-5b / MF-5c, 2026-10-19): the column design pass uses ℓu = H + Df0 (Df unknown up front for the soil basis); when the final check at ℓu = H + Df fails only on magnified / unstable column rows, the column is redesigned with the final ℓu while ℓu moves > 1 % (max 4 iterations; a heavier column deepens Df); if it then still fails, one final redesign for max(ℓu seen) × 1.02 is kept when it passes at its own final ℓu. Accept the 1 % tolerance, 4 iterations and the 2 % margin? (`colshaft_engine.run_bent`, `lu_not_settled`, `LU_MARGIN`.) |
 
 ---
 
@@ -88,7 +89,7 @@ Ported verbatim from `Seismic Column` @ 9265d67 into `seismic_port/provisions.py
 
 | Need | Closes |
 |---|---|
-| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, H1, H3, E13, E14, E17, E18, E20, E21, E22 |
+| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, H1, H3, E13, E14, E17, E18, E20, E21, E22, E23 |
 
 Not implemented (optional): the C5.7.2.8-1 alternative for circular members (d<sub>v</sub> = M<sub>n</sub>/(A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub>) with M<sub>n</sub> ignoring axial load and half-section steel); the engine uses the permitted 0.9d<sub>e</sub> alternative.
 

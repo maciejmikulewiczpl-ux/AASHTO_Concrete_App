@@ -1350,19 +1350,89 @@ def test_lu_iteration_converges_or_reports():
 
 def test_lu_iteration_stops_at_max(monkeypatch):
     """MF-5b: never more than LU_MAX_ITER redesigns; then the non-convergence warning."""
-    monkeypatch.setattr(ee, "lu_not_settled", lambda Df, Df0, H: True)
+    monkeypatch.setattr(ee, "lu_not_settled", lambda bent, Df, Df0, H: True)
     monkeypatch.setattr(ee, "magnified_only_ng", lambda *a: True)
     b = ee.run_colshaft(payload([bent1()], settings={"slenderness_on": True}))["bents"][0]
     assert b["lu_iterations"] == ee.LU_MAX_ITER == 4
-    assert any("ℓu/Df did not converge (column ↔ fixity coupling)" in w for w in b["warnings"])
+    # O3: the margin run (accepted here) resolved it; no stale "last result kept" text
+    assert b["lu_margin"] == 1.02
+    assert any("did not converge after 4 redesigns; resolved by the margin run" in w
+               for w in b["warnings"])
+    assert not any("last result kept" in w for w in b["warnings"])
+
+
+def test_margin_run_rejected_warning(monkeypatch):
+    """O3: a margin run that does not pass is dropped with a warning."""
+    orig = ee.run_bent
+
+    def fake(*a, **k):
+        if k.get("lu_margin"):
+            return {"no_solution": ["x"], "status": "NO SOLUTION", "lrfd": {}, "warnings": []}
+        return orig(*a, **k)
+    monkeypatch.setattr(ee, "run_bent", fake)
+    monkeypatch.setattr(ee, "lu_not_settled", lambda bent, Df, Df0, H: False)
+    monkeypatch.setattr(ee, "magnified_only_ng", lambda *a: True)
+    b = ee.run_colshaft(payload([bent1()], settings={"slenderness_on": True}))["bents"][0]
+    assert "lu_margin" not in b and b["lu_iterations"] == 0
+    assert any("margin redesign at ℓu × 1.02 tried; did not pass" in w for w in b["warnings"])
+
+
+def test_lu_not_settled_uses_actual_axis_lu():
+    """O2: compares the ℓu each axis uses; explicit ℓu on both axes never loops."""
+    both = {"slender": {"2": {"lu": 500.0}, "3": {"lu": 600.0}}}
+    assert not ee.lu_not_settled(both, 300.0, 0.0, 240.0) and not ee.default_lu_axes(both)
+    one = {"slender": {"2": {"lu": 500.0}, "3": {"lu": None}}}
+    assert ee.lu_not_settled(one, 300.0, 0.0, 240.0) and ee.default_lu_axes(one)
+    assert not ee.lu_not_settled(one, 300.0, 297.0, 240.0)       # 3 in of 540 in < 1 %
+    assert ee.axis_lu(one, 240.0, 300.0) == {"2": 500.0, "3": 540.0}
 
 
 def test_check_only_source_label():
     """MF-2: the sway check-only run labels the column cages "LRFD (sway check-only)",
     never "Override"; a real user override still says "Override"."""
     ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
-    b = ee.run_colshaft(payload([bent1(override=ov, _check_only=True)]))["bents"][0]
+    b = ee.run_colshaft(payload([bent1(override=ov, _check_only=["col_long", "col_trans"])]))["bents"][0]
     assert b["final_source"]["col_long"] == ee.SRC_CHECK_ONLY == "LRFD (sway check-only)"
     assert b["final_source"]["col_trans"] == ee.SRC_CHECK_ONLY
     b = ee.run_colshaft(payload([bent1(override=ov)]))["bents"][0]
     assert b["final_source"]["col_long"] == "Override"
+
+
+
+def test_check_only_spec_keeps_user_override():
+    """O1: only the cages the check-only run adds are labelled check-only."""
+    res = _fake_res(1.0)
+    sp = ee._check_only_spec({"name": "A", "override": {"col_long": {"bar": 10, "n": 20}}}, res)
+    assert sp["_check_only"] == ["col_trans"]
+    assert sp["override"]["col_long"] == {"bar": 10, "n": 20}
+    assert sp["override"]["col_trans"] == {"bar": 5, "s": 6.0, "ties": 0}
+    ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    b = ee.run_colshaft(payload([bent1(override=ov, _check_only=["col_trans"])]))["bents"][0]
+    assert b["final_source"]["col_long"] == "Override"
+    assert b["final_source"]["col_trans"] == ee.SRC_CHECK_ONLY
+
+
+# ── Ruling C-1: real concurrent (correspondence) CSiBridge output ───
+
+def test_end_to_end_concurrent_correspondence_fixture():
+    """The user's concurrent sample (StepType "Max P" / "Min P") vs the envelope sample of
+    the same frame: concurrent rows need less column steel; cage pinned as a regression."""
+    col = dict(D=96.0, fc=4.0, fy=60.0, cover=2.0, trans_type="hoop", hoop_closure="lap")
+    shaft = dict(D=120.0, fc=4.0, fy=60.0, cover=3.0, trans_type="hoop", hoop_closure="lap")
+
+    def one(paste):
+        return ee.run_colshaft(payload([
+            {"name": "A", "col_frames": ["1227"], "column": dict(col), "shaft": dict(shaft),
+             "P_dead": -2500.0, "shaft_basis": "cantilever", "L_eq_in": 120.0}], paste=paste))
+    rc = one(_read("frame1227_strI1_concurrent.txt"))
+    strict_json(rc)
+    assert rc["parse"]["n_rows"] == 6 and rc["parse"]["n_envelope"] == 0
+    b = rc["bents"][0]
+    assert b["status"] == "OK"
+    assert all(x["_bound"] == "concurrent" for x in b["lrfd"]["col"]["check_rows"])
+    re_ = one(PASTE_1227)["bents"][0]
+    assert b["final"]["col_long"]["Ast"] < re_["final"]["col_long"]["Ast"]
+    fl, ft = b["final"]["col_long"], b["final"]["col_trans"]
+    assert (fl["bar"], fl["n"], fl["bundle"]) == (14, 33, 1)
+    assert fl["Ast"] == pytest.approx(74.25)
+    assert (ft["bar"], ft["s"], ft["ties"]) == (7, 3.75, 0)
