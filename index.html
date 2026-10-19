@@ -1049,6 +1049,20 @@ canvas { width: 100% !important; height: 100% !important; }
       </ul>
     </div>
   </div>
+  <div class="card" style="margin-top:14px;">
+    <div class="card-header" style="background:linear-gradient(135deg,#e67e22,#f39c12);">Column on Shaft</div>
+    <div class="card-body">
+      <ul style="font-size:0.88rem;line-height:1.7;color:#333;">
+        <li><b>Not modelled</b> &mdash; displacement demand and capacity, ductility demand, balanced stiffness and column silos stay in the separate seismic app. Enter &mu;<sub>D</sub> and any override reinforcement here. The p-y analysis is used only for the shaft's in-ground moment and shear and the equivalent fixity depth.</li>
+        <li><b>Slenderness: approximate screen only</b> &mdash; K&#8467;<sub>u</sub>/r is classified (K&#8467;<sub>u</sub>/r &ge; 100 reports &ldquo;refined analysis required&rdquo;); moment magnification is pending the AASHTO Art. 4.5.3.2.2b equations (open item S6), so no magnified moments are produced. No refined P-&Delta; analysis.</li>
+        <li><b>No service-limit crack control</b> for the column or the shaft (open decision S4).</li>
+        <li><b>Circular members only</b> &mdash; circular column on a circular (oversized) shaft. No rectangular, I- or box members, no prestressing.</li>
+        <li><b>Envelope rows bounded conservatively</b> &mdash; CSiBridge Max/Min rows are not concurrent. Biaxial M and V are combined from the envelope maxima (up to &radic;2 conservative), shear-side checks use the least compression and flexure the worst axial load in the range; results are labelled &ldquo;envelope-bounded (conservative)&rdquo;.</li>
+        <li><b>No direct CSiBridge read</b> &mdash; paste the &ldquo;Element Forces - Frames&rdquo; table. Reading results through the CSiBridge API is a later phase.</li>
+        <li><b>Ported seismic provisions</b> &mdash; overstrength, column and shaft seismic shear, minimum transverse steel, detailing, the shaft demand factor and the p-y soil springs come from the Seismic Column app (pinned port) and keep its references, which are not yet verified against the printed codes (OPEN_VERIFICATION_ITEMS section E). Extreme rows set only the axial range for M-&phi; and the seismic V<sub>c</sub> (S2); the shaft flexural capacity is the M-&phi; expected M<sub>p</sub> (S3).</li>
+      </ul>
+    </div>
+  </div>
 </div>
 
 <div class="tab-panel" id="tab-colshaft" data-title="Column on Shaft"></div>

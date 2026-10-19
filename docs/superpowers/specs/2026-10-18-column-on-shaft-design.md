@@ -245,3 +245,20 @@ is CSiBridge's API (OAPI, a .NET assembly) with the model open: select the frame
 step-by-step values. The app already ships `pythonnet` (the pywebview backend), so no new dependency is needed. It needs
 CSiBridge installed on the same PC and an attach-to-running-instance flow. That is moderate work, deferred at the user's suggestion.
 The paste parser stays as the always-available path.
+
+## 8. Rulings during implementation (appendix, 2026-10-19)
+
+Controller rulings from the build ledger that changed or sharpened this spec. Where they differ, the ruling and the code
+win over the text above.
+
+| Ruling | Change |
+|---|---|
+| 3A-1 | Fixed-fixed pile head: `M_head = +Mo` with `V_head = 2·Mo/H` (Mo at the top of shaft). The upstream docstring saying −Mp is stale; −Mo would put 3·Mo at the interface. (§4.4 above already reflects this.) |
+| 4-1 | Strict parse: unparseable data lines raise an error listing every bad line instead of being skipped with a warning (losing one Max/Min row would silently corrupt the envelope bound). |
+| 6-1 / 6-3 | The AASHTO longitudinal-reinforcement check for V(+T) (`long_ok_2`, Method 2) is part of the transverse pass criterion and drives the design: when the transverse search fails for any shear-side reason while flexure passes, heavier longitudinal candidates are tried; NO SOLUTION only after the list is exhausted. |
+| 6A-1 | Single curvature = the same sign of the CSiBridge station (internal) moments at both column ends; opposite signs = double curvature. |
+| 7-1 | Ported upstream check "Soil-pile stability (p-y)": NG if any soil bound is unstable at the yield-level head force; the overstrength demand envelope still drops unstable bounds (upstream `inground_demand`), never as credit. |
+| 8-12 / 8-13 | §4.4a: strength rows through the pile load the shaft alone at its top (V_head = V_base, M_head giving the interface M_base in V's sense); column P-Δ is already in the CSiBridge forces. A governing row unstable on every bound makes "Shaft p-y strength solve" NG. |
+| 8-14 | P_dead = sum over the Dead-category cases of each case's base axial (as §4.4 says; an interim "most compressive single case" ruling was withdrawn). |
+| 8-16 | Strength-row p-y solves need an axial-ramp guard (stable at P·k/4, k = 0..4; non-decreasing \|y_top\|; top-of-shaft moment keeps its sign and ≥ 0.995·M_base). The seismic path stays upstream-faithful (open item E17). |
+| 10-1 | §4.6: `app.py` passes the HTML as a string, so `get_html()` inlines `colshaft.js` in place of its `<script src>` tag (the file stays separate and is bundled by the spec). |

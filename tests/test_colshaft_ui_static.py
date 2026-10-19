@@ -251,3 +251,13 @@ def test_report_from_real_run(tmp_path):
     assert "×2 " in b2 or "×2<" in b2
     assert "(governing)" in b2 and "(governing)" not in b1
     assert "Vo = Mo / H" in b1 and "envelope-bounded (conservative)" in h
+
+
+def test_limitations_tab_lists_column_on_shaft_non_goals():
+    html = _html()
+    lim = html[html.index('id="tab-limitations"'):html.index(PANEL)]
+    assert ">Column on Shaft</div>" in lim
+    for text in ("displacement demand", "ductility demand", "column silos", "screen only",
+                 "S6", "No service-limit crack control", "Circular members only",
+                 "envelope-bounded (conservative)", "No direct CSiBridge read"):
+        assert text in lim, text
