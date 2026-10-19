@@ -366,8 +366,11 @@ def _prange(r):
 
 
 def _row_flex(curves, r):
-    """Flexure check of one row on both faces -> (ok, dc, P_used, Mr_used)."""
+    """Flexure check of one row on both faces -> (ok, dc, P_used, Mr_used).  A row the
+    moment magnifier marked unstable (`_unstable`, Pu >= phiK*Pe) fails with D/C inf."""
     Pmin, Pmax = _prange(r)
+    if r.get("_unstable"):
+        return False, math.inf, Pmin, 0.0
     Mu = abs(r["Mu"])
     worst = None
     for c in curves:
@@ -392,7 +395,7 @@ def _row_flex(curves, r):
 def _row_key(r):
     Pmin, Pmax = _prange(r)
     return (r["Pu"], r["Mu"], r["Vu"], r["Tu"], r.get("Vp", 0), r.get("Ms", 0), r.get("Ps", 0),
-            Pmin, Pmax, _is_env(r))
+            Pmin, Pmax, _is_env(r), bool(r.get("_unstable")))
 
 
 class _Search:
@@ -402,6 +405,7 @@ class _Search:
         self.rows = rows
         self.transform = transform
         self.hot = []                      # original row indices that failed recently
+        self.unstable = False              # a magnified row was unstable on some candidate
 
     def build(self, cage):
         raw = cage_inputs(self.base, cage)
@@ -448,6 +452,8 @@ class _Search:
                 worst, gov, gP = dc, cand["first"][u], P
             if not ok:
                 ok_all = False
+                if cand["rows"][u].get("_unstable"):
+                    self.unstable = True
                 self.failed(cand["first"][u])
                 if not full:
                     break
@@ -588,8 +594,10 @@ def design_longitudinal(member: dict, rows: list, params: dict = None,
                           "NO SOLUTION: no cage in the bar-size / spacing / rho_l range fits. " + tr_note)
     dc, bar, n, nb, gov, gP = best_fail
     As = n * nb * ce.BARS[bar]["a"]
+    unst = (f" {UNSTABLE_NOTE}." if S.unstable else "")
     return LongResult(False, bar, n, nb, As, As / Ag, dc, gov,
-                      f"NO SOLUTION: best cage {n}-{nb}x#{bar} reaches flexural D/C {dc:.3f}. " + tr_note, gP)
+                      f"NO SOLUTION: best cage {n}-{nb}x#{bar} reaches flexural D/C {dc:.3f}.{unst} "
+                      + tr_note, gP)
 
 
 def design_transverse(member: dict, long: LongResult, rows: list, params: dict = None,
@@ -630,7 +638,8 @@ def design_transverse(member: dict, long: LongResult, rows: list, params: dict =
             + ", ".join(REASON_TEXT[r] for r in reasons))
     if spiral:
         note += "; spiral is not counted as torsion reinforcement (C6) - use hoops if torsion must be considered"
-    note = "; ".join([note] + _trans_note(skipped_flex, long_ng))
+    note = "; ".join([note] + _trans_note(skipped_flex, long_ng)
+                     + ([UNSTABLE_NOTE] if S.unstable else []))
     res = _trans_result(False, cand, bar, ties, s, D, cover, dv, dt, gov, long_ng, note)
     res.fail_reasons = reasons
     return res
@@ -701,12 +710,16 @@ def check_cage(member: dict, cage: dict, rows: list, transform: Transform = None
         res["Mr"] = -mr if r["Mu"] < 0 else mr
         res["flexStatus"] = status
         res["_flexP"], res["_flexDC"] = P, dc
+        if r.get("_unstable"):
+            res["_unstable"] = True
         by_key[k] = res
         out.append(res)
     return out
 
 
 STEP_NOTE = "longitudinal steel increased for shear/torsion"
+# colshaft_slender.UNSTABLE_REASON (pinned equal by tests/test_colshaft_slender.py)
+UNSTABLE_NOTE = "magnification unstable (Pu ≥ φK·Pe) on at least one row"
 
 
 def design_member(member: dict, rows: list, params: dict = None,

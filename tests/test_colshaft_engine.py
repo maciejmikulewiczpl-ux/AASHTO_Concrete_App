@@ -682,18 +682,32 @@ def test_slenderness_toggle_changes_only_when_on():
     r = run("slender")
     strict_json(r)
     on, rf = r["bents"]
-    # lu = H + L_eq = 240 + 120 in; r = 15 in; K lu / r = 2.1*360/15 = 50.4 -> pending (S6)
+    # lu = H + L_eq = 240 + 120 in; r = 15 in; K lu / r = 2.1*360/15 = 50.4 -> magnified (M11)
     rows = on["lrfd"]["col"]["check_rows"]
-    assert rows and all(x["_slender_status"] == "magnification pending verification (S6)"
-                        for x in rows)
+    assert rows and all(x["_slender_status"] == "magnified" for x in rows)
     assert rows[0]["_klr2"] == pytest.approx(2.1 * 360.0 / 15.0)
-    # ruling F-3: a final row needs magnification (not applied, S6) -> never plain OK
-    assert on["final"] == off["final"] and on["status"] == ee.ST_OK_PENDING
-    assert off["status"] == "OK"
-    assert any("not yet applied" in x for x in on["warnings"])
-    # K lu / r >= 100 -> refined analysis required, never OK; cages unchanged
+    for x in rows:          # Mc = max(db, ds) * M per axis, then the resultant (ruling M6)
+        assert x["_delta2"] >= 1.0 and x["_delta2"] == max(x["_db2"], x["_ds2"])
+        assert x["Mu"] == pytest.approx(math.hypot(x["_delta2"] * abs(x["_M2"]),
+                                                   x["_delta3"] * abs(x["_M3"])))
+        assert x["Mu"] > x["_Mu1"]
+    assert on["status"] == "OK" and off["status"] == "OK"
+    assert on["final"]["col_long"]["Ast"] >= off["final"]["col_long"]["Ast"]
+    assert any("moments magnified" in x for x in on["warnings"])
+    assert not any("S6" in x for x in on["warnings"])
+    # off: no magnification keys at all
+    assert all("_delta2" not in x for x in off["lrfd"]["col"]["check_rows"])
+    assert "magnification" not in off
+    # beta_d from the DEAD rows (ruling M7), EI = the larger of 5.6.4.3-1/-2
+    m = on["magnification"]
+    assert 0.0 < m["beta_d"] < 1.0 and "γp" in m["beta_d_source"]
+    assert m["EI"] == max(m["EI1"], m["EI2"]) and m["phi_K"] == 0.75
+    a2 = m["axes"]["2"]
+    assert (a2["K_braced"], a2["K_unbraced"], a2["lu"]) == (1.0, 2.1, 360.0)
+    assert a2["Pe_s"] == pytest.approx(math.pi ** 2 * m["EI"] / (2.1 * 360.0) ** 2)
+    assert a2["delta"] == max(a2["db"], a2["ds"]) and m["sway"] is None
+    # K lu / r >= 100 -> refined analysis required, never OK
     assert rf["status"] == "REFINED ANALYSIS REQUIRED"
-    assert rf["final"] == off["final"]
 
 
 def test_bent_status_precedence():
@@ -701,14 +715,65 @@ def test_bent_status_precedence():
     assert ee.bent_status(False, True, True) == "REFINED ANALYSIS REQUIRED"
     assert ee.bent_status(False, False, True) == "NG"
     assert ee.bent_status(False, False, False) == "OK"
-    # ruling F-3: NO SOLUTION > REFINED > NG > OK - MAGNIFICATION PENDING (S6) > OK
-    assert ee.bent_status(False, False, False, True) == ee.ST_OK_PENDING
-    assert ee.bent_status(False, False, True, True) == "NG"
-    assert ee.bent_status(False, True, False, True) == "REFINED ANALYSIS REQUIRED"
+    # ruling M10: NO SOLUTION > UNSTABLE > REFINED > NG > OK
+    assert ee.bent_status(False, False, False, True) == ee.ST_UNSTABLE
+    assert ee.bent_status(False, True, True, True) == ee.ST_UNSTABLE
     assert ee.bent_status(True, False, False, True) == "NO SOLUTION"
-    order = ["OK", ee.ST_OK_PENDING, "NG", "REFINED ANALYSIS REQUIRED", "NO SOLUTION"]
+    order = ["OK", "NG", "REFINED ANALYSIS REQUIRED", ee.ST_UNSTABLE, "NO SOLUTION"]
     assert sorted(ee.STATUS_RANK, key=ee.STATUS_RANK.get) == order
-    assert ee.ST_OK_PENDING == "OK – MAGNIFICATION PENDING (S6)"
+    assert ee.ST_UNSTABLE == "UNSTABLE (Pu ≥ φK·Pe)"
+    # ruling M11: the S6 pending status is gone
+    assert not hasattr(ee, "ST_OK_PENDING")
+
+
+def test_unstable_final_cage_status():
+    """Override cage + very long lu: Pu >= phiK*Pe on the final rows -> UNSTABLE status
+    (above REFINED), the rows fail with the recorded reason (ruling M10)."""
+    sl = {"2": {"braced": False, "K": 2.1, "lu": 2000.0}, "3": {"braced": False, "K": 2.1,
+                                                                 "lu": 2000.0}}
+    ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    r = ee.run_colshaft(payload([bent1(slender=sl, override=ov)],
+                                settings={"slenderness_on": True}))
+    strict_json(r)
+    b = r["bents"][0]
+    assert b["status"] == ee.ST_UNSTABLE
+    rows = b["lrfd"]["col"]["check_rows"]
+    assert any(x["_unstable"] for x in rows)
+    assert all(not x["ok"] for x in rows if x["_unstable"])
+    assert any(c["detail"].startswith("magnification unstable (Pu ≥ φK·Pe)")
+               for c in b["final_checks"] if c["name"].startswith("Row "))
+    assert b["magnification"]["axes"]["2"]["unstable"]
+    assert any("magnification unstable" in w for w in b["warnings"])
+
+
+def test_sway_group_two_pass():
+    """Ruling M9: two identical bents in one sway group -> pass 2 with SumPe = 2 Pe_s and
+    SumPu = 2 Pu (same cases): ds equals the single-bent value for identical members;
+    a group context is reported, and sway_context sums the other member only."""
+    a = bent1(name="G1", sway_group="G")
+    b = bent1(name="G2", sway_group="G")
+    r = ee.run_colshaft(payload([a, b], settings={"slenderness_on": True}))
+    strict_json(r)
+    alone = run("slender")["bents"][0]
+    for x in r["bents"]:
+        m = x["magnification"]
+        assert m["sway"]["group"] == "G" and m["sway"]["n_members"] == 2
+        assert m["sway"]["Pe_others"]["2"] == pytest.approx(alone["magnification"]["Pe_s"]["2"])
+        a2 = m["axes"]["2"]
+        assert a2["sPe_s"] == pytest.approx(2 * a2["Pe_s"])
+        assert a2["sPu"] == pytest.approx(2 * a2["Pu"])
+        assert a2["ds"] == pytest.approx(alone["magnification"]["axes"]["2"]["ds"])
+        assert not any("ΣPu = Pu ×" in w for w in x["warnings"])
+    infos = [{"Pe_s": {"2": 100.0, "3": 50.0}, "Pu_cases": [["C", "S", 10.0], ["D", None, 5.0]]},
+             {"Pe_s": {"2": 200.0, "3": None}, "Pu_cases": [["C", "S", 20.0]]},
+             {"Pe_s": {"2": 300.0, "3": 70.0}, "Pu_cases": [["C", "S", 30.0], ["D", None, 1.0]]}]
+    ctx = ee.sway_context("G", infos, 1)
+    assert ctx["Pe_others"] == {"2": 400.0, "3": 120.0} and ctx["n_members"] == 3
+    assert ctx["Pu_others"] == {("C", "S"): 40.0, ("D", None): 6.0}
+    # case D missing on member 1 -> not in the sums of member 0 (fallback in the magnifier)
+    assert ee.sway_context("G", infos, 0)["Pu_others"] == {("C", "S"): 50.0}
+    assert ee.sway_groups([{"sway_group": "A"}, {"sway_group": ""}, {"sway_group": "A"},
+                           {"sway_group": "B"}]) == {"A": [0, 2]}
 
 
 # ── envelope mode (ruling 8-8) ──────────────────────────────────────
@@ -1129,18 +1194,20 @@ def test_slender_K_default_and_report_fields():
     r = ee.run_colshaft(payload([bent1(slender=sl)], settings={"slenderness_on": True}))
     b = r["bents"][0]
     k2, k3 = b["slender_K"]["2"], b["slender_K"]["3"]
-    assert (k2["K"], k2["source"], k2["end_condition"]) == (2.0, "default", "fixed-free")
-    assert "Euler ideal" in k2["label"] and "Table C4.6.2.5-1" in k2["label"]
-    assert (k3["K"], k3["braced"]) == (1.0, True)
-    # lu = H + L_eq = 360 in, r = 15 in -> K lu / r = 48 (axis 2), 24 (axis 3)
+    assert (k2["K"], k2["source"], k2["end_condition"]) == (2.1, "default", "fixed-free")
+    assert "case (e) design value" in k2["label"] and "Table C4.6.2.5-1" in k2["label"]
+    assert (k3["K"], k3["braced"], k3["K_braced"]) == (1.0, True, 1.0)
+    assert k2["K_braced"] == 1.0 and k2["K_unbraced"] == 2.1
+    # lu = H + L_eq = 360 in, r = 15 in -> K lu / r = 50.4 (axis 2), 24 (axis 3)
     rows = b["lrfd"]["col"]["check_rows"]
-    assert rows[0]["_klr2"] == pytest.approx(48.0) and rows[0]["_klr3"] == pytest.approx(24.0)
-    assert any("Default K is the theoretical Euler value" in w for w in b["warnings"])
+    assert rows[0]["_klr2"] == pytest.approx(50.4) and rows[0]["_klr3"] == pytest.approx(24.0)
+    assert any("Table C4.6.2.5-1 design values" in w for w in b["warnings"])
     # legacy payload (K, no K_source) -> analysis: no default-K warning, K as entered
     legacy = run("slender")["bents"][0]
     assert legacy["slender_K"]["2"]["source"] == "analysis"
     assert legacy["slender_K"]["2"]["K"] == 2.1
-    assert not any("Default K" in w for w in legacy["warnings"])
+    assert not any("Default K values" in w for w in legacy["warnings"])
+    assert legacy["slender_K"]["2"]["K_braced"] == 1.0          # legacy: no K_braced
     # slenderness off: no slender_K
     assert "slender_K" not in run("2b")["bents"][0]
 

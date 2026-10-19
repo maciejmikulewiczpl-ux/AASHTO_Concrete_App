@@ -3,7 +3,9 @@
 Turns csi_import ForceRow lists (kip, kip-in, in) into demand-row dicts for the
 circular AASHTO engine: {"Pu","Mu","Vu","Tu","Vp","Ms","Ps"} with Pu < 0 =
 compression, plus tags _frame, _station (in), _case, _bound, _Pmin, _Pmax
-(and _step for concurrent rows).  Envelope rows follow spec 4.1a.
+(and _step for concurrent rows), and the moment components _M2/_M3 (kip-in:
+signed for concurrent rows, per-component |max| for envelope rows; used by the
+per-axis moment magnification).  Envelope rows follow spec 4.1a.
 """
 import math
 import re
@@ -64,7 +66,7 @@ def demand_rows(rows, frames, categories, category, warnings=None):
                 "Vp": 0, "Ms": 0, "Ps": 0,
                 "_frame": r.frame, "_station": r.station_in, "_case": r.case,
                 "_step": r.step_type, "_bound": "concurrent",
-                "_Pmin": r.P, "_Pmax": r.P})
+                "_Pmin": r.P, "_Pmax": r.P, "_M2": r.M2, "_M3": r.M3})
     res = []
     for item in out:
         if not isinstance(item, tuple):
@@ -85,7 +87,8 @@ def demand_rows(rows, frames, categories, category, warnings=None):
             "Tu": max(abs(x.T) for x in g),
             "Vp": 0, "Ms": 0, "Ps": 0,
             "_frame": item[0], "_station": g[0].station_in, "_case": item[2],
-            "_bound": "envelope", "_Pmin": min(ps), "_Pmax": max(ps)})
+            "_bound": "envelope", "_Pmin": min(ps), "_Pmax": max(ps),
+            "_M2": max(abs(x.M2) for x in g), "_M3": max(abs(x.M3) for x in g)})
     return res
 
 
@@ -133,7 +136,9 @@ def collapse_member(rows):
             "_frame": f, "_station": None, "_case": "(member)",
             "_bound": "envelope",
             "_Pmin": min(_rng(d)[0] for d in g),
-            "_Pmax": max(_rng(d)[1] for d in g)})
+            "_Pmax": max(_rng(d)[1] for d in g),
+            "_M2": max(abs(d.get("_M2", d["Mu"])) for d in g),
+            "_M3": max(abs(d.get("_M3", d["Mu"])) for d in g)})
     return out
 
 

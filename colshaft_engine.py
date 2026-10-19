@@ -8,7 +8,8 @@ Per bent (spec 4.3-4.5, controller rulings 8-1 .. 8-11):
   1. Demand rows: Strength rows of the column (and shaft) frames, reduced by the
      envelope mode ("station" -> prune_dominated, "member" -> collapse_member).
   2. Column LRFD design (colshaft_lrfd.design_member, rho_l limits from the
-     selected provisions), with the slenderness screen as `transform`.
+     selected provisions), with the slenderness screen + moment magnification
+     (colshaft_slender.make_magnifier, rulings M1-M12) as `transform`.
   3. Column seismic: Mo from the FINAL column cage; final transverse = override,
      else the larger Av/s of (LRFD, seismic required_transverse), iterated until
      the choice is stable (Mo depends slightly on the transverse cage).
@@ -22,9 +23,15 @@ Per bent (spec 4.3-4.5, controller rulings 8-1 .. 8-11):
 The longitudinal V(+T) check (long_ok_2) counts only where it is enforced
 (colshaft_lrfd.long_check_enforced: member `bars_terminated` or torsion considered;
 user decision 2026-10-19); lrfd[col|shaft]["long_check"] reports it per member.
-Status precedence (ruling F-3): NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
-OK – MAGNIFICATION PENDING (S6) > OK.  Overrides are never altered; with an
-override the status reflects the checks.
+Status precedence (ruling M10): NO SOLUTION > UNSTABLE (Pu ≥ φK·Pe) > REFINED
+ANALYSIS REQUIRED > NG > OK.  Overrides are never altered; with an override the
+status reflects the checks.
+Sway groups (ruling M9): bents with the same non-empty `sway_group` share δs
+(ΣPu, ΣPe).  Two-pass approximation: pass 1 designs every bent alone; pass 2
+re-runs each member of a group with ΣPe = its own candidate Pe_s + the other
+members' Pe_s from their pass-1 final cages, and ΣPu = its row Pu + the other
+members' most compressive Pu of the same load case and step (envelope rows: the
+same case); an unmatched case falls back to Pu × n_members with a warning.
 
 Units kip, in, ksi; moments kip-in.  App sign convention Pu < 0 = compression.
 No AASHTO citation is added here; check references come from the modules.
@@ -47,12 +54,15 @@ from colshaft_shaft import (SHAFT_FLEX, SHAFT_TRANS, checks_ok, full_cage, long_
 from seismic_port.provisions import PROVISIONS, _KEY_ALIASES, get_provisions
 
 ENVELOPE_MODES = ("station", "member")
-ST_OK_PENDING = "OK – MAGNIFICATION PENDING (S6)"
-STATUS_RANK = {"OK": 0, ST_OK_PENDING: 1, "NG": 2, "REFINED ANALYSIS REQUIRED": 3,
+ST_UNSTABLE = "UNSTABLE (Pu ≥ φK·Pe)"
+STATUS_RANK = {"OK": 0, "NG": 1, "REFINED ANALYSIS REQUIRED": 2, ST_UNSTABLE: 3,
                "NO SOLUTION": 4}
 ROW_KEYS = ("Pu", "Mu", "Vu", "Tu", "_case", "_frame", "_station", "_step", "_bound", "_Pmin",
             "_Pmax", "_source", "_base_Mu", "_base_Vu", "_klr2", "_klr3", "_slender_limit2",
-            "_slender_limit3", "_slender_status")
+            "_slender_limit3", "_slender_status", "_M2", "_M3", "_Mu1", "_delta2", "_delta3",
+            "_db2", "_ds2", "_db3", "_ds3", "_Pe_b2", "_Pe_s2", "_Pe_b3", "_Pe_s3", "_sPe_s2",
+            "_sPe_s3", "_Cm2", "_Cm3", "_EI", "_beta_d", "_Pmag", "_sPu", "_unstable",
+            "_unstable_reason")
 RES_KEYS = ("Mr", "flexStatus", "_flexP", "_flexDC", "Vr2", "shearStatus", "Tr",
             "torsionConsider", "long_ok_2", "long_dc_2", "epsS")
 MAX_COL_ITER = 4
@@ -186,6 +196,7 @@ def lrfd_check_rows(member, cage, rows, transform, group):
         s.update({k: x.get(k) for k in RES_KEYS})
         s.update(ok=ok, ratio=ratio, long_enforced=enf)
         long_txt = ("OK" if x.get("long_ok_2") is not False else "NG") if enf else cl.LONG_NA
+        unst = (csl.UNSTABLE_REASON + "; ") if r.get("_unstable") else ""
         summ.append(s)
         st = r.get("_station")
         where = f"{r.get('_frame')} @ {st / 12.0:g} ft" if isinstance(st, (int, float)) else \
@@ -193,7 +204,7 @@ def lrfd_check_rows(member, cage, rows, transform, group):
         checks.append({"group": group, "name": f"Row {i + 1}: {r.get('_case')} ({where})",
                        "demand": None, "capacity": None,
                        "ratio": ratio if math.isfinite(ratio) else None, "ok": ok,
-                       "detail": (f"flexure {x.get('flexStatus')} (D/C {x.get('_flexDC') or 0:.3f} at "
+                       "detail": (f"{unst}flexure {x.get('flexStatus')} (D/C {x.get('_flexDC') or 0:.3f} at "
                                   f"P={x.get('_flexP') or 0:.0f} kip), shear {x.get('shearStatus')}, "
                                   f"torsion {'considered' if x.get('torsionConsider') else 'neglected'}, "
                                   f"long. V+T {long_txt}"),
@@ -283,7 +294,9 @@ def _ov_trans(ov):
 
 # ─── Bent run ───────────────────────────────────────────────────────
 
-def run_bent(bent, pr, cats, prov, params, settings, mode):
+def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None):
+    """One bent.  `sway`: the sway-group context of pass 2 (colshaft_slender
+    make_magnifier; None = the bent alone)."""
     name = str(bent.get("name") or "")
     w = []
     nosol = []
@@ -336,10 +349,11 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
             return None
         if not bent.get("slender"):
             raise ValueError(f"Bent {name}: slenderness is on but bent.slender is missing")
-        return csl.make_magnifier(dict(bent, lu_default_in=H + Df), rbc, settings, w)
+        return csl.make_magnifier(dict(bent, lu_default_in=H + Df, col_frames=col_frames), rbc,
+                                  settings, w, sway=sway)
 
-    # design pass: Df is known up front only for the cantilever basis; the
-    # transform only tags rows (S6), so the final check below is authoritative
+    # design pass: Df is known up front only for the cantilever basis; the final
+    # check below (final Df -> lu) is authoritative
     L_eq = bent.get("L_eq_in")
     Df0 = float(L_eq) if basis == "cantilever" and L_eq is not None else 0.0
     tf_design = transform_for(Df0)
@@ -550,15 +564,19 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
         lrfd["shaft"]["long_check"] = cl.long_check_summary(shaft, sh_summ)
         lrfd["shaft"]["rows"] = sh_rows
 
-    # ── status (ruling 8-9) ──
+    # ── status (rulings 8-9 / M10) ──
     sl = [r.get("_slender_status") for r in col_rows_t]
+    unstable = any(r.get("_unstable") for r in col_rows_t)
     if csl.ST_REFINED in sl:
         w.append("slenderness: K*lu/r >= 100 on at least one row; refined analysis required")
-    if csl.ST_PENDING in sl:
-        w.append("slenderness: K*lu/r exceeds the neglect limit; moment magnification is not "
-                 "yet applied (open item S6)")
+    if unstable:
+        w.append(f"slenderness: {csl.UNSTABLE_REASON} on at least one row of the final cage")
+    if csl.ST_MAGNIFIED in sl:
+        dmax = {ax: max((r.get("_delta" + ax) or 1.0) for r in col_rows_t) for ax in ("2", "3")}
+        w.append(f"slenderness: moments magnified (Art. 4.5.3.2.2b, Mc = max(δb, δs)·M2 per axis); "
+                 f"max δ axis 2 = {dmax['2']:.3f}, axis 3 = {dmax['3']:.3f}")
     status = bent_status(bool(nosol), csl.ST_REFINED in sl,
-                         any(not c["ok"] for c in final_checks), csl.ST_PENDING in sl)
+                         any(not c["ok"] for c in final_checks), unstable)
     w += S.warnings
     out = _bent_result(name, status, lrfd, S, final, source, final_checks, nosol, w, axial, H)
     out["Df_for_lu"] = Df
@@ -568,7 +586,44 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     if slender_on:      # K per axis as used (user decision 2026-10-19)
         out["slender_K"] = {ax: {k: v for k, v in csl.resolve_K(bent["slender"][ax], ax).items()
                                  if k != "warnings"} for ax in ("2", "3")}
+        if tf_final is not None:
+            raw = cl.cage_inputs(cl.base_circ_inputs(column), col_full)
+            out["magnification"] = magnification_summary(tf_final, raw, col_rows_t, col_raw)
     return out
+
+
+def magnification_summary(tf, raw, rows_t, raw_rows):
+    """Per-bent moment-magnification report (ruling M12) on the final column cage:
+    beta_d, EI (both §5.6.4.3 equations), per axis K_braced / K_unbraced / Pe_b / Pe_s
+    and the governing row's Cm, δb, δs, δ applied (the row with the largest applied δ,
+    unstable rows first), plus the pass-1 sway data (Pe_s, Pu per load case)."""
+    e = tf.props(raw)
+    axes = {}
+    for ax in ("2", "3"):
+        a = tf.axes[ax]
+        gi = None
+        for i, r in enumerate(rows_t):
+            key = (bool(r.get("_unstable")), r.get("_delta" + ax) or 0.0)
+            if gi is None or key > gi[0]:
+                gi = (key, i)
+        r = rows_t[gi[1]] if gi else {}
+        axes[ax] = {"braced": a["braced"], "K_braced": a["Kb"], "K_unbraced": a["Ku"],
+                    "lu": a["lu"], "Pe_b": e["Pe_b"][ax], "Pe_s": e["Pe_s"][ax],
+                    "row": (gi[1] + 1) if gi else None, "case": r.get("_case"),
+                    "Pu": r.get("_Pmag"), "sPu": r.get("_sPu"), "sPe_s": r.get("_sPe_s" + ax),
+                    "Cm": r.get("_Cm" + ax), "db": r.get("_db" + ax), "ds": r.get("_ds" + ax),
+                    "delta": r.get("_delta" + ax), "klr": r.get("_klr" + ax),
+                    "limit": r.get("_slender_limit" + ax), "status": r.get("_slender_status"),
+                    "unstable": bool(r.get("_unstable"))}
+    sw = tf.sway
+    return {"beta_d": tf.beta_d, "beta_d_source": tf.beta_d_source, "phi_K": csl.PHI_K,
+            "Ec": e["Ec"], "Es": e["Es"], "Ig": e["Ig"], "Is": e["Is"], "EI1": e["EI1"],
+            "EI2": e["EI2"], "EI": e["EI"], "EI_eq": e["eq"], "axes": axes,
+            "Pe_s": dict(e["Pe_s"]),
+            "Pu_cases": [[k[0], k[1], v] for k, v in csl.pu_by_case(raw_rows).items()],
+            "sway": None if not sw else {"group": sw.get("group"), "n_members": sw.get("n_members"),
+                                         "Pe_others": sw.get("Pe_others"), "pass": 2},
+            "ref": csl.MAG_REF}
 
 
 def size_shaft(shaft, prov, params, ov, sh_cands, sh_long, sh_trans, S, run, nosol, source):
@@ -600,23 +655,63 @@ def size_shaft(shaft, prov, params, ov, sh_cands, sh_long, sh_trans, S, run, nos
     return sh_long, sh_trans, S
 
 
-def bent_status(no_solution: bool, refined: bool, any_ng: bool, pending: bool = False) -> str:
-    """Rulings 8-9 / F-3: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
-    OK – MAGNIFICATION PENDING (S6) (a final row needs moment magnification,
-    not applied: open item S6) > OK."""
+def bent_status(no_solution: bool, refined: bool, any_ng: bool, unstable: bool = False) -> str:
+    """Rulings 8-9 / M10: NO SOLUTION > UNSTABLE (Pu ≥ φK·Pe) (a final-cage row has
+    1 − Pu/(φK·Pe) ≤ 0 or 1 − ΣPu/(φK·ΣPe) ≤ 0) > REFINED ANALYSIS REQUIRED > NG > OK."""
     if no_solution:
         return "NO SOLUTION"
+    if unstable:
+        return ST_UNSTABLE
     if refined:
         return "REFINED ANALYSIS REQUIRED"
     if any_ng:
         return "NG"
-    return ST_OK_PENDING if pending else "OK"
+    return "OK"
 
 
 def _bent_result(name, status, lrfd, S, final, source, final_checks, nosol, w, axial, H):
     return {"name": name, "status": status, "lrfd": lrfd, "seismic": S, "final": final,
             "final_source": source, "final_checks": final_checks, "no_solution": _dedupe(nosol),
             "warnings": _dedupe(w), "axial": axial, "H_in": H}
+
+
+# ─── Sway groups (ruling M9) ────────────────────────────────────────
+
+def sway_groups(specs):
+    """{group name: [bent indices]} for groups with two or more bents."""
+    g = {}
+    for i, b in enumerate(specs):
+        name = str(b.get("sway_group") or "").strip()
+        if name:
+            g.setdefault(name, []).append(i)
+    return {k: v for k, v in g.items() if len(v) > 1}
+
+
+def sway_context(group, infos, i):
+    """Pass-2 context for member i of a group from the members' pass-1 summaries.
+    ΣPu keys present on EVERY other member only (else the magnifier falls back)."""
+    others = [m for j, m in enumerate(infos) if j != i]
+    pe = {ax: sum(float((m.get("Pe_s") or {}).get(ax) or 0.0) for m in others) for ax in ("2", "3")}
+    tabs = [{(c, st): float(p) for c, st, p in (m.get("Pu_cases") or [])} for m in others]
+    keys = set(tabs[0]).intersection(*tabs[1:]) if tabs else set()
+    pu = {k: sum(t[k] for t in tabs) for k in keys}
+    return {"group": group, "n_members": len(infos), "Pe_others": pe, "Pu_others": pu}
+
+
+def sway_pass2(specs, results, rerun):
+    """Re-run every member of a multi-bent sway group with the group sums (in place).
+    A member without a pass-1 magnification summary (no final cage) stops the group:
+    the pass-1 (bent alone) results stay, with a warning on every member."""
+    for group, idx in sway_groups(specs).items():
+        infos = [results[i].get("magnification") for i in idx]
+        if any(not m for m in infos):
+            for i in idx:
+                results[i]["warnings"].append(
+                    f"sway group {group}: a member has no final cage; δs computed for each bent "
+                    "alone (ΣPu/ΣPe of the group not applied)")
+            continue
+        for k, i in enumerate(idx):
+            results[i] = rerun(specs[i], sway_context(group, infos, k))
 
 
 # ─── Entry point ────────────────────────────────────────────────────
@@ -635,11 +730,13 @@ def run_colshaft(payload: dict) -> dict:
     pr = ci.parse_csi_frame_forces(payload.get("paste") or "", payload.get("units"))
     cats = validate_categories(payload.get("categories"), pr.cases)
     gw = list(pr.warnings)
-    bents = []
-    for bent in payload.get("bents") or []:
-        b = run_bent(bent, pr, cats, prov, params, settings, mode)
+    specs = list(payload.get("bents") or [])
+    bents = [run_bent(bent, pr, cats, prov, params, settings, mode) for bent in specs]
+    if settings.get("slenderness_on"):
+        sway_pass2(specs, bents, lambda bent, sw: run_bent(bent, pr, cats, prov, params,
+                                                            settings, mode, sway=sw))
+    for b in bents:
         gw += [f"{b['name']}: {x}" for x in b["warnings"]]
-        bents.append(b)
     result = {
         "parse": {"n_rows": len(pr.rows), "n_envelope": pr.n_envelope, "cases": pr.cases,
                   "frames": pr.frames, "units": pr.units, "categories": cats,
