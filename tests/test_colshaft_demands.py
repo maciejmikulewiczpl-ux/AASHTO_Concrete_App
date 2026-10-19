@@ -36,7 +36,8 @@ def test_resultants_hypot():
 @pytest.mark.parametrize("name,exp", [
     ("Str-I1", "Strength"), ("DEAD", "Dead"), ("DC1", "Dead"),
     ("EQ-X", "Extreme"), ("EXTREME", "Extreme"), ("Seismic", "Extreme"),
-    ("Service-I", "Ignore"), ("Strength-III", "Strength"), ("dead load", "Dead"),
+    ("Service-I", "Ignore"), ("FREQ", "Strength"), ("SEQUENCE", "Strength"),
+    ("1.0DC+EQ", "Dead"), ("Strength-III", "Strength"), ("dead load", "Dead"),
 ])
 def test_category_defaults(name, exp):
     assert cd.default_case_category(name) == exp
@@ -73,8 +74,8 @@ def test_prune_dominated():
     res = _fixture()
     out = cd.demand_rows(res.rows, ["1227"], CATS, "Strength")
     kept = cd.prune_dominated(out)
-    assert any(abs(k["_station"] - 8.4167 * 12) < 0.1 for k in kept)
-    assert any(k["_station"] == 0 for k in kept)
+    assert [k["_station"] for k in kept] == pytest.approx(
+        [0, 8.4167 * 12, 16.8333 * 12])
 
 
 def test_prune_dominated_logic():
@@ -144,3 +145,42 @@ def test_end_moments_envelope_returns_none():
     assert cd.end_moments(res.rows, ["1227"], "Str-I1", "Max") is None
     assert cd.end_moments(_conc(), ["F1"], "L", "Step9") is None
     assert cd.end_moments(_conc(), ["F1"], "L", "Step2") is None  # one end missing
+
+
+def _stack():
+    # given top-then-bottom, opposite station orientations
+    def fr(name, p0, p100, m0, m100):
+        return [_row(name, 0, case="L", step="S1", P=p0, M2=m0, M3=-m0),
+                _row(name, 100, case="L", step="S1", P=p100, M2=m100, M3=-m100)]
+    return fr("TOP", -80, -100, 21, 22) + fr("BOT", -200, -150, 11, 12)
+
+
+def test_column_stack_order_and_axial_and_moments():
+    rows = _stack()
+    cats = {"L": "Strength"}
+    assert cd.column_stack(rows, ["TOP", "BOT"]) == [("BOT", "min"), ("TOP", "max")]
+    assert cd.detect_base_end(rows, ["TOP", "BOT"]) == "min"
+    assert cd.base_axial(rows, ["TOP", "BOT"], cats, "Strength", "auto") == [-200]
+    em = cd.end_moments(rows, ["TOP", "BOT"], "L", "S1")
+    assert em == {"M2": (21, 11), "M3": (-21, -11)}
+
+
+def test_column_stack_ambiguous_warning():
+    rows = [_row("A", 0, P=-100), _row("A", 10, P=-50),
+            _row("B", 0, P=-50), _row("B", 10, P=-100.2)]
+    w = []
+    cd.column_stack(rows, ["A", "B"], warnings=w)
+    assert any("ambiguous" in x for x in w)
+
+
+def test_height_multi_frame_sum():
+    rows = [_row("A", 0), _row("A", 100), _row("B", 20), _row("B", 170)]
+    assert cd.column_height_in(rows, ["A", "B"]) == pytest.approx(250)
+
+
+def test_base_vote_excludes_extreme_rows():
+    rows = [_row(st=0, case="Str-I1", P=-10), _row(st=100, case="Str-I1", P=-20),
+            _row(st=0, case="EQ-X", P=-1000), _row(st=100, case="EQ-X", P=-5)]
+    assert cd.detect_base_end(rows, ["F1"]) == "max"
+    assert cd.base_axial(rows, ["F1"], {}, "Strength", "auto") == [-20]
+    assert cd.base_axial(rows, ["F1"], {}, "Extreme", "auto") == [-5]

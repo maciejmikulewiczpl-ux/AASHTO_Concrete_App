@@ -8,8 +8,8 @@ compression, plus tags _frame, _station (in), _case, _bound, _Pmin, _Pmax
 import math
 import re
 
-_DEAD = re.compile(r"DEAD|^DC", re.IGNORECASE)
-_EXTREME = re.compile(r"EQ|EXT|SEIS", re.IGNORECASE)
+_DEAD = re.compile(r"DEAD|(?<![A-Z])DC", re.IGNORECASE)
+_EXTREME = re.compile(r"(?<![A-Z])(EQ|EXT|SEIS)", re.IGNORECASE)
 _IGNORE = re.compile(r"SERV", re.IGNORECASE)
 
 
@@ -145,43 +145,74 @@ def _mean_at(rows, frame, station):
     return sum(ps) / len(ps) if ps else None
 
 
-def detect_base_end(rows, frames, warnings=None):
-    """'min' or 'max': the station end with the lower (more compressive) mean P
-    over all rows, decided per frame, majority over frames.  A frame whose two
-    ends tie casts no vote; an overall tie returns 'max' and appends a warning
-    to `warnings` (if given)."""
-    votes = {"min": 0, "max": 0}
-    for f in frames:
-        lo, hi = _extent(rows, f)
-        if lo is None or lo == hi:
+def column_stack(rows, frames, warnings=None, categories=None):
+    """Frames ordered bottom -> top as [(frame, base_end)], base_end in
+    {"min","max"}.
+
+    CSiBridge stations are local to each frame, so each frame votes for its
+    own base end: the end with the algebraically lower (more compressive) mean
+    P.  Only Dead/Strength rows vote (category via `categories`, else
+    default_case_category); if the frame has none, all its rows are used.  A
+    tied or single-station frame gets "max" (tie adds a warning).  The bottom
+    frame is the one whose base-end mean P is most compressive; the rest
+    follow by decreasing compression.  A warning is added when two
+    consecutive base-end means differ by less than 0.5 % (ambiguous order).
+    Frames with no rows are skipped.
+    """
+    info = []
+    for k, f in enumerate(frames):
+        own = [r for r in rows if r.frame == f]
+        if not own:
             continue
-        a, b = _mean_at(rows, f, lo), _mean_at(rows, f, hi)
+        vote = [r for r in own if _cat(r.case, categories) in ("Dead", "Strength")]
+        use = vote or own
+        lo, hi = _extent(use, f)
+        if lo == hi:
+            info.append((_mean_at(use, f, lo), k, f, "max"))
+            continue
+        a, b = _mean_at(use, f, lo), _mean_at(use, f, hi)
         if math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9):
-            continue
-        votes["min" if a < b else "max"] += 1
-    if votes["min"] > votes["max"]:
-        return "min"
-    if votes["max"] > votes["min"]:
-        return "max"
+            if warnings is not None:
+                warnings.append(
+                    f"Frame {f}: base end could not be determined from axial "
+                    "force (tie); assuming the maximum station is the base")
+            info.append((b, k, f, "max"))
+        elif a < b:
+            info.append((a, k, f, "min"))
+        else:
+            info.append((b, k, f, "max"))
+    info.sort(key=lambda t: (t[0], t[1]))
     if warnings is not None:
-        warnings.append("Base end could not be determined from axial force "
-                        "(tie); assuming the maximum station is the base")
-    return "max"
+        for x, y in zip(info, info[1:]):
+            den = max(abs(x[0]), abs(y[0]))
+            if den > 0 and abs(x[0] - y[0]) / den < 0.005:
+                warnings.append(
+                    f"Frames {x[2]} and {y[2]}: base-end axial forces differ "
+                    "by < 0.5 %; stacking order is ambiguous")
+    return [(f, be) for _, _, f, be in info]
+
+
+def detect_base_end(rows, frames, warnings=None, categories=None):
+    """'min' or 'max': the base end of the bottom frame of the stack
+    (see column_stack).  No frames with rows -> 'max'."""
+    st = column_stack(rows, frames, warnings, categories)
+    return st[0][1] if st else "max"
 
 
 def base_axial(rows, frames, categories, category, base_end="auto", warnings=None):
-    """P values at the base station of each frame over all rows of `category`
-    (both Max and Min rows for envelopes)."""
-    be = detect_base_end(rows, frames, warnings) if base_end == "auto" else base_end
-    out = []
-    for f in frames:
-        lo, hi = _extent(rows, f)
-        if lo is None:
-            continue
-        s = lo if be == "min" else hi
-        out.extend(r.P for r in _select(rows, [f], categories, category)
-                   if math.isclose(r.station_in, s, abs_tol=1e-6))
-    return out
+    """P values at the base station of the bottom frame only, over all rows of
+    `category` there (both Max and Min rows for envelopes).  base_end "min" or
+    "max" overrides the detected end of the bottom frame."""
+    st = column_stack(rows, frames, warnings, categories)
+    if not st:
+        return []
+    f, be = st[0]
+    if base_end in ("min", "max"):
+        be = base_end
+    lo, hi = _extent(rows, f)
+    s = lo if be == "min" else hi
+    return [r.P for r in _select(rows, [f], categories, category)
+            if math.isclose(r.station_in, s, abs_tol=1e-6)]
 
 
 def column_height_in(rows, frames):
@@ -194,28 +225,30 @@ def column_height_in(rows, frames):
     return h
 
 
-def end_moments(rows, frames, case, step, warnings=None):
+def end_moments(rows, frames, case, step, warnings=None, categories=None):
     """{"M2": (top, bottom), "M3": (top, bottom)} signed kip-in for one
     concurrent (case, step), or None if the case has only envelope rows or the
-    step is missing at either end.  Uses the first frame in `frames`; the
-    bottom is the detected base end (detect_base_end over `frames`)."""
-    if not frames:
+    step is missing at either end.  Bottom = base end of the bottom frame of
+    the stack; top = the non-base end of the top frame (see column_stack)."""
+    st = column_stack(rows, frames, warnings, categories)
+    if not st:
         return None
-    f = frames[0]
-    lo, hi = _extent(rows, f)
-    if lo is None or lo == hi:
+    (bf, bbe), (tf, tbe) = st[0], st[-1]
+    blo, bhi = _extent(rows, bf)
+    tlo, thi = _extent(rows, tf)
+    if bf == tf and blo == bhi:
         return None
-    be = detect_base_end(rows, frames, warnings)
-    bot_s, top_s = (lo, hi) if be == "min" else (hi, lo)
+    bot_s = blo if bbe == "min" else bhi
+    top_s = thi if tbe == "min" else tlo
 
-    def find(s):
+    def find(fr, s):
         for r in rows:
-            if (r.frame == f and r.case == case and not r.envelope
+            if (r.frame == fr and r.case == case and not r.envelope
                     and r.step_type == step
                     and math.isclose(r.station_in, s, abs_tol=1e-6)):
                 return r
         return None
-    top, bot = find(top_s), find(bot_s)
+    top, bot = find(tf, top_s), find(bf, bot_s)
     if top is None or bot is None:
         return None
     return {"M2": (top.M2, bot.M2), "M3": (top.M3, bot.M3)}
