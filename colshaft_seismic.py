@@ -57,6 +57,7 @@ from seismic_port.pile_solver import _cached_pile_solve, inground_demand
 from seismic_port.provisions import CodeProvisions
 from seismic_port.section import CircularSection
 from seismic_port.shear import (
+    axial_load_ratio,
     caltrans_min_transverse_ratio,
     max_transverse_spacing,
     max_transverse_spacing_caltrans,
@@ -66,8 +67,49 @@ from seismic_port.shear import (
 )
 from seismic_port.soil import SoilLayer, SoilProfile
 
-# Upstream CircularSection defaults for expected steel properties, ksi.
+# Upstream CircularSection defaults for expected steel properties, ksi: the
+# A706 Gr60 values.  Ruling F-1: they are used only for fy = 60 ksi (fyh: the
+# transverse fyt = 60 ksi) when the member gives no fye / fue / fyh; any other
+# grade must enter its expected strengths (no Gr80 values are invented here).
 FYE, FUE, FYH = 68.0, 95.0, 68.0
+GR60_FY = 60.0
+GR60_LABEL = "A706 Gr60 defaults"
+EXPECTED_MSG = ("Expected strengths fye/fue (fyh) must be entered for fy ≠ 60 ksi "
+                "(the A706 Gr60 defaults do not apply)")
+
+
+def _blank(v) -> bool:
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def expected_steel(member: dict) -> dict:
+    """{fye, fue, fyh, source} for a bent-table member (ruling F-1).
+
+    fy = 60 ksi (and fyt = 60 ksi for fyh; fyt defaults to fy) with the value
+    blank -> the A706 Gr60 default (68 / 95 / 68 ksi).  Otherwise a blank value
+    raises ValueError(EXPECTED_MSG).  A member without fy keeps the upstream
+    defaults (seismic-only callers).  source: "entered", GR60_LABEL or "mixed"."""
+    fy = float(member.get("fy", GR60_FY))
+    fyt = member.get("fyt")
+    fyt = fy if _blank(fyt) else float(fyt)
+    out, used_default = {}, []
+    for key, grade, dflt in (("fye", fy, FYE), ("fue", fy, FUE), ("fyh", fyt, FYH)):
+        v = member.get(key)
+        if _blank(v):
+            if abs(grade - GR60_FY) > 1e-9:
+                raise ValueError(f"{EXPECTED_MSG}: {key} is blank with "
+                                 f"{'fyt' if key == 'fyh' else 'fy'} = {grade:g} ksi")
+            out[key] = dflt
+            used_default.append(key)
+        else:
+            v = float(v)
+            if not (math.isfinite(v) and v > 0):
+                raise ValueError(f"{key} must be > 0 ksi, got {v!r}")
+            out[key] = v
+    out["source"] = ("entered" if not used_default else
+                     GR60_LABEL if len(used_default) == 3 else
+                     "entered; " + "/".join(used_default) + " = " + GR60_LABEL)
+    return out
 END_FACTOR = {"fixed-free": 1.0, "fixed-fixed": 2.0}
 BASES = ("soil", "cantilever", "interface")
 N_EXT = 5                       # evenly spaced samples across [P_ext_min, P_ext_max]
@@ -141,7 +183,9 @@ class SeismicResult:
 
 def to_section(member: dict, cage: dict, provisions: CodeProvisions) -> CircularSection:
     """CircularSection from bent-table member + cage {bar, n, bundle, trans_bar, s, ties}
-    (colshaft_lrfd keys), with expected material properties from the provisions."""
+    (colshaft_lrfd keys), with expected material properties from the provisions and
+    the expected steel strengths of expected_steel (ruling F-1)."""
+    es = expected_steel(member)
     return CircularSection(
         D=float(member["D"]), fc=float(member["fc"]),
         fce_factor=provisions.fce_factor, fce_floor=provisions.fce_floor,
@@ -149,16 +193,48 @@ def to_section(member: dict, cage: dict, provisions: CodeProvisions) -> Circular
         n_bars=int(cage["n"]), long_bar_no=int(cage["bar"]),
         long_bundle=int(cage.get("bundle", 1)),
         spiral_bar_no=int(cage["trans_bar"]), spiral_spacing=float(cage["s"]),
-        fye=float(member.get("fye", FYE)), fue=float(member.get("fue", FUE)),
-        fyh=float(member.get("fyh", FYH)),
+        fye=es["fye"], fue=es["fue"], fyh=es["fyh"],
         hoops=member.get("trans_type", "hoop") != "spiral",
     )
 
 
+CLAY_PY = ("matlock_soft_clay", "welch_stiff_clay")
+SAND_PY = ("api_sand",)
+ELASTIC_PY = ("elastic_subgrade",)
+
+
+def validate_layer(d: dict, i: int = 0) -> None:
+    """Minor 7d: the from_engineering defaults (su = phi = k = 0) are not a soil.
+    Clay models need su > 0 (su_top; su_bot when given); sand needs phi' > 0 and
+    k > 0; the elastic subgrade needs k > 0.  Thickness and gamma must be > 0."""
+    who = f"soil layer {i + 1} ({d.get('py_model')})"
+
+    def pos(key):
+        v = d.get(key)
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0
+    need = ["thickness_ft", "gamma_pcf"]
+    m = d.get("py_model")
+    if m in CLAY_PY:
+        need.append("su_top_ksf")
+        if d.get("su_bot_ksf") is not None:
+            need.append("su_bot_ksf")
+    elif m in SAND_PY:
+        need += ["phi_deg", "k_pci"]
+    elif m in ELASTIC_PY:
+        need.append("k_pci")
+    else:
+        raise ValueError(f"{who}: unknown p-y model; expected one of {CLAY_PY + SAND_PY + ELASTIC_PY}")
+    bad = [k for k in need if not pos(k)]
+    if bad:
+        raise ValueError(f"{who}: {', '.join(bad)} must be > 0")
+
+
 def soil_profile(soil: dict) -> SoilProfile:
-    """SoilProfile from {"layers": [SoilLayer.from_engineering kwargs], "J", "cyclic"}."""
+    """SoilProfile from {"layers": [SoilLayer.from_engineering kwargs], "J", "cyclic"}.
+    Each layer is validated first (validate_layer, minor 7d)."""
     layers = []
-    for d in soil["layers"]:
+    for i, d in enumerate(soil["layers"]):
+        validate_layer(d, i)
         d = dict(d)
         t, m, g = d.pop("thickness_ft"), d.pop("py_model"), d.pop("gamma_pcf")
         layers.append(SoilLayer.from_engineering(float(t), m, float(g), **d))
@@ -379,8 +455,9 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
             prov.ref_detailing))
     checks.append(Check(
         "Shaft flexure (capacity protection)", shaft_Md, mc_sh.Mp, mc_sh.Mp >= shaft_Md,
-        f"{prov.shaft_demand_factor:g}*max M(z)={shaft_Md:.0f} ({basis}), "
-        f"Mp_shaft={mc_sh.Mp:.0f} kip-in at P_dead", prov.ref_shaft_capacity))
+        f"{prov.shaft_demand_factor:g}*max M(z)={shaft_Md:.0f} kip-in ({shaft_Md / 12.0:.0f} kip-ft) "
+        f"({basis}), Mp_shaft={mc_sh.Mp:.0f} kip-in ({mc_sh.Mp / 12.0:.0f} kip-ft) at P_dead",
+        prov.ref_shaft_capacity))
     checks.append(Check(
         "Shaft shear (capacity protection)", V_max, sh_v[0], sh_v[0] >= V_max,
         f"max V(z)={V_max:.1f} kip (>= Vo={Vo:.1f}), phiVn_shaft={sh_v[0]:.1f} kip",
@@ -399,6 +476,7 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
         "Shaft oversize", need, gap, ok_gap,
         f"Ds - D = {gap:g} in " + (f">= {need:g} in" if need > 0 else "> 0 (shaft larger than column)")
         + f" ({UNVERIFIED_REF})", ""))
+    checks += max_axial_checks(prov, col, P_dead_c, mu_d)
 
     req_t = required_transverse(column, col_cage, prov, Vo, P_vc_c, mu_d, rho_min, s_max,
                                 bar_min, params)
@@ -414,6 +492,36 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
         refs={k: getattr(prov, "ref_" + k) for k in
               ("overstrength", "flexure", "shear", "shaft_capacity", "transverse",
                "detailing", "longitudinal", "confined")})
+
+
+def max_axial_checks(prov, col: CircularSection, P_comp: float, mu_d: float) -> List[Check]:
+    """Port of upstream _build_checks 11a / 11b (sdc_capacity.py:1042-1065), with
+    upstream's axial (P_used = the dead axial, compression-positive; here P_dead):
+      * 11a "Maximum axial load" (provisions.max_axial_coeff, SGS):
+        P <= coeff*f'c*Ag, reported for information (always OK) when mu_d <= 2;
+      * 11b "Axial load ratio" (provisions.axial_ratio_limit, SDC):
+        rho_dl = Pdl/(f'c*Ag) (f'c capped at 5 ksi) <= limit.
+    Upstream uses the max displacement-ductility DEMAND of the bounds for mu_d;
+    this tool has no displacement analysis, so mu_d = the entered / code-default
+    mu_D (the value the seismic shear uses).  Ref = provisions.ref_max_axial
+    (upstream's report ref, verbatim; unverified, OPEN_VERIFICATION_ITEMS E9)."""
+    out = []
+    if prov.max_axial_coeff is not None:
+        p_cap = prov.max_axial_coeff * col.fc * col.Ag
+        applies = mu_d > 2.0
+        out.append(Check(
+            "Maximum axial load", P_comp, p_cap, (not applies) or P_comp <= p_cap,
+            f"P={P_comp:.0f} kip vs {prov.max_axial_coeff:g}·f'c·Ag = {p_cap:.0f} kip"
+            + ("" if applies else f" (n/a: mu_d={mu_d:.2f} <= 2)")
+            + " (P = P_dead; mu_d = entered / code-default muD)", prov.ref_max_axial))
+    if prov.axial_ratio_limit is not None:
+        rho_dl = axial_load_ratio(P_comp, col.fc, col.Ag)
+        lim = prov.axial_ratio_limit
+        out.append(Check(
+            "Axial load ratio", rho_dl, lim, rho_dl <= lim,
+            f"rho_dl=Pdl/(f'c·Ag)={rho_dl:.3f} <= {lim:g} (f'c capped at 5 ksi; Pdl = P_dead)",
+            prov.ref_max_axial))
+    return out
 
 
 def _stability_check(bent, H, L_embed, EI_col, EI_sh, Ds, P_comp, prof, bounds, Mp):

@@ -19,8 +19,9 @@ Per bent (spec 4.3-4.5, controller rulings 8-1 .. 8-11):
      (transverse_candidates order, Av/s >= the LRFD one) until the shaft shear and
      confinement checks pass.
   6. Re-run check_cage (LRFD rows) and seismic_design on the final cages.
-Status precedence: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG > OK.  Overrides
-are never altered; with an override the status reflects the checks.
+Status precedence (ruling F-3): NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
+OK – MAGNIFICATION PENDING (S6) > OK.  Overrides are never altered; with an
+override the status reflects the checks.
 
 Units kip, in, ksi; moments kip-in.  App sign convention Pu < 0 = compression.
 No AASHTO citation is added here; check references come from the modules.
@@ -43,7 +44,9 @@ from colshaft_shaft import (SHAFT_FLEX, SHAFT_TRANS, checks_ok, full_cage, long_
 from seismic_port.provisions import PROVISIONS, _KEY_ALIASES, get_provisions
 
 ENVELOPE_MODES = ("station", "member")
-STATUS_RANK = {"OK": 0, "NG": 1, "REFINED ANALYSIS REQUIRED": 2, "NO SOLUTION": 3}
+ST_OK_PENDING = "OK – MAGNIFICATION PENDING (S6)"
+STATUS_RANK = {"OK": 0, ST_OK_PENDING: 1, "NG": 2, "REFINED ANALYSIS REQUIRED": 3,
+               "NO SOLUTION": 4}
 ROW_KEYS = ("Pu", "Mu", "Vu", "Tu", "_case", "_frame", "_station", "_step", "_bound", "_Pmin",
             "_Pmax", "_source", "_base_Mu", "_base_Vu", "_klr2", "_klr3", "_slender_limit2",
             "_slender_limit3", "_slender_status")
@@ -291,9 +294,23 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     base_end = bent.get("base_end") or "auto"
 
     H = bent.get("H_in")
-    H = float(H) if H not in (None, "") else cd.column_height_in(rows_all, col_frames)
+    H_auto = H in (None, "")
+    H = float(H) if not H_auto else cd.column_height_in(rows_all, col_frames)
     if not H > 0:
         raise ValueError(f"Bent {name}: column height H is 0; enter H_in")
+    if H_auto:                                  # ruling F-5
+        w.append(f"H taken from the frame station span ({H / 12.0:.2f} ft); for fixed-fixed "
+                 "bents verify it is the CLEAR height (Vo = 2·Mo/H)")
+    exp_steel = {}
+    for who, m in (("column", column), ("shaft", shaft)):      # ruling F-1
+        try:
+            exp_steel[who] = cs.expected_steel(m)
+        except ValueError as e:
+            raise ValueError(f"Bent {name} {who}: {e}") from None
+    fy_col = float(column.get("fy", cs.GR60_FY))
+    if abs(fy_col - cs.GR60_FY) > 1e-9:
+        w.append(f"column fy = {fy_col:g} ksi: lambda_mo = {float(bent.get('lambda_mo', 1.2)):g} "
+                 "is used; 1.2 is the A706 Gr60 value and must be checked for this grade")
     axial = seismic_axial(bent, rows_all, col_frames, cats, base_end, w)
     soil = bent.get("soil")
     basis = bent.get("shaft_basis") or ("soil" if soil else "cantilever")
@@ -350,6 +367,16 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     if shaft_frames:
         sh_rows = reduce_rows(cd.demand_rows(rows_all, shaft_frames, cats, "Strength", w), mode)
         sh_src = "shaft frames"
+    elif basis in ("cantilever", "interface") and col_raw:
+        # ruling F-4: the governing column-base Strength rows taken down the shaft
+        if basis == "cantilever" and not (isinstance(L_eq, (int, float)) and L_eq >= 0):
+            raise ValueError(cs.L_EQ_MSG)
+        bf, bst = base_station(rows_all, col_frames, cats, base_end, w)
+        base_rows = [r for r in col_raw if r["_frame"] == bf
+                     and math.isclose(r["_station"], bst, abs_tol=1e-6)]
+        sh_rows = csh.base_strength_rows(base_rows, basis,
+                                         float(L_eq) if basis == "cantilever" else 0.0)
+        sh_src = csh.CANT_SOURCE if basis == "cantilever" else csh.IFACE_SOURCE
     sh_lg = sh_tr = None
 
     def shaft_lrfd(rows):
@@ -429,25 +456,8 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
 
     # ── shaft seismic sizing (ruling 8-2) ──
     col_full = full_cage(col_long, col_trans)
-    if not ov.get("shaft_long") and not checks_ok(S, (SHAFT_FLEX,)):
-        cands = [sh_long] + [long_cage(a[3], a[1], a[2], Ds) for a in sh_cands
-                             if a[0] > sh_long["Ast"] + 1e-9]
-        found = csh.size_shaft_long(cands, lambda c: seis(col_full, full_cage(c, sh_trans)))
-        if found is None:
-            nosol.append(f"{SHAFT_FLEX}: no shaft longitudinal cage up to "
-                         f"{cands[-1]['n']}-{cands[-1]['bundle']}x#{cands[-1]['bar']} passes")
-        elif found[0] is not sh_long:
-            sh_long, S = found
-            source["shaft_long"] = "Seismic"
-    if not ov.get("shaft_trans") and not checks_ok(S, SHAFT_TRANS):
-        found = csh.size_shaft_transverse(shaft, prov, S, sh_long, sh_trans, params,
-                                          lambda t: seis(col_full, full_cage(sh_long, t)))
-        if found is None:
-            names = [c.name for c in S.checks if c.name in SHAFT_TRANS and not c.ok]
-            nosol.append(f"{', '.join(names)}: no shaft transverse cage in the search range passes")
-        else:
-            sh_trans, S = found
-            source["shaft_trans"] = "Seismic"
+    sh_long, sh_trans, S = size_shaft(shaft, prov, params, ov, sh_cands, sh_long, sh_trans, S,
+                                      lambda c: seis(col_full, c), nosol, source)
 
     # ── final cages (ruling 8-15): when the merged / upsized cage fails the LRFD
     # rows although the LRFD and seismic designs each passed, walk the transverse
@@ -464,17 +474,22 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     skipped = []
     if py_ctx is not None:
         sh_rows, skipped = py_rows(py_ctx, S.EI_shaft, Ds)
-    changed = False
+    changed = col_changed = False
+    Mo_walk = S.Mo
+    # ruling F-6: the merged cage is also walked when it fails the column seismic
+    # transverse criteria (the port ignores cross-ties, so a merged LRFD cage with
+    # ties can carry a larger Av/s but a smaller rho_s / seismic phiVn)
     if (not ov.get("col_trans") and col_tr is not None and col_tr.ok and seis_req_ok
-            and col_rows and not rows_pass(column, col_full, col_rows, tf_final)):
+            and not (csh.col_trans_screen(column, prov, S, col_long, col_trans)
+                     and (not col_rows or rows_pass(column, col_full, col_rows, tf_final)))):
         t = csh.walk_trans(col_trans, params, lambda t: (
             csh.col_trans_screen(column, prov, S, col_long, t)
-            and rows_pass(column, full_cage(col_long, t), col_rows, tf_final)))
+            and (not col_rows or rows_pass(column, full_cage(col_long, t), col_rows, tf_final))))
         if t is None:
             nosol.append("Column transverse: no candidate from the merged cage on passes both "
                          "the LRFD rows and the seismic transverse criteria")
         else:
-            col_trans, changed = t, True
+            col_trans, changed, col_changed = t, True, True
             source["col_trans"] = "LRFD+Seismic"
     sh_full = full_cage(sh_long, sh_trans)
     if (not ov.get("shaft_trans") and sh_tr is not None and sh_tr.ok and sh_rows
@@ -491,6 +506,14 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
     col_full, sh_full = full_cage(col_long, col_trans), full_cage(sh_long, sh_trans)
     if changed:
         S = seis(col_full, sh_full)
+        # minor 7e: the column walk changed Mo -> size the shaft once more
+        if col_changed and abs(S.Mo - Mo_walk) > 1e-9 * max(1.0, abs(Mo_walk)):
+            l0, t0 = sh_long, sh_trans
+            sh_long, sh_trans, S = size_shaft(shaft, prov, params, ov, sh_cands, sh_long, sh_trans,
+                                              S, lambda c: seis(col_full, c), nosol, source)
+            if sh_long is not l0 or sh_trans is not t0:
+                sh_full = full_cage(sh_long, sh_trans)
+                S = seis(col_full, sh_full)
         Df = S.Df if S.Df is not None else 0.0
         tf_final = transform_for(Df)
         if py_ctx is not None:
@@ -526,26 +549,61 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
         w.append("slenderness: K*lu/r exceeds the neglect limit; moment magnification is not "
                  "yet applied (open item S6)")
     status = bent_status(bool(nosol), csl.ST_REFINED in sl,
-                         any(not c["ok"] for c in final_checks))
+                         any(not c["ok"] for c in final_checks), csl.ST_PENDING in sl)
     w += S.warnings
     out = _bent_result(name, status, lrfd, S, final, source, final_checks, nosol, w, axial, H)
     out["Df_for_lu"] = Df
     out["shaft_basis"] = basis
+    out["H_auto"] = H_auto
+    out["expected_steel"] = exp_steel
     return out
 
 
-def bent_status(no_solution: bool, refined: bool, any_ng: bool) -> str:
-    """Ruling 8-9: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG > OK."""
+def size_shaft(shaft, prov, params, ov, sh_cands, sh_long, sh_trans, S, run, nosol, source):
+    """Shaft seismic sizing (ruling 8-2): step the longitudinal (As order) until the
+    capacity-protection flexure check passes, then the transverse until the shaft
+    shear / confinement checks pass.  run(shaft full cage) -> SeismicResult.
+    -> (sh_long, sh_trans, S); the inputs are returned unchanged when they pass."""
+    Ds = float(shaft["D"])
+    if not ov.get("shaft_long") and not checks_ok(S, (SHAFT_FLEX,)):
+        cands = [sh_long] + [long_cage(a[3], a[1], a[2], Ds) for a in sh_cands
+                             if a[0] > sh_long["Ast"] + 1e-9]
+        found = csh.size_shaft_long(cands, lambda c: run(full_cage(c, sh_trans)))
+        if found is None:
+            nosol.append(f"{SHAFT_FLEX}: no shaft longitudinal cage up to "
+                         f"{cands[-1]['n']}-{cands[-1]['bundle']}x#{cands[-1]['bar']} passes")
+        elif found[0] is not sh_long:
+            sh_long, S = found
+            source["shaft_long"] = "Seismic"
+    if not ov.get("shaft_trans") and not checks_ok(S, SHAFT_TRANS):
+        lg = sh_long
+        found = csh.size_shaft_transverse(shaft, prov, S, lg, sh_trans, params,
+                                          lambda t: run(full_cage(lg, t)))
+        if found is None:
+            names = [c.name for c in S.checks if c.name in SHAFT_TRANS and not c.ok]
+            nosol.append(f"{', '.join(names)}: no shaft transverse cage in the search range passes")
+        else:
+            sh_trans, S = found
+            source["shaft_trans"] = "Seismic"
+    return sh_long, sh_trans, S
+
+
+def bent_status(no_solution: bool, refined: bool, any_ng: bool, pending: bool = False) -> str:
+    """Rulings 8-9 / F-3: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
+    OK – MAGNIFICATION PENDING (S6) (a final row needs moment magnification,
+    not applied: open item S6) > OK."""
     if no_solution:
         return "NO SOLUTION"
     if refined:
         return "REFINED ANALYSIS REQUIRED"
-    return "NG" if any_ng else "OK"
+    if any_ng:
+        return "NG"
+    return ST_OK_PENDING if pending else "OK"
 
 
 def _bent_result(name, status, lrfd, S, final, source, final_checks, nosol, w, axial, H):
     return {"name": name, "status": status, "lrfd": lrfd, "seismic": S, "final": final,
-            "final_source": source, "final_checks": final_checks, "no_solution": nosol,
+            "final_source": source, "final_checks": final_checks, "no_solution": _dedupe(nosol),
             "warnings": _dedupe(w), "axial": axial, "H_in": H}
 
 

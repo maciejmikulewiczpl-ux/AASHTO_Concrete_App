@@ -31,11 +31,11 @@ _RANK = {ST_NEGLECT: 0, ST_PENDING: 1, ST_REFINED: 2}
 #   single curvature           double curvature
 #   ends: (+30, +10)           ends: (+30, -10)   (M(x) crosses zero)
 #
-# The controller brief (P1) ruled the opposite ("opposite sign = single
-# curvature", end-reaction reading).  That contradicts the internal-force
-# reading above, and the wrong choice is unconservative for true single
-# curvature, so the default follows the internal-force reading and the choice
-# is isolated in this one flag, pending controller/S1 confirmation.
+# Controller ruling 6A-1 (spec rulings appendix; supersedes the earlier P1
+# "opposite sign = single curvature" statement): single curvature = the SAME
+# sign of the station (internal) moments at both ends; opposite signs = double
+# curvature.  The choice is isolated in this one flag (a one-line flip) pending
+# confirmation against a user sample (S1).
 SINGLE_CURVATURE_OPPOSITE_SIGN = False
 
 

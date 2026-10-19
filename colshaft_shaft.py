@@ -3,6 +3,8 @@
 * Strength rows through the pile (spec 4.4a, rulings 8-1 / 8-12 / 8-13): a
   column-base Strength row (Pu, M, V, T) is applied directly at the top of the
   shaft (shaft-alone p-y solve, Hcol = 0); see the section comment below.
+  Without shaft frames on the cantilever / interface basis the same governing
+  rows are taken down the shaft by base_strength_rows (ruling F-4).
 * Seismic shaft sizing (ruling 8-2): small stepping helpers over the same
   longitudinal candidate generator / constraints as colshaft_lrfd and over
   colshaft_lrfd.transverse_candidates.
@@ -306,6 +308,35 @@ def governing_base_rows(rows: list, n: int = N_TOP) -> list:
     return [rows[i] for i in sorted(set(idx))]
 
 
+CANT_SOURCE = "cantilever strength"
+IFACE_SOURCE = "interface strength"
+
+
+def base_strength_rows(base_rows: list, basis: str, L_eq: float = 0.0) -> list:
+    """Shaft LRFD rows when there are no shaft frames and the basis is
+    "cantilever" or "interface" (ruling F-4), from the same governing base rows
+    as the p-y path (top-5 M union top-5 V, spec 4.4a):
+      * cantilever: Mu = |M_b| + |V_b|*L_eq (M grows linearly to L_eq), Vu = |V_b|;
+      * interface:  Mu = |M_b|, Vu = |V_b|.
+    Pu / Tu / _Pmin / _Pmax / _bound / _case / _frame / _step are carried."""
+    if basis not in ("cantilever", "interface"):
+        raise ValueError(f"base_strength_rows: basis must be cantilever or interface, got {basis!r}")
+    L = float(L_eq) if basis == "cantilever" else 0.0
+    src = CANT_SOURCE if basis == "cantilever" else IFACE_SOURCE
+    out = []
+    for r in governing_base_rows(base_rows):
+        M_b, V_b = abs(float(r["Mu"])), abs(float(r["Vu"]))
+        o = {k: r[k] for k in ("Pu", "Tu") if k in r}
+        o.update(Mu=M_b + V_b * L, Vu=V_b, Vp=0, Ms=0, Ps=0, _source=src, _case=r.get("_case"),
+                 _frame=r.get("_frame"), _station=None, _bound=r.get("_bound", "envelope"),
+                 _Pmin=r.get("_Pmin", r["Pu"]), _Pmax=r.get("_Pmax", r["Pu"]),
+                 _base_Mu=M_b, _base_Vu=V_b)
+        if "_step" in r:
+            o["_step"] = r["_step"]
+        out.append(o)
+    return out
+
+
 def strength_rows_through_pile(base_rows: list, L_embed: float, EI_sh: float, Ds: float,
                                prof, bounds):
     """Shaft LRFD rows from the governing base rows (ruling 8-12).
@@ -329,7 +360,8 @@ def py_rows(ctx, EI_shaft, Ds):
 
 def py_check(skipped, n):
     """Ruling 8-13: NG when any governing strength row is unstable on every bound."""
-    rows = "; ".join(f"{r.get('_case')} (M={abs(r['Mu']):.0f} kip-in, V={abs(r['Vu']):.0f} kip)"
+    rows = "; ".join(f"{r.get('_case')} (M={abs(r['Mu']):.0f} kip-in "
+                     f"({abs(r['Mu']) / 12.0:.0f} kip-ft), V={abs(r['Vu']):.0f} kip)"
                      for r in skipped)
     return {"group": "Shaft LRFD", "name": "Shaft p-y strength solve", "demand": len(skipped),
             "capacity": n, "ratio": len(skipped) / n if n else 0.0, "ok": not skipped,
