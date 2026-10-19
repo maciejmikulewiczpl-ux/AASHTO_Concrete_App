@@ -1326,8 +1326,9 @@ def _sl(K):
 
 
 def test_lu_iteration_converges_or_reports():
-    """MF-5b: bent 2, K = 2.3 needs two redesigns (the heavier column deepens Df) and then
-    passes the LRFD rows; K = 2.4 settles within 1 % but still fails -> clearly reported."""
+    """MF-5b/5c: bent 2, K = 2.3 needs two redesigns (the heavier column deepens Df) and
+    then passes the LRFD rows; K = 2.4 settles within 1 % but still fails at the final lu,
+    so the final MF-5c redesign for max(lu) x 1.02 is kept (it passes)."""
     b = ee.run_colshaft(payload([bent2(slender=_sl(2.3))],
                                 settings={"slenderness_on": True}))["bents"][0]
     assert b["lu_iterations"] == 2 and b["no_solution"] == []
@@ -1336,9 +1337,13 @@ def test_lu_iteration_converges_or_reports():
     assert not any("did not converge" in w for w in b["warnings"])
     b = ee.run_colshaft(payload([bent2(slender=_sl(2.4))],
                                 settings={"slenderness_on": True}))["bents"][0]
-    assert b["lu_iterations"] >= 1 and b["status"] == "NO SOLUTION"
-    assert any("ℓu settled within 1%" in w and "still fails on magnified rows" in w
-               for w in b["warnings"])
+    # MF-5c: designed for max(lu seen) x 1.02 -> passes at its own final lu (before: the
+    # ~1 % Df residual left the transverse walk with NO SOLUTION)
+    assert b["lu_iterations"] >= 1 and b["lu_margin"] == ee.LU_MARGIN == 1.02
+    assert b["no_solution"] == [] and b["status"] != "NO SOLUTION"
+    assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
+    assert b["warnings"][0].startswith("slenderness: column designed for ℓu × 1.02")
+    assert "lu_margin" not in run("slender")["bents"][0]
     # off / no redesign needed: 0 iterations
     assert run("slender")["bents"][0]["lu_iterations"] == 0
 

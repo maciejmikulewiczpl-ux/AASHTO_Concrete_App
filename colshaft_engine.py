@@ -295,11 +295,12 @@ def _ov_trans(ov):
 # ─── Bent run ───────────────────────────────────────────────────────
 
 def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=None,
-             lu_iter=0):
+             lu_iter=0, lu_max=None, lu_margin=False):
     """One bent.  `sway`: the sway-group context of pass 2 (colshaft_slender
     make_magnifier; None = the bent alone).  `design_Df`: the Df for the design-pass
     ℓu (rulings MF-5 / MF-5b redesign; None = the up-front estimate); `lu_iter`: the
-    redesign iteration count."""
+    redesign iteration count; `lu_max`: the largest ℓu seen so far; `lu_margin`: this is
+    the MF-5c margin run (no further redesign)."""
     name = str(bent.get("name") or "")
     w = []
     nosol = []
@@ -592,13 +593,29 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=
         w.append(f"slenderness: ℓu settled within {LU_TOL:.0%} (design Df = {Df0 / 12.0:.2f} ft, "
                  f"final Df = {Df / 12.0:.2f} ft) but the column still fails on magnified rows at "
                  "the final ℓu")
-    if mag_ng and lu_not_settled(Df, Df0, H):
+    lu_seen = max(lu_max or 0.0, H + Df, H + Df0)
+    if mag_ng and not lu_margin and lu_not_settled(Df, Df0, H):
         if lu_iter < LU_MAX_ITER:
             return run_bent(bent, pr, cats, prov, params, settings, mode, sway=sway,
-                            design_Df=Df, lu_iter=lu_iter + 1)
+                            design_Df=Df, lu_iter=lu_iter + 1, lu_max=lu_seen)
         w.append(f"slenderness: ℓu/Df did not converge (column ↔ fixity coupling) after "
                  f"{LU_MAX_ITER} redesigns (design Df = {Df0 / 12.0:.2f} ft, final Df = "
                  f"{Df / 12.0:.2f} ft); last result kept")
+    # ruling MF-5c: the loop stopped (settled or max) and still fails only on magnified
+    # column rows -> one final redesign for max(ℓu seen) × 1.02; kept if it passes at its
+    # own final ℓu
+    if mag_ng and not lu_margin:
+        lu_d = LU_MARGIN * lu_seen
+        res = run_bent(bent, pr, cats, prov, params, settings, mode, sway=sway,
+                       design_Df=lu_d - H, lu_iter=lu_iter, lu_max=lu_seen, lu_margin=True)
+        col_rows_m = ((res.get("lrfd") or {}).get("col") or {}).get("check_rows") or []
+        if (not res["no_solution"] and res["status"] not in ("NO SOLUTION", ST_UNSTABLE)
+                and col_rows_m and all(r.get("ok") for r in col_rows_m)):
+            res["warnings"].insert(0, f"slenderness: column designed for ℓu × {LU_MARGIN:g} "
+                                      f"(ℓu = {lu_d / 12.0:.2f} ft) to close the column↔fixity loop")
+            res["lu_margin"] = LU_MARGIN
+            res["warnings"][1:1] = [x for x in w if "did not converge" in x]
+            return res
     if lu_iter:
         w.insert(0, f"slenderness: column redesigned {lu_iter} time(s) with the final ℓu (final "
                     f"Df = {Df / 12.0:.2f} ft, design Df = {Df0 / 12.0:.2f} ft)")
@@ -624,6 +641,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=
 WALK_NOSOL = "Column transverse: no candidate from the merged cage on"
 LU_MAX_ITER = 4
 LU_TOL = 0.01
+LU_MARGIN = 1.02
 SRC_CHECK_ONLY = "LRFD (sway check-only)"
 
 
