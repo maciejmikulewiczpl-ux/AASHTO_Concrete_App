@@ -45,14 +45,28 @@
     ['sStep', 'Hoop pitch step', 'in'],
     ['maxLegs', 'Cross-tie legs, max', '']
   ];
+  // colshaft_engine.ST_OK_PENDING (ruling F-3; pinned equal by the pytest)
+  var ST_OK_PENDING = 'OK – MAGNIFICATION PENDING (S6)';
   var STATUS_COLORS = {
     'OK': '#27ae60',
     'NG': '#c0392b',
     'NO SOLUTION': '#7b1010',
     'REFINED ANALYSIS REQUIRED': '#e67e22'
   };
-  // Ruling 8-9 precedence: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG > OK
-  var STATUS_RANK = { 'OK': 0, 'NG': 1, 'REFINED ANALYSIS REQUIRED': 2, 'NO SOLUTION': 3 };
+  STATUS_COLORS[ST_OK_PENDING] = '#d4a017';     // amber
+  // Rulings 8-9 / F-3 precedence: NO SOLUTION > REFINED ANALYSIS REQUIRED > NG >
+  // OK – MAGNIFICATION PENDING (S6) > OK
+  var STATUS_RANK = { 'OK': 0, 'NG': 2, 'REFINED ANALYSIS REQUIRED': 3, 'NO SOLUTION': 4 };
+  STATUS_RANK[ST_OK_PENDING] = 1;
+  // report class per status: pass (OK), amber (OK pending S6), fail (otherwise)
+  function statusClass(status) {
+    return status === 'OK' ? 'rpt-pass' : status === ST_OK_PENDING ? 'cs-rpt-amber' : 'rpt-fail';
+  }
+  // A706 Gr60 expected steel (colshaft_seismic.FYE / FUE / FYH, ruling F-1)
+  var GR60_EXPECTED = { fye: 68, fue: 95, fyh: 68 };
+  var EXPECTED_HINT = '(blank = A706 Gr60: 68/95/68)';
+  // minor 7b: shown whenever an input changes after a run, cleared by the next Design
+  var STALE_MSG = 'Results are stale — inputs changed after the last Design; re-run Design.';
   var OV_PARTS = ['col_long', 'col_trans', 'shaft_long', 'shaft_trans'];
   // colshaft_slender.ST_NEGLECT / ST_PENDING / ST_REFINED and _RANK (pinned equal by
   // tests/test_colshaft_ui_static.py)
@@ -143,8 +157,8 @@
     return {
       name: 'Bent ' + ((i || 0) + 1),
       col_frames: '', shaft_frames: '',
-      col: { D: 48, fc: 4, fy: 60, cover: 2, trans_type: 'hoop', hoop_closure: 'lap' },
-      shaft: { D: 72, fc: 4, fy: 60, cover: 3, trans_type: 'hoop' },
+      col: { D: 48, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 2, trans_type: 'hoop', hoop_closure: 'lap' },
+      shaft: { D: 72, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 3, trans_type: 'hoop' },
       end_long: 'fixed-free', end_trans: 'fixed-free',
       H_ft: '', base_end: 'auto', lambda_mo: 1.2, mu_d: '',
       shaft_basis: 'auto', L_eq_ft: '', soil: '', L_embed_ft: '', P_dead: '',
@@ -257,6 +271,37 @@
     });
     return out;
   }
+  // ruling F-1: fy = 60 (fyh: fy, the transverse grade here) may leave fye / fue / fyh
+  // blank (A706 Gr60 defaults); any other grade must enter them (mirrors
+  // colshaft_seismic.expected_steel).  -> list of error strings
+  function expectedErrors(m) {
+    var out = [];
+    var fy = num(m && m.fy);
+    ['fye', 'fue', 'fyh'].forEach(function (k) {
+      var v = num(m && m[k]);
+      if (v === null) {
+        if (fy !== null && fy !== 60) out.push(k + ' must be entered for fy ≠ 60 ksi (the A706 Gr60 defaults do not apply)');
+      } else if (!(v > 0)) out.push(k + ' must be > 0');
+    });
+    return out;
+  }
+  // minor 7d: the p-y defaults (su = phi = k = 0) are not a soil (mirrors
+  // colshaft_seismic.validate_layer).  -> list of error strings
+  function layerErrors(l) {
+    var out = [];
+    var pos = function (k) { return num(l[k]) !== null && num(l[k]) > 0; };
+    if (!pos('thickness_ft') || !pos('gamma_pcf')) out.push('thickness and gamma must be > 0');
+    if (l.py_model === 'matlock_soft_clay' || l.py_model === 'welch_stiff_clay') {
+      if (!pos('su_top_ksf')) out.push('clay needs su top > 0');
+      if (num(l.su_bot_ksf) !== null && !pos('su_bot_ksf')) out.push('su bot must be > 0 (or blank = su top)');
+    } else if (l.py_model === 'api_sand') {
+      if (!pos('phi_deg')) out.push('sand needs φ′ > 0');
+      if (!pos('k_pci')) out.push('sand needs k > 0');
+    } else if (l.py_model === 'elastic_subgrade') {
+      if (!pos('k_pci')) out.push('elastic subgrade needs k > 0');
+    } else out.push('unknown p-y model');
+    return out;
+  }
   function validateState(state) {
     var errs = [];
     if (!String(state.paste || '').trim()) errs.push('Paste the CSiBridge "Element Forces - Frames" table first.');
@@ -270,6 +315,7 @@
           var x = num(b[m[0]][k]);
           if (x === null || !(x > 0)) errs.push(who + ': ' + m[1] + ' ' + k + ' must be > 0.');
         });
+        expectedErrors(b[m[0]]).forEach(function (e) { errs.push(who + ': ' + m[1] + ' ' + e); });
       });
       var basis = shaftBasis(b);
       var Leq = num(b.L_eq_ft);
@@ -284,8 +330,8 @@
         else {
           if (!p.layers.length) errs.push(who + ': soil profile "' + p.name + '" has no strata.');
           p.layers.forEach(function (l, j) {
-            if (!(num(l.thickness_ft) > 0) || !(num(l.gamma_pcf) > 0))
-              errs.push('Soil profile "' + p.name + '" layer ' + (j + 1) + ': thickness and gamma must be > 0.');
+            var le = layerErrors(l);
+            if (le.length) errs.push('Soil profile "' + p.name + '" layer ' + (j + 1) + ': ' + le.join('; ') + '.');
           });
           if (!(num(b.L_embed_ft) > 0)) errs.push(who + ': enter the shaft embedded length (ft) for the soil basis.');
         }
@@ -308,6 +354,7 @@
     var out = { D: num(m.D), fc: num(m.fc), fy: num(m.fy), cover: num(m.cover),
       trans_type: m.trans_type === 'spiral' ? 'spiral' : 'hoop' };
     if (isCol && out.trans_type === 'hoop') out.hoop_closure = m.hoop_closure || 'lap';
+    ['fye', 'fue', 'fyh'].forEach(function (k) { if (num(m[k]) !== null) out[k] = num(m[k]); });
     return out;
   }
   function soilPayload(p) {
@@ -470,18 +517,24 @@
     if (isNum(r._station)) return r._frame + ' @ ' + fmt(r._station / 12.0, 1) + ' ft';
     return r._source || r._frame || '';
   }
+  // minor 7a: failing rows first, then by D/C descending (null / non-finite ratio = worst)
+  function rowOrder(a, b) {
+    if (!!a.ok !== !!b.ok) return a.ok ? 1 : -1;
+    var ra = isNum(a.ratio) ? a.ratio : Infinity, rb = isNum(b.ratio) ? b.ratio : Infinity;
+    return ra === rb ? 0 : (rb > ra ? 1 : -1);
+  }
   function governingRows(checkRows) {
-    // sorted by D/C (descending); moments in kip-ft
+    // failing first, then by D/C (descending); moments in kip-ft
     return (checkRows || []).map(function (r, i) {
       return {
-        i: i + 1, ratio: r.ratio,
+        i: i + 1, ratio: r.ratio, ok: !!r.ok,
         cells: [String(i + 1), r._case || '', rowWhere(r), r._bound || '', fmt(r.Pu, 0),
           (isNum(r._Pmin) && isNum(r._Pmax)) ? fmt(r._Pmin, 0) + ' .. ' + fmt(r._Pmax, 0) : '—',
           kft(r.Mu), kft(r.Mr), isNum(r._flexP) ? fmt(r._flexP, 0) : '—', r.flexStatus || '',
           fmt(r.Vu, 1), fmt(r.Vr2, 1), r.shearStatus || '', kft(r.Tu, 1), kft(r.Tr, 1),
           r.torsionConsider ? 'yes' : 'no', fmt(r.ratio, 3), r.ok ? 'OK' : 'NG']
       };
-    }).sort(function (a, b) { return (b.ratio || 0) - (a.ratio || 0); });
+    }).sort(rowOrder);
   }
   var MOMENT_CHECKS = { 'Shaft flexure (capacity protection)': true };
   function checkRow(c) {
@@ -630,7 +683,9 @@
     ['E14', 'Df_eq for ℓu from a fixed-free solve at Mo/H on the softest stable bound (conservative); the shaft ' +
       'confinement and oversize checks carry no ported reference.'],
     ['E17', 'The p-y axial-ramp guard (ruling 8-16) is applied to the strength rows only; the seismic stability / ' +
-      'demand path follows upstream.']
+      'demand path follows upstream.'],
+    ['E18', 'Shaft flexural capacity = M-φ expected Mp at P_dead (seismic-app convention); the SDC ref string reads ' +
+      '"MD ≤ φMne" and P_dead is not the least-compression seismic axial — confirm the capacity definition and the axial.']
   ];
   var REPORT_SECTIONS = [
     ['inputs', '1. Inputs'], ['parse', '2. Parse summary'], ['lrfd', '3. LRFD strength design — governing rows'],
@@ -667,6 +722,14 @@
     return 'D = ' + fmt(m.D, 1) + ' in, f\'c = ' + fmt(m.fc, 2) + ' ksi, fy = ' + fmt(m.fy, 0) + ' ksi, cover = ' +
       fmt(m.cover, 2) + ' in, ' + (m.trans_type || 'hoop') + (m.hoop_closure ? ' (' + m.hoop_closure + ')' : '');
   }
+  // the expected steel the engine used (result.expected_steel), else what the payload implies
+  function expectedStr(es, m) {
+    if (isObj(es) && isNum(es.fye)) {
+      return fmt(es.fye, 1) + ' / ' + fmt(es.fue, 1) + ' / ' + fmt(es.fyh, 1) + ' ksi (' + (es.source || '') + ')';
+    }
+    if (!m) return '—';
+    return ['fye', 'fue', 'fyh'].map(function (k) { return isNum(m[k]) ? fmt(m[k], 1) : 'Gr60 ' + GR60_EXPECTED[k]; }).join(' / ') + ' ksi';
+  }
   function ovStr(ov) {
     if (!isObj(ov) || !Object.keys(ov).length) return 'none';
     return OV_PARTS.filter(function (k) { return ov[k]; }).map(function (k) {
@@ -682,7 +745,7 @@
     return '<table class="rpt-table' + (cls ? ' ' + cls : '') + '"><thead><tr>' + hdr.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
       '</tr></thead><tbody>' + rows.map(function (r) {
         return '<tr>' + r.map(function (c) {
-          var cl = c === 'OK' ? ' class="rpt-pass"' : c === 'NG' ? ' class="rpt-fail"' : '';
+          var cl = c === 'OK' ? ' class="rpt-pass"' : c === 'NG' ? ' class="rpt-fail"' : c === ST_OK_PENDING ? ' class="cs-rpt-amber"' : '';
           return '<td' + cl + '>' + esc(c) + '</td>';
         }).join('') + '</tr>';
       }).join('') + '</tbody></table>';
@@ -690,17 +753,28 @@
   function rptNote(t) { return '<div class="rpt-note">' + esc(t) + '</div>'; }
   function rptRef(t) { return '<div class="rpt-ref">' + esc(t) + '</div>'; }
   function rptEq(lines) { return '<div class="rpt-eq">' + lines.map(esc).join('<br>') + '</div>'; }
+  // ruling F-4: one line naming where the shaft LRFD rows come from
+  var SHAFT_SOURCES = {
+    'shaft frames': 'Shaft rows: the Strength rows of the pasted shaft frames.',
+    'p-y strength': 'Shaft rows: the governing column-base Strength rows (top 5 by M ∪ top 5 by V) applied at the top of ' +
+      'the shaft and solved through the p-y soil model (max in-ground M and V over the stable soil bounds).',
+    'cantilever strength': 'Shaft rows: the governing column-base Strength rows (top 5 by M ∪ top 5 by V) taken down the ' +
+      'equivalent cantilever: Mu = |M_base| + |V_base|·L_eq (M grows linearly to L_eq), Vu = |V_base|.',
+    'interface strength': 'Shaft rows: the governing column-base Strength rows (top 5 by M ∪ top 5 by V) at the ' +
+      'column/shaft interface: Mu = |M_base|, Vu = |V_base|.'
+  };
+  function shaftSourceNote(src) { return SHAFT_SOURCES[src] || ('Shaft rows: ' + (src || '—') + '.'); }
   function lrfdRowsTable(checkRows) {
     if (!checkRows || !checkRows.length) return rptNote('No LRFD rows.');
     var rows = checkRows.map(function (r, i) { return { r: r, i: i }; })
-      .sort(function (a, b) { return (b.r.ratio || 0) - (a.r.ratio || 0); })
+      .sort(function (a, b) { return rowOrder(a.r, b.r); })
       .map(function (x) {
         var r = x.r;
         return [String(x.i + 1), r._case || '', rowWhere(r), fmt(r.Pu, 0), kft(r.Mu), fmt(r.Vu, 1), kft(r.Tu, 1),
           kft(r.Mr), fmt(r.Vr2, 1), kft(r.Tr, 1), fmt(r.ratio, 3), isNum(r._flexP) ? fmt(r._flexP, 0) : '—', r.ok ? 'OK' : 'NG'];
       });
     return rptTable(['#', 'Case', 'Where', 'Pu', 'Mu', 'Vu', 'Tu', 'Mr', 'Vr', 'Tr', 'D/C', 'P for flexure', ''], rows) +
-      rptNote('Pu, Vu, Vr, P in kip (compression < 0); Mu, Mr, Tu, Tr in kip-ft. Sorted by D/C. "P for flexure" = the axial ' +
+      rptNote('Pu, Vu, Vr, P in kip (compression < 0); Mu, Mr, Tu, Tr in kip-ft. Failing rows first, then by D/C. "P for flexure" = the axial ' +
         'load in [P_min, P_max] at which the cage\'s flexural resistance is lowest (envelope rows). Checked with the app\'s ' +
         'AASHTO LRFD circular-section engine (unchanged).');
   }
@@ -719,6 +793,8 @@
       i1.push(['Base end', pb.base_end || 'auto']);
       i1.push(['Column', memberStr(pb.column)]);
       i1.push(['Shaft', memberStr(pb.shaft)]);
+      i1.push(['Expected steel fye / fue / fyh (column; shaft)', expectedStr(b.expected_steel && b.expected_steel.column, pb.column) + '; ' +
+        expectedStr(b.expected_steel && b.expected_steel.shaft, pb.shaft)]);
       i1.push(['λmo', S ? fmt(S.lambda_mo, 2) : (isNum(pb.lambda_mo) ? fmt(pb.lambda_mo, 2) : '1.20 (default)')]);
       i1.push(['μD', S ? fmt(S.mu_d, 2) + (isNum(pb.mu_d) ? ' (entered)' : ' (code default)') : (isNum(pb.mu_d) ? fmt(pb.mu_d, 2) : 'code default')]);
       i1.push(['Shaft basis', b.shaft_basis || pb.shaft_basis || '—']);
@@ -760,7 +836,9 @@
     // 3. LRFD rows
     var L = b.lrfd || {};
     var h3 = '<h4>Column (final cage)</h4>' + lrfdRowsTable(L.col && L.col.check_rows);
-    if (L.shaft && L.shaft.check_rows) h3 += '<h4>Shaft (' + esc(L.shaft.source || '') + ')</h4>' + lrfdRowsTable(L.shaft.check_rows);
+    if (L.shaft && L.shaft.check_rows) {
+      h3 += '<h4>Shaft (' + esc(L.shaft.source || '') + ')</h4>' + rptNote(shaftSourceNote(L.shaft.source)) + lrfdRowsTable(L.shaft.check_rows);
+    } else h3 += '<h4>Shaft</h4>' + rptNote('No shaft LRFD rows.');
     sec.lrfd = h3;
     // 4. slenderness
     var on = result.settings && result.settings.slenderness_on;
@@ -801,7 +879,7 @@
       // 7. column seismic shear
       var v = S.col_shear || [];
       var rq = S.required_transverse || {};
-      sec.colshear = rptEq(['At P = ' + fmt(S.P_vc, 0) + ' kip (least compression of the Extreme rows), μD = ' + fmt(S.mu_d, 2) + ', inside the plastic hinge:',
+      sec.colshear = rptEq(['At P = ' + fmt(S.P_vc, 0) + ' kip (least compression of the Extreme rows, else P_dead), μD = ' + fmt(S.mu_d, 2) + ', inside the plastic hinge:',
         'Vc = ' + fmt(v[1], 1) + ' kip,  Vs = ' + fmt(v[2], 1) + ' kip,  φVn = ' + fmt(v[0], 1) + ' kip  vs  Vo = ' + fmt(S.Vo, 1) + ' kip  → ' +
           (isNum(v[0]) && v[0] >= S.Vo ? 'OK' : 'NG'),
         'ρs = ' + fmt(S.rho_s_col, 4) + '  vs  ρs,min = ' + fmt(S.rho_s_min, 4) +
@@ -836,7 +914,7 @@
     // 9. final checks
     sec.checks = (b.final_checks || []).length ? rptTable(['Group', 'Check', 'Demand', 'Capacity', 'Ratio', '', 'Detail', 'Reference'],
       b.final_checks.map(function (x) { var cr = checkRow(x); cr[7] = checkRef(x); return cr; }), 'cs-rpt-checks') +
-      rptNote('Shaft flexure demand/capacity in kip-ft; other values in the check\'s own units (kip, in, ratios); detail text may quote kip-in.')
+      rptNote('Shaft flexure demand/capacity in kip-ft; other values in the check\'s own units (kip, in, ratios); detail text quotes kip-in moments with the kip-ft value in brackets.')
       : rptNote('No final checks.');
     // 10. final cage
     sec.cage = F ? rptTable(['Part', 'Cage', 'Source', 'Steel'], [
@@ -847,7 +925,7 @@
       rptNote('Source: LRFD, Seismic, LRFD+Seismic (merged cage re-walked, ruling 8-15) or Override (used as entered).')
       : rptNote('No final cage (no solution).');
     var h = '<div class="cs-rpt-bent' + (k ? ' cs-rpt-break' : '') + '"><h2>Bent ' + esc(b.name) + ' — <span class="' +
-      (b.status === 'OK' ? 'rpt-pass' : 'rpt-fail') + '">' + esc(b.status) + '</span></h2>';
+      statusClass(b.status) + '">' + esc(b.status) + '</span></h2>';
     REPORT_SECTIONS.forEach(function (s) { h += '<h3 data-sec="' + s[0] + '">' + esc(s[1]) + '</h3>' + sec[s[0]]; });
     return h + '</div>';
   }
@@ -899,7 +977,10 @@
     slenderSummary: slenderSummary, deadHint: deadHint, overrideErrors: overrideErrors,
     UNVERIFIED_SUFFIX: UNVERIFIED_SUFFIX, OPEN_DECIDE_E: OPEN_DECIDE_E, REPORT_SECTIONS: REPORT_SECTIONS,
     seismicRef: seismicRef, checkRef: checkRef, slenderAxes: slenderAxes, mphiChart: mphiChart,
-    shaftSeries: shaftSeries, shaftCharts: shaftCharts, reportHtml: reportHtml, codeLabel: codeLabel
+    shaftSeries: shaftSeries, shaftCharts: shaftCharts, reportHtml: reportHtml, codeLabel: codeLabel,
+    ST_OK_PENDING: ST_OK_PENDING, statusClass: statusClass, expectedErrors: expectedErrors, layerErrors: layerErrors,
+    expectedStr: expectedStr, shaftSourceNote: shaftSourceNote, GR60_EXPECTED: GR60_EXPECTED,
+    EXPECTED_HINT: EXPECTED_HINT, STALE_MSG: STALE_MSG
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -914,6 +995,8 @@
   var reportShown = false;
   var drillIdx = null;
   var busy = false;
+  var stale = false;          // inputs changed after the last run (minor 7b)
+  var printFlag = false;      // one-shot: set by this tab's own print (minor 7h)
 
   function markDirty() {
     try { if (typeof window.markDirty === 'function') window.markDirty(); } catch (e) { /* ignore */ }
@@ -1035,7 +1118,8 @@
       ]) +
       '<div style="font-weight:600;font-size:0.78rem;">Column</div>' + grid([
         field('D', inp(P + 'col.D', 'num', w), 'in'), field("f'c", inp(P + 'col.fc', 'num', w), 'ksi'),
-        field('fy', inp(P + 'col.fy', 'num', w), 'ksi'), field('Cover', inp(P + 'col.cover', 'num', w), 'in'),
+        field('fy', inp(P + 'col.fy', 'num', w), 'ksi'), expectedFields(P + 'col.', i, 'col'),
+        field('Cover', inp(P + 'col.cover', 'num', w), 'in'),
         field('Transverse', sel(P + 'col.trans_type', ['hoop', 'spiral'])),
         field('Hoop closure', sel(P + 'col.hoop_closure', [['lap', 'Lap splice'], ['hooked', 'Welded / mechanical / hooked']])),
         field('&lambda;mo', inp(P + 'lambda_mo', 'num', w)),
@@ -1045,7 +1129,8 @@
       ]) +
       '<div style="font-weight:600;font-size:0.78rem;">Shaft</div>' + grid([
         field('Ds', inp(P + 'shaft.D', 'num', w), 'in'), field("f'c", inp(P + 'shaft.fc', 'num', w), 'ksi'),
-        field('fy', inp(P + 'shaft.fy', 'num', w), 'ksi'), field('Cover', inp(P + 'shaft.cover', 'num', w), 'in'),
+        field('fy', inp(P + 'shaft.fy', 'num', w), 'ksi'), expectedFields(P + 'shaft.', i, 'shaft'),
+        field('Cover', inp(P + 'shaft.cover', 'num', w), 'in'),
         field('Transverse', sel(P + 'shaft.trans_type', ['hoop', 'spiral'])),
         field('Shaft basis', sel(P + 'shaft_basis', [['auto', 'auto'], ['soil', 'soil (p-y)'], ['cantilever', 'cantilever (L_eq)'], ['interface', 'interface only']])),
         field('<b>Pile equivalent cantilever length L_eq</b>', inp(P + 'L_eq_ft', 'num', w), 'ft'),
@@ -1061,6 +1146,15 @@
         field('&gamma;p', inp(P + 'slender.gamma_p', 'num', w))
       ]) + '</div>';
     return h;
+  }
+  // ruling F-1: expected steel fye / fue / fyh (blank = A706 Gr60 68/95/68, fy = 60 only)
+  function expectedFields(P, i, who) {
+    var w = ' style="width:56px"';
+    var m = getPath(state, P.slice(0, -1));
+    return field('fye / fue / fyh <span style="color:#7f8c8d">' + esc(EXPECTED_HINT) + '</span>',
+      '<span style="display:flex;gap:4px;">' + inp(P + 'fye', 'num', w) + inp(P + 'fue', 'num', w) + inp(P + 'fyh', 'num', w) + '</span>' +
+      '<span id="cs-exp-msg-' + who + '-' + i + '" style="color:#c0392b;font-size:0.72rem;white-space:normal;">' +
+      esc(expectedErrors(m).join('; ')) + '</span>', 'ksi');
   }
   function renderBents() {
     var fl = state.parse && state.parse.frames ? state.parse.frames : [];
@@ -1079,13 +1173,14 @@
         btn('Remove profile', 'rm-soil', ' data-i="' + i + '"')
       ]) +
       '<table class="data-table"><thead><tr><th>#</th><th>Thickness (ft)</th><th>Model</th><th>&gamma; (pcf)</th><th>su top (ksf)</th>' +
-      '<th>su bot (ksf)</th><th>&epsilon;50</th><th>&phi;&prime; (deg)</th><th>k (pci)</th><th>Submerged</th><th></th></tr></thead><tbody>' +
+      '<th>su bot (ksf)</th><th>&epsilon;50</th><th>&phi;&prime; (deg)</th><th>k (pci)</th><th>Submerged</th><th></th><th></th></tr></thead><tbody>' +
       p.layers.map(function (l, j) {
         var L = P + 'layers.' + j + '.';
         return '<tr><td>' + (j + 1) + '</td><td>' + inp(L + 'thickness_ft', 'num', w) + '</td><td>' + sel(L + 'py_model', PY_MODELS) + '</td><td>' +
           inp(L + 'gamma_pcf', 'num', w) + '</td><td>' + inp(L + 'su_top_ksf', 'num', w) + '</td><td>' + inp(L + 'su_bot_ksf', 'num', w) + '</td><td>' +
           inp(L + 'eps50', 'num', w) + '</td><td>' + inp(L + 'phi_deg', 'num', w) + '</td><td>' + inp(L + 'k_pci', 'num', w) + '</td><td>' +
-          inp(L + 'submerged', 'bool') + '</td><td>' + btn('&times;', 'rm-layer', ' data-i="' + i + '" data-j="' + j + '"') + '</td></tr>';
+          inp(L + 'submerged', 'bool') + '</td><td>' + btn('&times;', 'rm-layer', ' data-i="' + i + '" data-j="' + j + '"') + '</td>' +
+          '<td id="cs-layer-msg-' + i + '-' + j + '" style="color:#c0392b;font-size:0.72rem;white-space:normal;">' + esc(layerErrors(l).join('; ')) + '</td></tr>';
       }).join('') + '</tbody></table>' + btn('+ Add stratum', 'add-layer', ' data-i="' + i + '"') + '</div>';
     return h;
   }
@@ -1096,7 +1191,7 @@
   }
   function renderRun() {
     var h = '<button type="button" class="calc-btn" id="cs-design" data-act="design"' + (busy ? ' disabled' : '') + '>' +
-      (busy ? 'Running…' : 'Design') + '</button><div id="cs-run-status"></div>';
+      (busy ? 'Running…' : 'Design') + '</button><div id="cs-stale">' + staleHtml() + '</div><div id="cs-run-status"></div>';
     return card('6. Design', 'green', h, 'cs-card-run');
   }
   function renderOverrides() {
@@ -1123,7 +1218,8 @@
     var r = lastResult;
     var rows = resultRows(r);
     var gw = (r.parse && r.parse.warnings) || [];
-    var h = '<div class="circ-info">Code: ' + esc(r.code) + ' · envelope mode: ' + esc(r.settings && r.settings.envelope_mode) +
+    var h = '<div id="cs-stale-res">' + staleHtml() + '</div>' +
+      '<div class="circ-info">Code: ' + esc(r.code) + ' · envelope mode: ' + esc(r.settings && r.settings.envelope_mode) +
       ' · slenderness: ' + (r.settings && r.settings.slenderness_on ? 'screen on' : 'off') + '. Moments in kip-ft, forces in kip. Click a row for details.</div>';
     if (r.parse && r.parse.n_envelope > 0) h += notice('amber', 'Envelope output (Max/Min): bounded conservatively — see report. All rows are envelope-bounded (conservative).');
     h += '<div style="overflow-x:auto;"><table class="data-table" id="cs-results-table"><thead><tr><th></th><th>Bent</th><th>Status</th><th>LRFD column cage</th>' +
@@ -1178,7 +1274,7 @@
             (k >= 6 ? ' style="white-space:normal;font-family:inherit;min-width:160px;"' : '');
           return '<td' + st + '>' + esc(x) + '</td>';
         }).join('') + '</tr>';
-      }).join('') + '</tbody></table></div><div class="circ-info">Shaft flexure demand/capacity in kip-ft; other check values in the check\'s own units (kip, in, ratios). Detail text from the engine may quote kip-in.</div>';
+      }).join('') + '</tbody></table></div><div class="circ-info">Shaft flexure demand/capacity in kip-ft; other check values in the check\'s own units (kip, in, ratios). Detail text quotes kip-in moments with the kip-ft value in brackets.</div>';
     if ((b.warnings || []).length) h += '<div style="font-size:0.78rem;margin-top:6px;"><b>Warnings:</b><ul style="margin:2px 0 0 18px;">' +
       b.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>';
     if (S) {
@@ -1190,6 +1286,15 @@
     return h;
   }
 
+  function staleHtml() { return stale && lastResult ? notice('amber', '<b>' + esc(STALE_MSG) + '</b>') : ''; }
+  function showStale() {
+    ['cs-stale', 'cs-stale-res'].forEach(function (id) { var el = document.getElementById(id); if (el) el.innerHTML = staleHtml(); });
+  }
+  function markStale(path) {
+    if (!lastResult || stale || path === 'report.project') return;
+    stale = true;
+    showStale();
+  }
   function autoHText(aH) { return 'blank = auto' + (aH !== null ? ' (' + fmt(aH, 2) + ' ft)' : ''); }
   function resultBentFor(b) {
     if (!lastResult || !Array.isArray(lastResult.bents)) return null;
@@ -1220,6 +1325,7 @@
     '#cs-report .rpt-table td.rpt-pass,#cs-report .rpt-table td.rpt-fail{white-space:nowrap;}',
     '#cs-report .cs-rpt-checks td:nth-child(n+7){text-align:left;font-family:inherit;}',
     '#cs-report .cs-rpt-charts{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;}',
+    '#cs-report .cs-rpt-amber{color:#b9770e;font-weight:700;}',
     '#cs-report svg{max-width:100%;height:auto;}',
     '@media print{',
     'body:has(#cs-report.cs-printing) #reportPreview{display:none !important;}',
@@ -1274,9 +1380,16 @@
     var el = showReport();
     if (!el) return;
     el.classList.add('cs-printing');
-    var off = function () { el.classList.remove('cs-printing'); window.removeEventListener('afterprint', off); };
+    var off = function () { el.classList.remove('cs-printing'); printFlag = false; window.removeEventListener('afterprint', off); };
     window.addEventListener('afterprint', off);
-    window.print();
+    printFlag = true;
+    try {
+      window.print();
+    } catch (e) {
+      off();
+      var m = document.getElementById('cs-rpt-msg');
+      if (m) m.innerHTML = notice('red', 'Print failed: ' + esc(String(e)));
+    }
   }
   function renderAll() {
     panel.innerHTML = '<div style="padding:4px 0;">' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
@@ -1303,6 +1416,7 @@
       }
       state.parse = r;
       state.categories = mergeCategories(state.categories, r.cases);
+      markStale();
       markDirty();
       renderAll();
     }, function (e) {
@@ -1335,6 +1449,8 @@
       if (r.error) { setRunStatus(notice('red', '<b>Error:</b> ' + esc(r.error))); return; }
       lastResult = r;
       lastPayload = sent;
+      stale = false;
+      showStale();
       drillIdx = r.bents && r.bents.length ? 0 : null;
       updateHints();
       setRunStatus('<div class="circ-info">Done: ' + (r.bents || []).length + ' bent(s), overall ' +
@@ -1365,13 +1481,13 @@
     else if (act === 'rm-layer') state.soils[i].layers.splice(j, 1);
     else if (act === 'clear-ov') state.bents[i].override = emptyOverride();
     else structural = false;
-    if (structural) { markDirty(); renderAll(); }
+    if (structural) { markStale(); markDirty(); renderAll(); }
   }
   function onChange(ev) {
     var el = ev.target;
     if (!panel.contains(el)) return;
     var cat = el.getAttribute('data-cat');
-    if (cat !== null) { state.categories[cat] = el.value; markDirty(); return; }
+    if (cat !== null) { state.categories[cat] = el.value; markDirty(); markStale(); return; }
     var path = el.getAttribute('data-cs');
     if (!path) return;
     var t = el.getAttribute('data-t');
@@ -1380,6 +1496,7 @@
     if (t === 'num' && v === null) v = '';
     setPath(state, path, v);
     markDirty();
+    markStale(path);
     // a renamed soil profile keeps the bents that point at it
     var m = /^soils\.(\d+)\.name$/.exec(path);
     // targeted updates only (a full re-render would drop the focus the user just moved)
@@ -1394,19 +1511,37 @@
       else if (mb[2] === 'col_frames') setText('cs-autoH-' + bi, autoHText(autoHeightFt(state, bb)));
       else setText('cs-ov-msg-' + bi, overrideErrors(bb).join('; '));
     }
+    var me = /^bents\.(\d+)\.(col|shaft)\.(fy|fye|fue|fyh)$/.exec(path);
+    if (me) setText('cs-exp-msg-' + me[2] + '-' + me[1], expectedErrors(state.bents[Number(me[1])][me[2]]).join('; '));
+    var ml = /^soils\.(\d+)\.layers\.(\d+)\./.exec(path);
+    if (ml) setText('cs-layer-msg-' + ml[1] + '-' + ml[2], layerErrors(state.soils[Number(ml[1])].layers[Number(ml[2])]).join('; '));
   }
   panel.addEventListener('click', onClick);
   // keep this tab's edits away from the app's document-level change/input
   // listeners (they trigger the main section's auto-calculate)
   panel.addEventListener('change', function (ev) { onChange(ev); ev.stopPropagation(); });
-  panel.addEventListener('input', function (ev) { ev.stopPropagation(); });
+  panel.addEventListener('input', function (ev) {
+    var el = ev.target;
+    if (el && el.getAttribute && el.getAttribute('data-cs')) markStale(el.getAttribute('data-cs'));
+    ev.stopPropagation();
+  });
+  // ruling F-2: keep this tab's keys away from the app's document-level keydown
+  // handler (Delete / Backspace would clear a multi-cell demand selection)
+  panel.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+  panel.addEventListener('keyup', function (ev) { ev.stopPropagation(); });
+  // minor 7h: a print not started by this tab never keeps a stale cs-printing class
+  window.addEventListener('beforeprint', function () {
+    if (printFlag) { printFlag = false; return; }
+    var el = document.getElementById('cs-report');
+    if (el) el.classList.remove('cs-printing');
+  });
 
   injectPrintCss();
   window.ColShaft = {
     getState: function () { var ta = document.getElementById('cs-paste'); if (ta) state.paste = ta.value; return serializeState(state); },
     setState: function (obj) {
       // never let a malformed columnShaft abort the main project load
-      lastResult = null; lastPayload = null; reportShown = false; drillIdx = null;
+      lastResult = null; lastPayload = null; reportShown = false; drillIdx = null; stale = false;
       try { state = normalizeState(obj); renderAll(); } catch (e) {
         try { console.warn('Column on Shaft: invalid saved state, tab reset (' + e + ')'); } catch (e2) { /* ignore */ }
         try { state = defaultState(); renderAll(); } catch (e3) { /* ignore */ }

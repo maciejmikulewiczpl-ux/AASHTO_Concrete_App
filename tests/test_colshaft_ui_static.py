@@ -188,7 +188,8 @@ def test_js_constants_mirror_python():
     code = ("const c=require(process.argv[1]);console.log(JSON.stringify("
             "{st:c.SLENDER_STATUS,rank:c.SLENDER_RANK,bars:c.BAR_SIZES,colors:c.STATUS_COLORS,"
             "srank:c.STATUS_RANK}))")
-    r = subprocess.run([NODE, "-e", code, JS], capture_output=True, text=True, cwd=ROOT)
+    r = subprocess.run([NODE, "-e", code, JS], capture_output=True, text=True, cwd=ROOT,
+                       encoding="utf-8")       # the pending status carries an en dash
     assert r.returncode == 0, r.stderr
     js = json.loads(r.stdout)
     assert js["st"] == {"NEGLECT": csl.ST_NEGLECT, "PENDING": csl.ST_PENDING, "REFINED": csl.ST_REFINED}
@@ -261,3 +262,48 @@ def test_limitations_tab_lists_column_on_shaft_non_goals():
                  "S6", "No service-limit crack control", "Circular members only",
                  "envelope-bounded (conservative)", "No direct CSiBridge read"):
         assert text in lim, text
+
+
+# ── final-review fix wave ───────────────────────────────────────────
+
+def test_panel_stops_keydown_and_keyup_propagation():
+    """Ruling F-2: index.html's document-level keydown handler clears a multi-cell
+    demand selection on Delete / Backspace; the Column on Shaft panel must stop
+    keydown / keyup from bubbling to it (index.html's handler is not touched)."""
+    with open(JS, encoding="utf-8") as f:
+        js = f.read()
+    for ev in ("keydown", "keyup", "change", "input"):
+        m = re.search(r"panel\.addEventListener\('" + ev + r"', function \(ev\) \{(.*?)\n  \}\);|"
+                      r"panel\.addEventListener\('" + ev + r"', function \(ev\) \{(.*?)\}\);", js, re.S)
+        assert m, ev
+        body = m.group(1) or m.group(2)
+        assert "ev.stopPropagation()" in body, ev
+    # the main-tab handler is still there, unchanged in shape
+    assert "document.addEventListener('keydown',(e)=>{" in _html()
+
+
+@needs_node
+def test_js_pending_status_and_gr60_mirror_python():
+    import colshaft_engine as ee
+    import colshaft_seismic as cs
+    out = json.loads(_js_eval("const c=require(process.argv[1]);console.log(JSON.stringify("
+                              "{p:c.ST_OK_PENDING,g:c.GR60_EXPECTED}))"))
+    assert out["p"] == ee.ST_OK_PENDING
+    assert out["g"] == {"fye": cs.FYE, "fue": cs.FUE, "fyh": cs.FYH}
+
+
+def test_stale_banner_and_print_guard_wiring():
+    """Minors 7b / 7h (DOM only, so pinned statically): edits after a run mark the
+    results stale until the next Design; window.print() is guarded and a print not
+    started by this tab drops a stale cs-printing class."""
+    with open(JS, encoding="utf-8") as f:
+        js = f.read()
+    assert "markStale(path);" in js and js.count("markStale()") >= 3
+    done = js[js.index("lastResult = r;"):js.index("renderResults();", js.index("lastResult = r;"))]
+    assert "stale = false;" in done and "showStale();" in done
+    pr = js[js.index("function printReportCs()"):js.index("function renderAll()")]
+    assert "try {" in pr and "window.print();" in pr and "catch (e)" in pr and "off();" in pr
+    assert "printFlag = true;" in pr
+    bp = js[js.index("window.addEventListener('beforeprint'"):]
+    assert "if (printFlag) { printFlag = false; return; }" in bp[:300]
+    assert "classList.remove('cs-printing')" in bp[:400]

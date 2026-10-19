@@ -191,8 +191,16 @@ test('status colour map and precedence', () => {
   assert.strictEqual(CS.statusColor('REFINED ANALYSIS REQUIRED'), '#e67e22');
   assert.strictEqual(CS.statusColor('???'), '#7f8c8d');
   assert.deepStrictEqual(Object.keys(CS.STATUS_COLORS).sort(),
-    ['NG', 'NO SOLUTION', 'OK', 'REFINED ANALYSIS REQUIRED']);
+    ['NG', 'NO SOLUTION', 'OK', 'OK – MAGNIFICATION PENDING (S6)', 'REFINED ANALYSIS REQUIRED']);
   assert.strictEqual(CS.worstStatus(['OK', 'NG']), 'NG');
+  // ruling F-3: OK < OK – MAGNIFICATION PENDING (S6) < NG; amber colour and report class
+  const P = CS.ST_OK_PENDING;
+  assert.strictEqual(P, 'OK – MAGNIFICATION PENDING (S6)');
+  assert.strictEqual(CS.worstStatus(['OK', P, 'OK']), P);
+  assert.strictEqual(CS.worstStatus([P, 'NG']), 'NG');
+  assert.strictEqual(CS.statusColor(P), '#d4a017');
+  assert.deepStrictEqual(['OK', P, 'NG', 'NO SOLUTION'].map(CS.statusClass),
+    ['rpt-pass', 'cs-rpt-amber', 'rpt-fail', 'rpt-fail']);
   assert.strictEqual(CS.worstStatus(['NG', 'REFINED ANALYSIS REQUIRED', 'OK']), 'REFINED ANALYSIS REQUIRED');
   assert.strictEqual(CS.worstStatus(['REFINED ANALYSIS REQUIRED', 'NO SOLUTION']), 'NO SOLUTION');
   assert.strictEqual(CS.worstStatus([]), 'OK');
@@ -520,6 +528,76 @@ test('report: seismic refs carry the unverified suffix; LRFD refs do not; user t
   assert.ok(h.indexOf('<script') < 0 && h.indexOf('&lt;script&gt;alert(1)&lt;/script&gt;') > 0);
   assert.ok(h.indexOf('Vo=380 &lt;x&gt;') > 0 && h.indexOf('<x>') < 0);
   assert.ok(h.indexOf('B<1>') < 0);
+});
+
+test('governing rows: failing rows first, then D/C descending, null ratio worst (minor 7a)', () => {
+  const rows = [
+    { _case: 'a', ratio: 0.95, ok: true }, { _case: 'b', ratio: 0.4, ok: false },
+    { _case: 'c', ratio: null, ok: true }, { _case: 'd', ratio: 1.2, ok: false },
+    { _case: 'e', ratio: 0.2, ok: true }];
+  assert.deepStrictEqual(CS.governingRows(rows).map(g => g.cells[1]), ['d', 'b', 'c', 'a', 'e']);
+});
+
+test('expected steel inputs (ruling F-1): payload, validation, hint, report echo', () => {
+  assert.strictEqual(CS.EXPECTED_HINT, '(blank = A706 Gr60: 68/95/68)');
+  assert.deepStrictEqual(CS.GR60_EXPECTED, { fye: 68, fue: 95, fyh: 68 });
+  const s = sampleState();
+  assert.deepStrictEqual(CS.validateState(s), []);
+  s.bents[0].col.fy = 80;
+  const e = CS.validateState(s);
+  assert.strictEqual(e.length, 3, e.join('|'));
+  assert.ok(e.every(x => /B1: column f(ye|ue|yh) must be entered for fy ≠ 60 ksi/.test(x)), e.join('|'));
+  Object.assign(s.bents[0].col, { fye: 90, fue: 115, fyh: 68 });
+  assert.deepStrictEqual(CS.validateState(s), []);
+  const col = CS.buildPayload(s).bents[0].column;
+  assert.deepStrictEqual([col.fye, col.fue, col.fyh], [90, 115, 68]);
+  s.bents[0].shaft.fye = -1;
+  assert.ok(/shaft fye must be > 0/.test(CS.validateState(s)[0]));
+  assert.deepStrictEqual(CS.expectedErrors({ fy: 60, fye: '', fue: '', fyh: '' }), []);
+  // report echo: the engine's values when present, else the payload / Gr60 defaults
+  assert.strictEqual(CS.expectedStr({ fye: 68, fue: 95, fyh: 68, source: 'A706 Gr60 defaults' }, null),
+    '68.0 / 95.0 / 68.0 ksi (A706 Gr60 defaults)');
+  assert.strictEqual(CS.expectedStr(null, { fye: 90 }), '90.0 / Gr60 95 / Gr60 68 ksi');
+  const r = reportFixture();
+  r.bents[0].expected_steel = { column: { fye: 90, fue: 115, fyh: 68, source: 'entered' },
+    shaft: { fye: 68, fue: 95, fyh: 68, source: 'A706 Gr60 defaults' } };
+  const h = CS.reportHtml(r, RPT_PAYLOAD, {});
+  assert.ok(h.indexOf('90.0 / 115.0 / 68.0 ksi (entered); 68.0 / 95.0 / 68.0 ksi (A706 Gr60 defaults)') > 0);
+});
+
+test('soil layer validation (minor 7d)', () => {
+  const L = (o) => Object.assign({ thickness_ft: 10, gamma_pcf: 120, su_top_ksf: '', su_bot_ksf: '', eps50: '',
+    phi_deg: '', k_pci: '', submerged: false }, o);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'welch_stiff_clay', su_top_ksf: 2 })), []);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'matlock_soft_clay' })), ['clay needs su top > 0']);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'matlock_soft_clay', su_top_ksf: 1, su_bot_ksf: 0 })),
+    ['su bot must be > 0 (or blank = su top)']);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'api_sand', phi_deg: 34 })), ['sand needs k > 0']);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'api_sand' })), ['sand needs φ′ > 0', 'sand needs k > 0']);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'elastic_subgrade' })), ['elastic subgrade needs k > 0']);
+  assert.deepStrictEqual(CS.layerErrors(L({ py_model: 'elastic_subgrade', k_pci: 5, gamma_pcf: 0 })),
+    ['thickness and gamma must be > 0']);
+  const s = sampleState();
+  s.soils[0].layers[1].k_pci = '';
+  const e = CS.validateState(s);
+  assert.strictEqual(e.length, 1);
+  assert.ok(/layer 2: sand needs k > 0/.test(e[0]), e[0]);
+});
+
+test('report: shaft row source line (ruling F-4), amber pending status, stale message', () => {
+  assert.ok(/\|V_base\|·L_eq/.test(CS.shaftSourceNote('cantilever strength')));
+  assert.ok(/Mu = \|M_base\|, Vu = \|V_base\|/.test(CS.shaftSourceNote('interface strength')));
+  assert.ok(/p-y soil model/.test(CS.shaftSourceNote('p-y strength')));
+  assert.ok(/pasted shaft frames/.test(CS.shaftSourceNote('shaft frames')));
+  const r = reportFixture();
+  r.bents[0].status = CS.ST_OK_PENDING;
+  r.bents[0].lrfd.shaft = { source: 'cantilever strength', check_rows: r.bents[0].lrfd.col.check_rows };
+  const h = CS.reportHtml(r, RPT_PAYLOAD, {});
+  assert.ok(h.indexOf('<span class="cs-rpt-amber">OK – MAGNIFICATION PENDING (S6)</span>') > 0);
+  assert.ok(h.indexOf('<td class="cs-rpt-amber">OK – MAGNIFICATION PENDING (S6)</td>') > 0);
+  assert.ok(h.indexOf('Shaft (cantilever strength)') > 0 && h.indexOf('taken down the equivalent cantilever') > 0);
+  assert.ok(h.indexOf('least compression of the Extreme rows, else P_dead') > 0);
+  assert.ok(/stale/.test(CS.STALE_MSG) && /re-run Design/.test(CS.STALE_MSG));
 });
 
 const di = process.argv.indexOf('--dump');
