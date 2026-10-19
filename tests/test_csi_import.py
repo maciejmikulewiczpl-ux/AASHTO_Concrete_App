@@ -43,8 +43,7 @@ def test_dedupe_requires_identical_values():
 
 def test_units_row_kn_m():
     r = parse_csi_frame_forces(load("kn_m_no_title.txt"))
-    assert _u(r) == {"force": "kN", "moment": "kN-m", "length": "m"} or \
-        r.units["force"].lower() == "kn"
+    assert _u(r) == {"force": "kN", "moment": "kN-m", "length": "m"}
     assert r.rows[0].P == pytest.approx(22.481, rel=1e-4)
     assert r.rows[0].M2 == pytest.approx(885.07, rel=1e-4)
     assert r.rows[1].P == pytest.approx(-1200.5 / 4.4482216152605, rel=1e-9)
@@ -80,8 +79,6 @@ def test_unit_in_header_cell():
 
 def test_header_case_and_whitespace_tolerant():
     txt = ("frame   STATION   outputcase   p   v2   v3   t   m2   M3\n"
-           "ft_placeholder\n")
-    txt = ("frame   STATION   outputcase   p   v2   v3   t   m2   M3\n"
            "Text   ft   Text   kip   kip   kip   kip-ft   kip-ft   kip-ft\n"
            "A   2   C1   -1   2   3   4   5   6\n")
     r = parse_csi_frame_forces(txt)
@@ -102,8 +99,7 @@ def test_comma_thousands_and_blank_lines():
 
 
 def test_unknown_unit_raises():
-    txt = load("no_units_row.txt").replace("Frame\tStation\tOutputCase\tP", "Frame\tStation\tOutputCase\tP") \
-        .replace("\tP\t", "\tP furlong\t")
+    txt = load("no_units_row.txt").replace("\tP\t", "\tP furlong\t")
     with pytest.raises(ValueError, match="Unknown unit 'furlong' in column P"):
         parse_csi_frame_forces(txt)
 
