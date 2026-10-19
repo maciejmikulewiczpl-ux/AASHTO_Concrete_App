@@ -28,7 +28,9 @@ Tests: `run_test_suite.py` stages "Pytest: seismic port" (`tests/test_seismic_po
 `test_colshaft_slender.py`, `test_colshaft_seismic.py`, `test_colshaft_engine.py`, `test_colshaft_api.py`,
 `test_colshaft_ui_static.py`, which also runs the Node tests `tests/js/test_colshaft_js.js`).
 Rulings that changed the spec are listed in the spec appendix; protections in `CODE_PROTECTION.md`
-§ "Column-on-Shaft / seismic_port"; open items in `OPEN_VERIFICATION_ITEMS.md` section E (E1–E11 VERIFY; E13, E14, E17 DECIDE) and S6.
+§ "Column-on-Shaft / seismic_port"; open items in `OPEN_VERIFICATION_ITEMS.md` section E (E1–E11 VERIFY; E13, E14, E17, E18 DECIDE) and S6.
+
+Final-review fix wave (2026-10-19): expected steel fye/fue/fyh inputs (A706 Gr60 68/95/68 only for fy = 60; any other grade must enter them, F-1); panel keydown/keyup stop (F-2); status "OK – MAGNIFICATION PENDING (S6)" (F-3); shaft LRFD rows from the column base for the cantilever / interface basis without shaft frames (F-4); auto-H clear-height warning (F-5); merged column cage re-walked when it fails the seismic transverse criteria (F-6); upstream max-axial checks ported; soil layer validation; shaft re-sized after a column walk; stale-results banner; print hardening.
 
 ---
 

@@ -219,8 +219,8 @@ The "Column on Shaft" tab (2026-10, branch `feature/column-on-shaft`) adds `seis
 3. **Do not relax the soil-stability guards.**
    - Ruling 8-16: a p-y strength row (`colshaft_shaft.ramp_stable`) is accepted only if the solve is
      stable at P·k/4 for k = 0..4, |y_top| does not decrease along the ramp, and the top-of-shaft
-     moment keeps the sign of M_base and is ≥ 0.995·|M_base|. Rows that fail are skipped and make
-     "Shaft p-y strength solve" NG (ruling 8-13). Pinned by `tests/test_colshaft_engine.py::test_ramp_*`.
+     moment keeps the sign of M_base and is ≥ 0.995·|M_base|. Bounds that fail the ramp guard are
+     dropped; a row with no accepted bound is skipped and makes "Shaft p-y strength solve" NG (ruling 8-13). Pinned by `tests/test_colshaft_engine.py::test_ramp_*`.
    - Ruling 7-1: "Soil-pile stability (p-y)" is NG if ANY soil bound is unstable at the yield-level
      force (port of upstream check 13); an unstable bound is never credited. Pinned by
      `tests/test_colshaft_seismic.py::test_unstable_soil_is_NG_not_pass`,
@@ -235,6 +235,14 @@ The "Column on Shaft" tab (2026-10, branch `feature/column-on-shaft`) adds `seis
    `tests/test_colshaft_slender.py::test_curvature_sign_convention_pinned`.
 6. Slenderness moment magnification is **not** coded: AASHTO Art. 4.5.3.2.2b and the §5.6.4.3 EI
    equations are not in the repo (open item S6). Do not write δb/δs/Cm/Pe/EI formulas from memory.
+   A bent whose final rows need magnification reports "OK – MAGNIFICATION PENDING (S6)", never plain
+   "OK" (ruling F-3; precedence NO SOLUTION > REFINED ANALYSIS REQUIRED > NG > OK – MAGNIFICATION
+   PENDING (S6) > OK). Pinned by `tests/test_colshaft_engine.py::test_bent_status_precedence`.
+7. **Expected steel strengths are never invented** (ruling F-1). The A706 Gr60 values 68 / 95 / 68 ksi
+   (`colshaft_seismic.FYE / FUE / FYH`) are used only for fy = 60 ksi (fyt = 60 ksi for fyh) with the
+   value left blank; any other grade must enter fye / fue / fyh or the run raises. Do not add Gr80
+   (or other) expected values from memory. Pinned by
+   `tests/test_colshaft_engine.py::test_expected_steel_required_off_gr60`.
 
 ---
 
