@@ -144,7 +144,11 @@ Two pytest stages cover the Column on Shaft feature (23 stages in total with `--
 - `Pytest:  column on shaft` -- `tests/test_csi_import.py`, `test_colshaft_demands.py`,
   `test_colshaft_lrfd.py`, `test_colshaft_slender.py`, `test_colshaft_seismic.py`,
   `test_colshaft_engine.py`, `test_colshaft_api.py` (CSi import, demand grouping, LRFD
-  and seismic design, orchestrator, and the `Api.parse_csi` / `Api.run_colshaft` bridge).
+  and seismic design, orchestrator, and the `Api.parse_csi` / `Api.run_colshaft` bridge),
+  plus `test_colshaft_ui_static.py` for the tab (`colshaft.js`): index.html additions and
+  the unchanged original tab buttons, `node --check colshaft.js`, the Node unit tests
+  `node tests/js/test_colshaft_js.js` (skipped if `node` is not on PATH), `app.get_html()`
+  inlining of colshaft.js, and the JS-built payload run through `Api().run_colshaft`.
 
 Regenerate the seismic-port golden only for an intended, reviewed change:
 

@@ -31,6 +31,7 @@ hiddenimports += _h
 # --- Application source files ---
 datas += [
     ('index.html',           '.'),
+    ('colshaft.js',          '.'),
     ('api.py',               '.'),
     ('calc_engine.py',       '.'),
     ('pt_engine.py',         '.'),

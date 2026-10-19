@@ -40,7 +40,8 @@ PYTEST_STAGES = [
                                           "tests/test_colshaft_slender.py",
                                           "tests/test_colshaft_seismic.py",
                                           "tests/test_colshaft_engine.py",
-                                          "tests/test_colshaft_api.py"]),
+                                          "tests/test_colshaft_api.py",
+                                          "tests/test_colshaft_ui_static.py"]),
 ]
 
 # Stage 2: existing standalone scripts at project root (kept for back-compat).

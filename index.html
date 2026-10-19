@@ -391,6 +391,7 @@ canvas { width: 100% !important; height: 100% !important; }
   <button class="tab-btn" data-tab="report">Report</button>
   <button class="tab-btn" data-tab="summary">Project Summary</button>
   <button class="tab-btn" data-tab="limitations">Limitations</button>
+  <button class="tab-btn" data-tab="colshaft">Column on Shaft</button>
 </div>
 
 <div class="content">
@@ -1050,6 +1051,8 @@ canvas { width: 100% !important; height: 100% !important; }
   </div>
 </div>
 
+<div class="tab-panel" id="tab-colshaft" data-title="Column on Shaft"></div>
+
 </div>
 
 <script>
@@ -1540,6 +1543,7 @@ function saveProjectQuick(){
   saveCurrentSectionState();
   try{ readOptParamsFromDOM(); }catch(e){}
   const project={version:1,activeSection:activeSection,sections:sections,optParams:optParams,displayUnits:displayUnits};
+  project.columnShaft=(window.ColShaft? window.ColShaft.getState(): undefined);
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project_to_path){
     window.pywebview.api.save_project_to_path(json, currentFilePath).then(res=>{
@@ -1560,6 +1564,7 @@ function saveProject(){
     activeSection:activeSection,
     sections:sections,
     optParams:optParams,
+    columnShaft:(window.ColShaft? window.ColShaft.getState(): undefined),
     displayUnits:displayUnits
   };
   const json=JSON.stringify(project,null,2);
@@ -1642,6 +1647,7 @@ function applyProjectData(data){
     try{ localStorage.setItem('displayUnits', JSON.stringify(displayUnits)); }catch(e){}
   }
   loadSectionState(activeSection);
+  if(window.ColShaft) window.ColShaft.setState(data.columnShaft||null);
   updateSectionDropdown();
   updateFileDisplay(data._filepath||null);
   clearDirty();
@@ -8683,6 +8689,7 @@ document.addEventListener('keydown',(e)=>{
 // Initialise file display on load
 updateFileDisplay(null);
 </script>
+<script src="colshaft.js"></script>
 <!-- Optimization Preview Modal -->
 <div class="mr-overlay" id="optPreviewOverlay" onclick="if(event.target===this)closeOptPreview()">
   <div class="opt-preview-modal">

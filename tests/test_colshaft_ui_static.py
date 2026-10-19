@@ -1,0 +1,179 @@
+"""Column on Shaft tab (Task 10): static / headless checks (ruling 10-5, P5).
+
+No GUI is available unattended, so this pins:
+  (a) index.html carries the new tab button, panel and script tag exactly once;
+  (b) the 11 original tab buttons are unchanged (labels, data-tab, order);
+  (c) the Node unit tests of colshaft.js pass;
+  (d) `node --check colshaft.js` passes;
+  (e) app.get_html() inlines colshaft.js (ruling 10-1) and leaves the tag alone
+      when the file is missing;
+  (f) the payload built by colshaft.js from a sample 2-bent state runs through
+      Api().run_colshaft without error and gives the same bents as the engine
+      test's equivalent payload.
+"""
+import importlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import types
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+INDEX = os.path.join(ROOT, "index.html")
+JS = os.path.join(ROOT, "colshaft.js")
+NODE_TEST = os.path.join(ROOT, "tests", "js", "test_colshaft_js.js")
+NODE = shutil.which("node")
+needs_node = pytest.mark.skipif(NODE is None, reason="node not found")
+
+BUTTON = '<button class="tab-btn" data-tab="colshaft">Column on Shaft</button>'
+PANEL = '<div class="tab-panel" id="tab-colshaft" data-title="Column on Shaft"></div>'
+TAG = '<script src="colshaft.js"></script>'
+
+ORIGINAL_TABS = [
+    ("inputs", "Inputs"),
+    ("section", "Section Definition"),
+    ("pt", "PT Design"),
+    ("demands", "Demands &amp; Results"),
+    ("flexure", "Flexure"),
+    ("shear", "Shear"),
+    ("torsion", "Torsion"),
+    ("service", "Service Flexure Stress"),
+    ("report", "Report"),
+    ("summary", "Project Summary"),
+    ("limitations", "Limitations"),
+]
+
+
+def _html():
+    with open(INDEX, encoding="utf-8") as f:
+        return f.read()
+
+
+def _tab_bar(html):
+    m = re.search(r'<div class="tab-bar" id="tabBar">(.*?)</div>', html, re.S)
+    assert m, "tabBar not found"
+    return re.findall(r'<button class="tab-btn[^"]*" data-tab="([^"]+)">([^<]*)</button>', m.group(1))
+
+
+# ── (a) / (b) index.html ───────────────────────────────────────────
+
+def test_new_tab_button_panel_and_script_once():
+    html = _html()
+    assert html.count(BUTTON) == 1
+    assert html.count(PANEL) == 1
+    assert html.count(TAG) == 1
+    assert html.count('id="tab-colshaft"') == 1
+    # the button is the LAST one in #tabBar; the script comes after the main script block
+    assert _tab_bar(html)[-1] == ("colshaft", "Column on Shaft")
+    assert html.index(TAG) > html.rindex("updateFileDisplay(null);")
+    assert html.index(PANEL) > html.index('id="tab-limitations"')
+    # persistence hooks
+    assert html.count("window.ColShaft.getState()") == 2
+    assert html.count("window.ColShaft.setState(data.columnShaft||null)") == 1
+
+
+def test_original_tab_buttons_unchanged():
+    tabs = _tab_bar(_html())
+    assert tabs[:len(ORIGINAL_TABS)] == ORIGINAL_TABS
+    assert len(tabs) == len(ORIGINAL_TABS) + 1
+    assert '<button class="tab-btn active" data-tab="inputs">Inputs</button>' in _html()
+
+
+def test_colshaft_js_uses_only_cs_ids():
+    with open(JS, encoding="utf-8") as f:
+        js = f.read()
+    ids = set(re.findall(r'(?:id=\\?"|getElementById\(\')([A-Za-z0-9_-]+)', js))
+    assert ids, "no ids found"
+    bad = sorted(i for i in ids if not i.startswith("cs-") and i != "tab-colshaft")
+    assert bad == []
+    assert "</script" not in js.lower()        # safe to inline (ruling 10-1)
+
+
+# ── (c) / (d) Node ──────────────────────────────────────────────────
+
+@needs_node
+def test_node_check_colshaft_js():
+    r = subprocess.run([NODE, "--check", JS], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+@needs_node
+def test_node_unit_tests_pass():
+    r = subprocess.run([NODE, NODE_TEST], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "TESTS PASSED" in r.stdout
+
+
+# ── (e) app.get_html inlining ───────────────────────────────────────
+
+@pytest.fixture
+def app_module(monkeypatch):
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        monkeypatch.setitem(sys.modules, "webview", types.ModuleType("webview"))
+    monkeypatch.delitem(sys.modules, "app", raising=False)
+    monkeypatch.syspath_prepend(ROOT)
+    mod = importlib.import_module("app")
+    yield mod
+    sys.modules.pop("app", None)
+
+
+def test_get_html_inlines_colshaft_js(app_module):
+    html = app_module.get_html()
+    with open(JS, encoding="utf-8") as f:
+        js = f.read()
+    assert TAG not in html
+    assert html.count("<script>\n" + js + "\n</script>") == 1
+    assert "window.ColShaft = {" in html
+    # everything else unchanged
+    assert html.replace("<script>\n" + js + "\n</script>", TAG) == _html()
+
+
+def test_get_html_without_colshaft_js_leaves_tag(app_module, monkeypatch, tmp_path):
+    shutil.copy(INDEX, tmp_path / "index.html")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert app_module.get_html() == _html()
+    shutil.copy(JS, tmp_path / "colshaft.js")
+    html = app_module.get_html()
+    assert TAG not in html and "window.ColShaft = {" in html
+
+
+def test_spec_bundles_colshaft_js():
+    with open(os.path.join(ROOT, "AASHTO_Concrete_App.spec"), encoding="utf-8") as f:
+        spec = f.read()
+    assert re.search(r"\(\s*'colshaft\.js'\s*,\s*'\.'\s*\)", spec)
+
+
+# ── (f) Node payload -> Api().run_colshaft ──────────────────────────
+
+@needs_node
+def test_node_payload_runs_through_api(tmp_path, monkeypatch):
+    out = tmp_path / "payload.json"
+    r = subprocess.run([NODE, NODE_TEST, "--dump", str(out)], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    with open(out, encoding="utf-8") as f:
+        payload = json.load(f)
+    assert set(payload) == {"paste", "units", "categories", "code", "params", "settings", "bents"}
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        monkeypatch.setitem(sys.modules, "webview", types.ModuleType("webview"))
+    from api import Api
+    res = json.loads(Api().run_colshaft(json.dumps(payload)))
+    assert "error" not in res, res.get("error")
+    assert [b["name"] for b in res["bents"]] == ["B1", "B2"]
+    # same design as the engine test's hand-written equivalent payload ("2b")
+    from tests import test_colshaft_engine as te
+    ref = te.run("2b")
+    for got, exp in zip(res["bents"], ref["bents"]):
+        assert got["status"] == exp["status"]
+        assert got["final"] == exp["final"]
+        assert got["final_source"] == exp["final_source"]
+    assert res["bents"][1]["shaft_basis"] == "soil"
+    assert res["bents"][0]["shaft_basis"] == "cantilever"
