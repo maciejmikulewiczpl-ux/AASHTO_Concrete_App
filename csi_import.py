@@ -1,5 +1,8 @@
 """CSiBridge "Element Forces - Frames" clipboard parser (stdlib only).
 
+Assumption: unit "tonf" is the metric tonne-force (1000 kgf = 9.80665 kN),
+CSiBridge's metric unit, not the short ton.
+
 Parses, converts to kip / kip-in / inch, de-duplicates sub-element station
 duplicates and flags Max/Min envelope rows.  No grouping or reduction here.
 """
@@ -66,13 +69,27 @@ def _split(line):
     return [c.strip() for c in re.split(r"\s{2,}", line.strip())]
 
 
+_THOUSANDS = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$")
+
+
 def _num(s):
-    return float(s.replace(",", ""))
+    """Parse a numeric cell; commas only as valid thousands grouping."""
+    t = s.strip()
+    if "," in t:
+        if not _THOUSANDS.match(t):
+            raise ValueError(
+                f"'{s}': comma is not valid thousands grouping "
+                "(decimal comma / non-US locale is not supported)")
+        t = t.replace(",", "")
+    v = float(t)
+    if not math.isfinite(v):
+        raise ValueError(f"'{s}': non-finite value")
+    return v
 
 
 def _is_num(s):
     try:
-        _num(s)
+        float(s.replace(",", ""))
         return True
     except ValueError:
         return False
@@ -106,7 +123,7 @@ def parse_csi_frame_forces(text, default_units=None):
     dflt = dict(DEFAULT_UNITS)
     if default_units:
         dflt.update(default_units)
-    lines = text.splitlines()
+    lines = re.split(r"\r\n|\n|\r", text)
     res = ParseResult()
 
     hi = next((i for i, ln in enumerate(lines)
@@ -153,7 +170,7 @@ def parse_csi_frame_forces(text, default_units=None):
         kind = ("length" if name == "station" else
                 "force" if name in _FORCE_COLS else "moment")
         u = row_units.get(name) if have_units_row else None
-        if u is None and not have_units_row:
+        if u is None:
             u = hdr_units.get(name)
         if u is None:
             u = dflt[kind]
@@ -171,7 +188,9 @@ def parse_csi_frame_forces(text, default_units=None):
         res.warnings.append("No units row found; using default units "
                             f"({dflt['force']}, {dflt['moment']}, {dflt['length']})")
     res.units = {"force": unit_name["p"], "moment": unit_name["m3"],
-                 "length": unit_name["station"]}
+                 "length": unit_name["station"],
+                 "columns": {_CANON[n]: unit_name[n] for n in
+                             ("p", "v2", "v3", "t", "m2", "m3", "station")}}
 
     def cell(cells, name):
         i = cols.get(name)
@@ -179,15 +198,20 @@ def parse_csi_frame_forces(text, default_units=None):
 
     kept = {}  # key -> list of ForceRow
     order = []
+    bad = []
     for n in range(start, len(lines)):
         ln = lines[n]
         if not ln.strip():
             continue
         cells = _split(ln)
-        try:
-            vals = {k: _num(cell(cells, k)) * factor[k] for k in _NUMERIC}
-        except ValueError:
-            res.warnings.append(f"Line {n + 1}: could not parse numbers; skipped")
+        vals, errs = {}, []
+        for k in _NUMERIC:
+            try:
+                vals[k] = _num(cell(cells, k)) * factor[k]
+            except ValueError as e:
+                errs.append(f"column {_CANON[k]}: {e}")
+        if errs:
+            bad.append(f"line {n + 1}: " + "; ".join(errs))
             continue
         step = cell(cells, "steptype")
         row = ForceRow(
@@ -212,6 +236,8 @@ def parse_csi_frame_forces(text, default_units=None):
                 "different values; both kept")
         bucket.append(row)
 
+    if bad:
+        raise ValueError("Unparseable data line(s): " + " | ".join(bad))
     res.rows = [r for k in order for r in kept[k]]
     for r in res.rows:
         if r.case not in res.cases:
