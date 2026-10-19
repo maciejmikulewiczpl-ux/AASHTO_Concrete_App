@@ -33,6 +33,14 @@ PYTEST_STAGES = [
     ("Pytest:  rect/I golden baseline",  ["tests/test_rect_i_unchanged.py"]),
     ("Pytest:  review fixes (F3-F6,M1-2)", ["tests/test_review_fixes.py"]),
     ("Pytest:  AASHTO Ch.5 verified (F1,F2,M3,M4)", ["tests/test_aashto_ch5_verified.py"]),
+    ("Pytest:  seismic port",           ["tests/test_seismic_port.py"]),
+    ("Pytest:  column on shaft",         ["tests/test_csi_import.py",
+                                          "tests/test_colshaft_demands.py",
+                                          "tests/test_colshaft_lrfd.py",
+                                          "tests/test_colshaft_slender.py",
+                                          "tests/test_colshaft_seismic.py",
+                                          "tests/test_colshaft_engine.py",
+                                          "tests/test_colshaft_api.py"]),
 ]
 
 # Stage 2: existing standalone scripts at project root (kept for back-compat).

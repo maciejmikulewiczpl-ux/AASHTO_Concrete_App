@@ -135,6 +135,23 @@ suite:
 | `full_verification.py` | 20,436 cross-section consistency checks (heavy — `--full` only) |
 | `deep_audit.py` | 31,158 detailed cross-section traces (heavy — `--full` only) |
 
+### Column on Shaft stages (added 2026-10-19)
+
+Two pytest stages cover the Column on Shaft feature (23 stages in total with `--full`):
+
+- `Pytest:  seismic port` -- `tests/test_seismic_port.py`: the vendored `seismic_port/`
+  package against a golden file (`tests/golden/seismic_port_golden.json`).
+- `Pytest:  column on shaft` -- `tests/test_csi_import.py`, `test_colshaft_demands.py`,
+  `test_colshaft_lrfd.py`, `test_colshaft_slender.py`, `test_colshaft_seismic.py`,
+  `test_colshaft_engine.py`, `test_colshaft_api.py` (CSi import, demand grouping, LRFD
+  and seismic design, orchestrator, and the `Api.parse_csi` / `Api.run_colshaft` bridge).
+
+Regenerate the seismic-port golden only for an intended, reviewed change:
+
+```
+"C:\Users\macie\VSC\Seismic Column\.venv\Scripts\python.exe" -I tools/make_seismic_golden.py "C:\Users\macie\VSC\Seismic Column" tests/golden/seismic_port_golden.json
+```
+
 ### Sign conventions to know
 Two engine-internal sign conventions surfaced during the May 2026
 verification cleanup:

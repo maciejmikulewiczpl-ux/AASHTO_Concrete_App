@@ -63,7 +63,7 @@ App code = `calc_engine.py`, `pt_engine.py`, `api.py`, `app.py`, `index.html`, a
    ```
    python run_test_suite.py --full
    ```
-   All 21 stages should PASS. If any fail, do not claim the task is complete.
+   All 23 stages should PASS. If any fail, do not claim the task is complete.
 
 ## Sign conventions you need to know
 
