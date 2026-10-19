@@ -5,8 +5,8 @@ Run ONCE (and again whenever a later task adds a block) with the seismic app's v
     "<Seismic Column>/.venv/Scripts/python.exe" -I tools/make_seismic_golden.py \
         "<Seismic Column>" tests/golden/seismic_port_golden.json
 
-Blocks: source_commit, sections (parameters + materials/section values + M-phi).
-Later tasks add further top-level keys (shear, provisions, pile solver, ...).
+Blocks: source_commit, sections (parameters + materials/section values + M-phi),
+detailing, provisions, pile (p-y soil profiles + beam-column pile solver).
 """
 import json
 import subprocess
@@ -32,6 +32,31 @@ AXIALS = [0.0, 500.0, 1500.0]             # kip, compression positive (upstream)
 SHEAR_AXIALS = [0.0, 800.0, -200.0]       # kip, compression positive; -200 = tension
 SHEAR_MU = [1.0, 3.0, 5.0]
 PROV_KEYS = ["SDC 2.1", "AASHTO SGS 3rd Ed."]
+# --- pile block (Task 3A) ---------------------------------------------------
+PILE_COL, PILE_SHAFT = "col_D72_24-#11_#6@5_spiral", "shaft_D96_30-#11_#8@6_spiral"
+PILE_AXIAL = 800.0                        # kip, compression positive
+PILE_HCOL = [240.0, 480.0]
+PILE_EMBED = 720.0
+PILE_BOUNDS = [2.0, 0.5]                  # upstream inground_demand default bounds
+# layers as SoilLayer.from_engineering(thickness_ft, py_model, gamma_pcf, **kw)
+PILE_PROFILES = {
+    "soft_clay": [
+        [80.0, "matlock_soft_clay", 115.0,
+         dict(su_top_ksf=1.0, su_bot_ksf=2.0, eps50=0.02, submerged=True)]],
+    "stiff_clay_over_sand": [
+        [20.0, "welch_stiff_clay", 125.0,
+         dict(su_top_ksf=2.5, su_bot_ksf=3.0, eps50=0.005)],
+        [60.0, "api_sand", 125.0,
+         dict(phi_deg=36.0, k_pci=90.0, submerged=True)]],
+    "sand_water_table": [
+        [10.0, "api_sand", 120.0, dict(phi_deg=34.0, k_pci=225.0)],
+        [70.0, "api_sand", 125.0, dict(phi_deg=34.0, k_pci=60.0, submerged=True)]],
+}
+PILE_UNSTABLE = dict(
+    profile=[[80.0, "matlock_soft_clay", 110.0,
+              dict(su_top_ksf=0.15, eps50=0.02, submerged=True)]],
+    Hcol=240.0, L_embed=120.0, bound=0.5)
+PILE_SAMPLE = 8                           # store every 8th node of the diagrams
 BALANCE = ("balance_k_ratio_adjacent", "balance_k_ratio_any", "balance_T_ratio",
            "ref_balanced_stiffness", "ref_balanced_stiffness_any",
            "ref_balanced_geometry", "ref_balance_tuning")
@@ -113,9 +138,73 @@ def main(upstream, out):
     golden["provisions"] = {
         pk: {k: v for k, v in dataclasses.asdict(get_provisions(pk)).items()
              if k not in BALANCE} for pk in PROV_KEYS}
+    golden["pile"] = _pile_block(CircularSection, moment_curvature, get_provisions)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(golden, f, indent=2)
     print("wrote", out, commit)
+
+
+def _pile_block(CircularSection, moment_curvature, get_provisions):
+    from dataclasses import replace
+    from seismic_column.soil import SoilLayer, SoilProfile
+    from seismic_column.pile_solver import solve_lateral
+    from seismic_column.sdc_capacity import inground_demand
+
+    def prof(layers):
+        return SoilProfile(tuple(SoilLayer.from_engineering(t, m, g, **kw)
+                                 for t, m, g, kw in layers))
+
+    def sol_dict(s):
+        idx = sorted(set(range(0, len(s.x), PILE_SAMPLE)) | {s.ground_index,
+                                                              len(s.x) - 1})
+        out = {k: float(getattr(s, k)) for k in (
+            "head_deflection", "head_stiffness", "head_flexibility", "Df_eq",
+            "max_inground_moment", "max_moment_depth", "max_inground_shear")}
+        out.update(stable=bool(s.stable), converged=bool(s.converged),
+                   iterations=int(s.iterations), ground_index=int(s.ground_index),
+                   n_nodes=int(len(s.x)),
+                   M_ground=float(s.moment[s.ground_index]),
+                   sample_index=idx,
+                   x=[float(s.x[i]) for i in idx], y=[float(s.y[i]) for i in idx],
+                   moment=[float(s.moment[i]) for i in idx],
+                   shear=[float(s.shear[i]) for i in idx])
+        return out
+
+    rc = moment_curvature(CircularSection(**SECTIONS[PILE_COL]), PILE_AXIAL)
+    rs = moment_curvature(CircularSection(**SECTIONS[PILE_SHAFT]), PILE_AXIAL)
+    EI_col, EI_shaft = float(rc.Mp / rc.phi_y), float(rs.Mp / rs.phi_y)
+    Mo = float(get_provisions("SDC 2.1").overstrength_factor * rc.Mp)
+    D_shaft = float(SECTIONS[PILE_SHAFT]["D"])
+    cases, demand = [], []
+    for pname, layers in PILE_PROFILES.items():
+        base = prof(layers)
+        for H in PILE_HCOL:
+            for end, V, Mh in (("free", Mo / H, 0.0), ("fixed", 2.0 * Mo / H, Mo)):
+                for b in PILE_BOUNDS:
+                    p = replace(base, stiffness_factor=base.stiffness_factor * b)
+                    s = solve_lateral(H, PILE_EMBED, EI_col, EI_shaft, D_shaft,
+                                      PILE_AXIAL, p, V, M_head=Mh)
+                    cases.append(dict(profile=pname, Hcol=H, L_embed=PILE_EMBED,
+                                      end=end, bound=b, V_head=V, M_head=Mh,
+                                      result=sol_dict(s)))
+                M, Vd, gov = inground_demand(H, PILE_EMBED, EI_col, EI_shaft,
+                                             D_shaft, PILE_AXIAL, base, V,
+                                             soil_bounds=tuple(PILE_BOUNDS),
+                                             M_head=Mh)
+                demand.append(dict(profile=pname, Hcol=H, end=end, V_head=V,
+                                   M_head=Mh, M=float(M), V=float(Vd),
+                                   gov_none=gov is None))
+    u = PILE_UNSTABLE
+    Vu = Mo / u["Hcol"]
+    pu = prof(u["profile"])
+    pu = replace(pu, stiffness_factor=u["bound"])
+    su = solve_lateral(u["Hcol"], u["L_embed"], EI_col, EI_shaft, D_shaft,
+                       PILE_AXIAL, pu, Vu)
+    unstable = dict(u, V_head=Vu, result=sol_dict(su))
+    return dict(column=PILE_COL, shaft=PILE_SHAFT, axial=PILE_AXIAL,
+                EI_col=EI_col, EI_shaft=EI_shaft, Mp_col=float(rc.Mp), Mo=Mo,
+                D_shaft=D_shaft, profiles=PILE_PROFILES, bounds=PILE_BOUNDS,
+                cases=cases, inground_demand=demand, unstable=unstable)
 
 
 if __name__ == "__main__":
