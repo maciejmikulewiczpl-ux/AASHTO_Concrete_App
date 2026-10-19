@@ -219,8 +219,18 @@ def _min_bar(prov, col: CircularSection) -> int:
 
 def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
                    axial: dict, bent: dict, provisions: CodeProvisions,
-                   *, params: dict = None) -> SeismicResult:
+                   *, params: dict = None, mc_cache: dict = None) -> SeismicResult:
+    """`mc_cache` (optional, Task 8): a dict shared by repeated calls that memoises
+    moment_curvature by (section repr, axial); results are only read."""
     prov = provisions
+
+    def mphi(sec, P_comp):
+        if mc_cache is None:
+            return moment_curvature(sec, P_comp)
+        key = (repr(sec), round(P_comp, 9))
+        if key not in mc_cache:
+            mc_cache[key] = moment_curvature(sec, P_comp)
+        return mc_cache[key]
     warnings: List[str] = []
     H = float(bent["H_in"])
     if not H > 0:
@@ -246,7 +256,7 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
     mp_by_p, mc_dead, mc_gov = [], None, None
     for P in _axial_samples(axial):
         try:
-            mc = moment_curvature(col, -P)
+            mc = mphi(col, -P)
         except (ValueError, RuntimeError, ArithmeticError) as e:
             warnings.append(f"moment-curvature failed at P = {P:.0f} kip ({e}); point skipped")
             continue
@@ -278,7 +288,7 @@ def seismic_design(column: dict, shaft: dict, col_cage: dict, shaft_cage: dict,
 
     # --- shaft capacities ---
     try:
-        mc_sh = moment_curvature(sh, P_dead_c)
+        mc_sh = mphi(sh, P_dead_c)
     except (ValueError, RuntimeError, ArithmeticError) as e:
         raise ValueError(f"shaft moment-curvature failed at P_dead = {P_dead:.0f} kip ({e})")
     sh_v = shear_capacity(sh, P_vc_c, 1.0, False, prov)

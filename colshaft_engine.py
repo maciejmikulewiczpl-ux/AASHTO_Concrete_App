@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
 
 import calc_engine as ce
 import colshaft_demands as cd
@@ -37,8 +38,8 @@ import colshaft_seismic as cs
 import colshaft_shaft as csh
 import colshaft_slender as csl
 import csi_import as ci
-from colshaft_shaft import (SHAFT_FLEX, SHAFT_TRANS, check_of, checks_ok, full_cage, long_cage,
-                            trans_cage)
+from colshaft_shaft import (SHAFT_FLEX, SHAFT_TRANS, checks_ok, full_cage, long_cage, py_check,
+                            py_rows, trans_cage)
 from seismic_port.provisions import PROVISIONS, _KEY_ALIASES, get_provisions
 
 ENVELOPE_MODES = ("station", "member")
@@ -59,6 +60,27 @@ def validate_code(code):
         known = sorted(set(PROVISIONS) | set(_KEY_ALIASES))
         raise ValueError(f"Unknown seismic code {code!r}; expected one of {known}")
     return get_provisions(code)
+
+
+CATEGORIES = {c.lower(): c for c in ("Strength", "Extreme", "Dead", "Ignore")}
+
+
+def validate_categories(given, cases):
+    """{case: category} for every parsed case: the user's value (case-insensitive,
+    normalised) or the default by name; any other value -> ValueError."""
+    given = given or {}
+    out = {}
+    for c in cases:
+        v = given.get(c)
+        if v in (None, ""):
+            out[c] = cd.default_case_category(c)
+            continue
+        n = CATEGORIES.get(str(v).strip().lower())
+        if n is None:
+            raise ValueError(f"Unknown load-case category {v!r} for case {c!r}; expected one of "
+                             f"{sorted(CATEGORIES.values())}")
+        out[c] = n
+    return out
 
 
 def sanitize(obj):
@@ -103,16 +125,23 @@ def _same_trans(a, b):
     return (a["bar"], round(a["s"], 4), a["ties"]) == (b["bar"], round(b["s"], 4), b["ties"])
 
 
-def rho_l_check(lg, params, prov):
-    """Column longitudinal ratio within the selected provisions' limits (the same
-    limits bound the LRFD search; this flags an override outside them)."""
-    p = cl._params(params)
-    lo, hi, r = p["rho_min"], p["rho_max"], lg["rho_l"]
+def rho_l_check(lg, prov, who="Column"):
+    """Longitudinal ratio within the selected provisions' rho_l limits (the ref
+    cites them).  Always for the column; for the shaft only when its longitudinal
+    is overridden (the LRFD search / sizing already honour the limits)."""
+    lo, hi, r = prov.rho_l_min, prov.rho_l_max, lg["rho_l"]
     ok = lo - 1e-9 <= r <= hi + 1e-9
-    return {"group": "Seismic", "name": "Column longitudinal ratio (rho_l)", "demand": lo,
-            "capacity": r, "ratio": (lo / r if r > 0 else None) if r <= hi else r / hi,
+    ratio = max(lo / r if r > 0 else math.inf, r / hi)
+    return {"group": "Seismic", "name": f"{who} longitudinal ratio (rho_l)", "demand": lo,
+            "capacity": r, "ratio": ratio if math.isfinite(ratio) else None,
             "ok": ok, "detail": f"{lo:g} <= rho_l = {r:.4f} <= {hi:g}",
             "ref": prov.ref_longitudinal}
+
+
+def rows_pass(member, cage, rows, transform):
+    """Every LRFD row passes on `cage` (the search criterion, see row_ok)."""
+    res = cl.check_cage(member, cage, rows, transform)
+    return all(row_ok(x, r) for x, r in zip(res, rows))
 
 
 def row_ok(res, row):
@@ -183,20 +212,36 @@ def base_station(rows, frames, cats, base_end, warnings=None):
     return f, (min(sts) if be == "min" else max(sts))
 
 
+_PARTIAL_DEAD = re.compile(r"^(DC|DW|SW|SELF)", re.IGNORECASE)
+
+
 def seismic_axial(bent, rows, frames, cats, base_end, warnings):
-    """P_dead / P_ext_min / P_ext_max (app convention, ruling 8-10)."""
-    dead = cd.base_axial(rows, frames, cats, "Dead", base_end, warnings)
+    """P_dead / P_ext_min / P_ext_max (app convention) at the base station of the
+    bottom column frame.  Ruling 8-14: P_dead = SUM over the Dead-category cases of
+    each case's most compressive base axial (spec 4.4 "sum of Dead rows"); none ->
+    bent["P_dead"], else ValueError.  Ruling 8-10: P_ext_min / max = min / max of
+    every Extreme base axial (Max and Min rows); none -> P_dead for both."""
+    bf, bst = base_station(rows, frames, cats, base_end, warnings)
+    at = [r for r in rows if bf is not None and r.frame == bf
+          and math.isclose(r.station_in, bst, abs_tol=1e-6)]
+    dead = {}
+    for r in at:
+        if cd._cat(r.case, cats) == "Dead":
+            dead[r.case] = min(dead.get(r.case, r.P), r.P)
     if dead:
-        P_dead = min(dead)
+        P_dead = sum(dead.values())
+        if len(dead) == 1 and _PARTIAL_DEAD.match(next(iter(dead))) and warnings is not None:
+            warnings.append(f"P_dead from the single Dead case '{next(iter(dead))}'; categorise "
+                            "any other dead-load cases (e.g. DW) as Dead to include them")
     elif bent.get("P_dead") is not None:
         P_dead = float(bent["P_dead"])
     else:
         raise ValueError(f"Bent {bent.get('name')}: no Dead rows at the column base; "
                          "enter P_dead (kip, compression negative)")
-    ext = cd.base_axial(rows, frames, cats, "Extreme", base_end, warnings)
+    ext = [r.P for r in at if cd._cat(r.case, cats) == "Extreme"]
     lo, hi = (min(ext), max(ext)) if ext else (P_dead, P_dead)
-    return {"P_dead": P_dead, "P_ext_min": lo, "P_ext_max": hi, "n_dead": len(dead),
-            "n_extreme": len(ext)}
+    return {"P_dead": P_dead, "P_ext_min": lo, "P_ext_max": hi,
+            "dead_cases": {c: p for c, p in dead.items()}, "n_extreme": len(ext)}
 
 
 # ─── LRFD member design with overrides ──────────────────────────────
@@ -227,10 +272,6 @@ def _ov_trans(ov):
 
 
 # ─── Bent run ───────────────────────────────────────────────────────
-
-class _NoSolution(Exception):
-    pass
-
 
 def run_bent(bent, pr, cats, prov, params, settings, mode):
     name = str(bent.get("name") or "")
@@ -339,40 +380,43 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
             trc = trans_cage(t["trans_bar"], t["s"], t["ties"])
         return lgc, trc
 
+    mc_cache = {}
+
     def seis(col_c, sh_c):
-        return cs.seismic_design(column, shaft, col_c, sh_c, axial, sbent, prov, params=params)
+        return cs.seismic_design(column, shaft, col_c, sh_c, axial, sbent, prov, params=params,
+                                 mc_cache=mc_cache)
 
     sh_long, sh_trans = shaft_start()
 
-    # ── column seismic: final transverse (ruling 8-3) ──
+    # ── column seismic: final transverse (rulings 8-3 / 8-15) ──
     col_trans = col_trans_lrfd
     S = seis(full_cage(col_long, col_trans), full_cage(sh_long, sh_trans))
+    seis_req_ok = True
     if not ov.get("col_trans"):
         for _ in range(MAX_COL_ITER):
             req = S.required_transverse
             if not req.get("ok"):
+                seis_req_ok = False
                 nosol.append("Column seismic transverse: no hoop/spiral in the search range meets "
                              "Column shear, Transverse steel ratio (min) and the detailing spacing")
                 break
-            pick, which = csh.heavier_trans(col_trans_lrfd, trans_cage(req["bar"], req["s"],
-                                                                       req["ties"]))
+            pick, which = csh.merge_trans(col_trans_lrfd, trans_cage(req["bar"], req["s"],
+                                                                     req["ties"]))
             if _same_trans(pick, col_trans):
                 break
             col_trans = pick
             source["col_trans"] = "LRFD" if which == "a" else "Seismic"
             S = seis(full_cage(col_long, col_trans), full_cage(sh_long, sh_trans))
 
-    # ── shaft LRFD rows through the pile (spec 4.4a, ruling 8-1) ──
+    # ── shaft LRFD rows through the pile (spec 4.4a, rulings 8-12 / 8-13) ──
     py_ctx = None
     if not shaft_frames and basis == "soil":
         bf, bst = base_station(rows_all, col_frames, cats, base_end, w)
         base_rows = [r for r in col_raw if r["_frame"] == bf
                      and math.isclose(r["_station"], bst, abs_tol=1e-6)]
-        prof = cs.soil_profile(soil)
-        bounds = tuple(float(b) for b in (bent.get("soil_bounds") or (2.0, 0.5)))
-        py_ctx = (base_rows, prof, bounds)
-        sh_rows = csh.strength_rows_through_pile(base_rows, H, float(bent["L_embed_in"]),
-                                                 S.EI_col, S.EI_shaft, Ds, prof, bounds, w)
+        py_ctx = (base_rows, float(bent["L_embed_in"]), cs.soil_profile(soil),
+                  tuple(float(b) for b in (bent.get("soil_bounds") or (2.0, 0.5))))
+        sh_rows, _ = py_rows(py_ctx, S.EI_shaft, Ds)
         sh_src = csh.PY_SOURCE
         if sh_rows:
             sh_lg, sh_tr = shaft_lrfd(sh_rows)
@@ -397,7 +441,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
             source["shaft_long"] = "Seismic"
     if not ov.get("shaft_trans") and not checks_ok(S, SHAFT_TRANS):
         found = csh.size_shaft_transverse(shaft, prov, S, sh_long, sh_trans, params,
-                                      lambda t: seis(col_full, full_cage(sh_long, t)))
+                                          lambda t: seis(col_full, full_cage(sh_long, t)))
         if found is None:
             names = [c.name for c in S.checks if c.name in SHAFT_TRANS and not c.ok]
             nosol.append(f"{', '.join(names)}: no shaft transverse cage in the search range passes")
@@ -405,31 +449,65 @@ def run_bent(bent, pr, cats, prov, params, settings, mode):
             sh_trans, S = found
             source["shaft_trans"] = "Seismic"
 
-    # ── final checks on the final cages ──
-    final = {"col_long": col_long, "col_trans": col_trans, "shaft_long": sh_long,
-             "shaft_trans": sh_trans}
-    sh_full = full_cage(sh_long, sh_trans)
-    S = seis(col_full, sh_full)
-    final["col_trans"]["rho_s"] = cs.to_section(column, col_full, prov).rho_s
-    final["shaft_trans"]["rho_s"] = cs.to_section(shaft, sh_full, prov).rho_s
+    # ── final cages (ruling 8-15): when the merged / upsized cage fails the LRFD
+    # rows although the LRFD and seismic designs each passed, walk the transverse
+    # candidates from it to the first one passing both ──
+    S = seis(col_full, full_cage(sh_long, sh_trans))
     Df = S.Df
     if Df is None:
         Df = 0.0
         if slender_on:
-            w.append("slenderness: no fixity depth for the interface basis; "
-                     "lu default = H (Df = 0)")
-    elif basis == "soil" and S.pile and S.pile.get("Df_eq_gov") is None and slender_on:
-        w.append("slenderness: no stable fixed-free p-y solve; lu default = H (Df = 0)")
-    tf_final = transform_for(Df or 0.0)
-    final_checks = [check_dict(c) for c in S.checks] + [rho_l_check(col_long, params, prov)]
+            w.append("slenderness: interface basis has no fixity depth; lu default = H (Df = 0)"
+                     if basis == "interface" else
+                     "slenderness: no stable fixed-free p-y solve; lu default = H (Df = 0)")
+    tf_final = transform_for(Df)
+    skipped = []
+    if py_ctx is not None:
+        sh_rows, skipped = py_rows(py_ctx, S.EI_shaft, Ds)
+    changed = False
+    if (not ov.get("col_trans") and col_tr is not None and col_tr.ok and seis_req_ok
+            and col_rows and not rows_pass(column, col_full, col_rows, tf_final)):
+        t = csh.walk_trans(col_trans, params, lambda t: (
+            csh.col_trans_screen(column, prov, S, col_long, t)
+            and rows_pass(column, full_cage(col_long, t), col_rows, tf_final)))
+        if t is None:
+            nosol.append("Column transverse: no candidate from the merged cage on passes both "
+                         "the LRFD rows and the seismic transverse criteria")
+        else:
+            col_trans, changed = t, True
+            source["col_trans"] = "LRFD+Seismic"
+    sh_full = full_cage(sh_long, sh_trans)
+    if (not ov.get("shaft_trans") and sh_tr is not None and sh_tr.ok and sh_rows
+            and not rows_pass(shaft, sh_full, sh_rows, None)):
+        t = csh.walk_trans(sh_trans, params, lambda t: (
+            csh.shaft_trans_screen(shaft, prov, S, sh_long, t)
+            and rows_pass(shaft, full_cage(sh_long, t), sh_rows, None)))
+        if t is None:
+            nosol.append("Shaft transverse: no candidate from the upsized cage on passes both "
+                         "the shaft LRFD rows and the shaft seismic checks")
+        else:
+            sh_trans, changed = t, True
+            source["shaft_trans"] = "LRFD+Seismic"
+    col_full, sh_full = full_cage(col_long, col_trans), full_cage(sh_long, sh_trans)
+    if changed:
+        S = seis(col_full, sh_full)
+        if py_ctx is not None:
+            sh_rows, skipped = py_rows(py_ctx, S.EI_shaft, Ds)
+
+    # ── final checks on the final cages ──
+    final = {"col_long": col_long, "col_trans": dict(col_trans), "shaft_long": sh_long,
+             "shaft_trans": dict(sh_trans)}
+    final["col_trans"]["rho_s"] = cs.to_section(column, col_full, prov).rho_s
+    final["shaft_trans"]["rho_s"] = cs.to_section(shaft, sh_full, prov).rho_s
+    final_checks = [check_dict(c) for c in S.checks] + [rho_l_check(col_long, prov)]
+    if ov.get("shaft_long"):
+        final_checks.append(rho_l_check(sh_long, prov, "Shaft"))
     col_summ, col_checks, col_rows_t = lrfd_check_rows(column, col_full, col_rows, tf_final,
                                                        "Column LRFD") if col_rows else ([], [], [])
     final_checks += col_checks
     lrfd["col"]["check_rows"] = col_summ
     if py_ctx is not None:
-        base_rows, prof, bounds = py_ctx
-        sh_rows = csh.strength_rows_through_pile(base_rows, H, float(bent["L_embed_in"]),
-                                                 S.EI_col, S.EI_shaft, Ds, prof, bounds, w)
+        final_checks.append(py_check(skipped, len(skipped) + len(sh_rows)))
     if sh_rows:
         sh_summ, sh_checks, _ = lrfd_check_rows(shaft, sh_full, sh_rows, None, "Shaft LRFD")
         final_checks += sh_checks
@@ -483,8 +561,7 @@ def run_colshaft(payload: dict) -> dict:
     params = dict(payload.get("params") or {})
     params["code"] = code
     pr = ci.parse_csi_frame_forces(payload.get("paste") or "", payload.get("units"))
-    cats = {c: (payload.get("categories") or {}).get(c) or cd.default_case_category(c)
-            for c in pr.cases}
+    cats = validate_categories(payload.get("categories"), pr.cases)
     gw = list(pr.warnings)
     bents = []
     for bent in payload.get("bents") or []:

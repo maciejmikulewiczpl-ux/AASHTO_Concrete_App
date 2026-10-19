@@ -1,12 +1,8 @@
 """Column-on-Shaft: shaft helpers for the orchestrator (Task 8, controller rulings 8-1 / 8-2).
 
-* Strength rows through the pile (spec 4.4a, ruling 8-1): a column-base Strength
-  row (Pu, M, V, T) is applied to the p-y column + shaft model so that the
-  interface (top of shaft) carries exactly (M, V).  The solver's convention is
-  interface M = V*H - M_head (fixed-fixed: V = 2*Mo/H with M_head = +Mo lands Mo
-  at the interface), so M_head = V*H - M_base.  The base M and V are magnitudes
-  (resultants), applied in the same direction (cantilever-like: the shear adds to
-  the moment below the interface, the conservative pairing).
+* Strength rows through the pile (spec 4.4a, rulings 8-1 / 8-12 / 8-13): a
+  column-base Strength row (Pu, M, V, T) is applied directly at the top of the
+  shaft (shaft-alone p-y solve, Hcol = 0); see the section comment below.
 * Seismic shaft sizing (ruling 8-2): small stepping helpers over the same
   longitudinal candidate generator / constraints as colshaft_lrfd and over
   colshaft_lrfd.transverse_candidates.
@@ -133,25 +129,32 @@ def size_shaft_long(cands: list, run):
     return None if k is None else (cands[k], memo[k])
 
 
+def shaft_trans_screen(shaft, prov, S, long_c, t) -> bool:
+    """The shaft shear / confinement checks of seismic_design for transverse cage t,
+    evaluated directly against the demands of seismic run S: the same section
+    (to_section of the shaft with long_c + t), the same axial (-S.P_vc,
+    compression-positive), mu_d = 1, outside the hinge, the same rho_s demand."""
+    sec = to_section(shaft, full_cage(long_c, t), prov)
+    conf = check_of(S, SHAFT_TRANS[1])
+    if conf is not None and sec.rho_s < conf.demand:
+        return False
+    return shear_capacity(sec, -S.P_vc, 1.0, False, prov)[0] >= check_of(S, SHAFT_TRANS[0]).demand
+
+
 def size_shaft_transverse(shaft, prov, S, long_c, start, params, run):
     """First transverse cage in transverse_candidates order with Av/s >= the start
     cage's for which the shaft shear and confinement checks pass (ruling 8-2).
-    Each candidate is screened with the ported shear_capacity / rho_s against the
-    demands of the last seismic run, then confirmed with a full seismic_design.
+    Each candidate is screened (shaft_trans_screen) against the demands of the last
+    seismic run, then confirmed with a full seismic_design.
     -> (trans cage, SeismicResult) or None."""
     floor = av_per_s(start)
-    v_dem = check_of(S, SHAFT_TRANS[0]).demand
-    conf = check_of(S, SHAFT_TRANS[1])
     seen = set()
     for bar, ties, s in cl.transverse_candidates(params):
         t = trans_cage(bar, s, ties)
         if t["Av_s"] < floor - 1e-12 or (bar, s) in seen:
             continue
         seen.add((bar, s))
-        sec = to_section(shaft, full_cage(long_c, t), prov)
-        if conf is not None and sec.rho_s < conf.demand:
-            continue
-        if shear_capacity(sec, -S.P_vc, 1.0, False, prov)[0] < v_dem:
+        if not shaft_trans_screen(shaft, prov, S, long_c, t):
             continue
         R = run(t)
         if checks_ok(R, SHAFT_TRANS):
@@ -159,64 +162,90 @@ def size_shaft_transverse(shaft, prov, S, long_c, start, params, run):
     return None
 
 
-# ─── Strength rows through the pile (spec 4.4a) ─────────────────────
-
-def head_loads(M_base: float, V_base: float, H: float):
-    """(V_head, M_head) that put (M_base, V_base) at the interface (ruling 8-1)."""
-    return V_base, V_base * H - M_base
-
-
-def interface_forces(sol) -> tuple:
-    """(M, V) at the top of shaft of a PileSolution: the moment at the ground node
-    and the shear in the column element just above it."""
-    g = sol.ground_index
-    return sol.moment[g], sol.shear[max(g - 1, 0)]
-
-
-def physical(sol, M_b: float, V_b: float, L_total: float) -> bool:
-    """Physical-solution test for a strength solve with a head moment.
-
-    The solver's own guard (`stable`) requires the column-top deflection to have
-    the sign of V_head, which is only valid without a head moment: with
-    M_head = V*H - M_base close to V*H the head legitimately deflects backwards
-    while the shaft is loaded normally (verified: Mbase = 5000 kip-in, V = 400 kip,
-    H = 240 in -> y_top < 0, interface M = 5000 exactly).  The same idea is
-    applied at the INTERFACE instead: converged, bounded head deflection
-    (< 5 x total length, as the solver) and the top-of-shaft deflection in the
-    direction of the applied interface load (M_base, V_base >= 0)."""
-    if not sol.converged:
+def col_trans_screen(column, prov, S, long_c, t) -> bool:
+    """The column seismic transverse criteria of required_transverse (phiVn >= Vo
+    inside the hinge at -S.P_vc and mu_d, rho_s >= rho_s,min, s <= the detailing
+    maximum, bar >= the minimum size) for cage t, against seismic run S."""
+    if int(t["bar"]) < (S.min_trans_bar or 0):
         return False
-    if not abs(sol.head_deflection) < 5.0 * L_total:
+    if S.s_max_detailing is not None and float(t["s"]) > S.s_max_detailing + 1e-9:
         return False
-    if M_b == 0 and V_b == 0:
-        return True
-    return sol.y[sol.ground_index] > 0.0
+    sec = to_section(column, full_cage(long_c, t), prov)
+    if sec.rho_s < S.rho_s_min:
+        return False
+    return shear_capacity(sec, -S.P_vc, S.mu_d, True, prov)[0] >= S.Vo
 
 
-def pile_strength_row(row: dict, H: float, L_embed: float, EI_col: float, EI_sh: float,
-                      Ds: float, prof, bounds, axial_comp: float = None):
-    """Shaft demand row for one column-base Strength row, or None if every soil
-    bound is unstable.  axial_comp (compression +) defaults to -_Pmin (most
-    compression, so the column P-Delta is included; conservative).
-    Mu / Vu = the max below-ground |M| / |V| over the physical bounds (the upstream
-    inground_demand envelope, with the interface-based test of `physical` in place of
-    the solver's head-deflection guard), never less than the interface (base) values.
-    Returns (row | None, info) where info lists the interface (M, V) per bound."""
+def merge_trans(lrfd: dict, seis: dict):
+    """Ruling 8-15: bar / pitch from the larger Av/s (heavier_trans), cross-ties =
+    max of the two.  -> (cage, 'a' (LRFD) | 'b' (seismic))."""
+    pick, which = heavier_trans(lrfd, seis)
+    ties = max(int(lrfd.get("ties", 0) or 0), int(seis.get("ties", 0) or 0))
+    return trans_cage(pick["bar"], pick["s"], ties), which
+
+
+def walk_trans(start: dict, params: dict, ok):
+    """First transverse_candidates entry at or after `start` (in that order) for
+    which ok(trans cage) is True; None if none passes.  A start not in the list
+    walks the whole list."""
+    seq = list(cl.transverse_candidates(params))
+    key = (int(start["bar"]), int(start.get("ties", 0) or 0), round(float(start["s"]), 2))
+    k = next((i for i, c in enumerate(seq) if (c[0], c[1], round(c[2], 2)) == key), 0)
+    for bar, ties, s in seq[k:]:
+        t = trans_cage(bar, s, ties)
+        if ok(t):
+            return t
+    return None
+
+
+# ─── Strength rows through the pile (spec 4.4a, ruling 8-12) ────────
+# The CSiBridge column-base forces already contain the column P-Delta, so they
+# are applied directly at the top of the shaft: the shaft alone (Hcol = 0), with
+# only the shaft P-Delta (axial = most compression).  With Hcol = 0 the solver's
+# interface moment is -M_head (interface M = V*H - M_head), so M_head = -M_base
+# puts M_base at the top of shaft in the same sense as V: the moment grows below
+# the top as for a cantilever load (the conservative pairing of two resultant
+# magnitudes).  The solver's own stability guard (head deflection in the direction
+# of V) is valid for this loading and is used as reported.
+
+V_MIN = 1e-6        # kip; the solver treats V_head == 0 as unstable (no Df_eq)
+
+
+def head_loads(M_base: float, V_base: float):
+    """(V_head, M_head) for the shaft-alone solve (Hcol = 0)."""
+    return max(V_base, V_MIN), -M_base
+
+
+def interface_forces(sol, prof, Ds: float) -> tuple:
+    """(M, V) at the top of shaft of a shaft-alone PileSolution: the head-node
+    moment, and the head-node element shear plus the p-y spring force at that
+    node (its tributary half element)."""
+    k = prof.secant_modulus(0.0, sol.y[0], Ds) * 0.5 * (sol.x[1] - sol.x[0])
+    return sol.moment[0], sol.shear[0] + k * sol.y[0]
+
+
+def pile_strength_row(row: dict, L_embed: float, EI_sh: float, Ds: float, prof, bounds,
+                      axial_comp: float = None):
+    """Shaft demand row for one column-base Strength row, or None if the solver
+    reports every soil bound unstable.  axial_comp (compression +) defaults to
+    -_Pmin (most compression).  Mu / Vu = the max below-ground |M| / |V| over the
+    stable bounds (upstream inground_demand envelope), never less than the base
+    values.  Returns (row | None, info) with the interface (M, V) per bound."""
     M_b, V_b = abs(float(row["Mu"])), abs(float(row["Vu"]))
     if axial_comp is None:
         axial_comp = -float(row.get("_Pmin", row["Pu"]))
-    V_h, M_h = head_loads(M_b, V_b, H)
+    V_h, M_h = head_loads(M_b, V_b)
     info = {"V_head": V_h, "M_head": M_h, "axial_comp": axial_comp, "bounds": []}
     M_ig = V_ig = 0.0
     n_ok = 0
     for f in bounds:
         p = replace(prof, stiffness_factor=prof.stiffness_factor * f)
-        s = _cached_pile_solve(H, L_embed, EI_col, EI_sh, Ds, axial_comp, p, V_h, M_h)
-        ok = physical(s, M_b, V_b, H + L_embed)
-        Mi, Vi = interface_forces(s) if ok else (None, None)
-        info["bounds"].append({"factor": f, "stable": ok, "solver_stable": bool(s.stable),
-                               "M_interface": Mi, "V_interface": Vi})
-        if ok:                      # inground_demand envelope over the physical bounds
+        s = _cached_pile_solve(0.0, L_embed, EI_sh, EI_sh, Ds, axial_comp, p, V_h, M_h)
+        Mi, Vi = interface_forces(s, p, Ds) if s.stable else (None, None)
+        info["bounds"].append({"factor": f, "stable": bool(s.stable),
+                               "M_interface": Mi, "V_interface": Vi,
+                               "Mmax": s.max_inground_moment if s.stable else None})
+        if s.stable:
             n_ok += 1
             M_ig = max(M_ig, s.max_inground_moment)
             V_ig = max(V_ig, s.max_inground_shear)
@@ -240,19 +269,34 @@ def governing_base_rows(rows: list, n: int = N_TOP) -> list:
     return [rows[i] for i in sorted(set(idx))]
 
 
-def strength_rows_through_pile(base_rows: list, H: float, L_embed: float, EI_col: float,
-                               EI_sh: float, Ds: float, prof, bounds, warnings: list = None):
-    """Shaft LRFD rows from the governing base rows (ruling 8-1).  An unstable
-    solve -> warning, row skipped (the seismic stability check reports NG)."""
-    out = []
+def strength_rows_through_pile(base_rows: list, L_embed: float, EI_sh: float, Ds: float,
+                               prof, bounds):
+    """Shaft LRFD rows from the governing base rows (ruling 8-12).
+    -> (rows, skipped): skipped = the governing base rows unstable on every bound
+    (ruling 8-13: they make the final check "Shaft p-y strength solve" NG)."""
+    out, skipped = [], []
     for r in governing_base_rows(base_rows):
-        sr, _ = pile_strength_row(r, H, L_embed, EI_col, EI_sh, Ds, prof, bounds)
+        sr, _ = pile_strength_row(r, L_embed, EI_sh, Ds, prof, bounds)
         if sr is None:
-            if warnings is not None:
-                warnings.append(
-                    f"p-y strength solve unstable for case {r.get('_case')} "
-                    f"(M={abs(r['Mu']):.0f} kip-in, V={abs(r['Vu']):.0f} kip) on every "
-                    "soil bound; row skipped from the shaft LRFD design")
-            continue
-        out.append(sr)
-    return out
+            skipped.append(r)
+        else:
+            out.append(sr)
+    return out, skipped
+
+
+def py_rows(ctx, EI_shaft, Ds):
+    """Shaft strength rows through the pile (ruling 8-12): -> (rows, skipped)."""
+    base_rows, L_embed, prof, bounds = ctx
+    return strength_rows_through_pile(base_rows, L_embed, EI_shaft, Ds, prof, bounds)
+
+
+def py_check(skipped, n):
+    """Ruling 8-13: NG when any governing strength row is unstable on every bound."""
+    rows = "; ".join(f"{r.get('_case')} (M={abs(r['Mu']):.0f} kip-in, V={abs(r['Vu']):.0f} kip)"
+                     for r in skipped)
+    return {"group": "Shaft LRFD", "name": "Shaft p-y strength solve", "demand": len(skipped),
+            "capacity": n, "ratio": len(skipped) / n if n else 0.0, "ok": not skipped,
+            "detail": (f"{n - len(skipped)}/{n} governing strength rows solved on a stable soil bound"
+                       + (f"; UNSTABLE on every bound (row skipped from the shaft LRFD design): {rows}"
+                          if skipped else "")),
+            "ref": ""}
