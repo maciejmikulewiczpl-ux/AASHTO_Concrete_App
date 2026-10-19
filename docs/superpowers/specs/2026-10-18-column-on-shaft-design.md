@@ -151,7 +151,7 @@ all stations and cases of a member into one envelope row: the fastest and most c
 - Shaft demand, `shaft_basis` ∈:
   - `soil` (**default when strata are entered**): the ported `solve_lateral` on column + shaft with p-y
     springs, loaded so the column develops Mo at the top of shaft. Fixed-free: `V_head = Mo/H`, `M_head = 0`.
-    Fixed-fixed: `V_head = 2Mo/H`, `M_head = −Mo` (upstream's rule, so the interface sits at +Mo, not 2Mo).
+    Fixed-fixed: `V_head = 2Mo/H`, `M_head = +Mo` in the solver's DOF sign convention (upstream caller sdc_capacity.py:794 and test_two_direction.py:140; the upstream docstring saying −Mp is stale). The interface then sits at Mo, not 2Mo or 3Mo.
     EI_col = Mp/φy of the column and EI_shaft = Mp/φy of the shaft (both from M-φ). Run on each soil bound and enveloped
     (upstream `inground_demand`). Outputs: M(z), V(z), y(z), the max in-ground M and V with their depths, Df_eq.
     An unstable or non-converged solve is reported as NG ("soil too soft / shaft too short"), never as

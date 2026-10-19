@@ -150,7 +150,7 @@ pile block) and `tests/test_seismic_port.py`.
 
 - [ ] **Step 1: Extend the golden.** For 3 soil profiles (soft clay; stiff clay over sand; sand with a water table), the
   golden column/shaft pair, Hcol ∈ {240, 480 in}, L_embed = 720 in, axial 800 kip, both `(V_head, M_head)` cases
-  (fixed-free Mo/H, 0 and fixed-fixed 2Mo/H, −Mo) × both bounds, store `head_deflection`, `Df_eq`,
+  (fixed-free Mo/H, 0 and fixed-fixed 2Mo/H, +Mo) × both bounds, store `head_deflection`, `Df_eq`,
   `max_inground_moment`, `max_moment_depth`, `max_inground_shear`, `stable`, and M at the ground node. Add one
   deliberately unstable case (very soft clay, L_embed = 120 in).
 - [ ] **Step 2: Write the failing tests:** `test_pile_matches_golden` (rel 5e-3), `test_unstable_flagged`,
@@ -351,7 +351,7 @@ the user, in `AASHTO 10 Ch 5 MD/Art_4.5.3.2.2b_user_supplied.md` and cite only t
 - Rules: `Mo = lambda_mo · max(Mp over P_dead and 5 points evenly across [P_ext_min, P_ext_max])`, with the governing
   P stored; column and shaft seismic Vc use `P_ext_max` (least compression); `Vo = max over directions of (1 or 2)·Mo/H`.
   Shaft profile by basis:
-  - `soil`: the governing direction's end condition → `(V_head, M_head) = (Mo/H, 0)` or `(2Mo/H, −Mo)`. Call
+  - `soil`: the governing direction's end condition → `(V_head, M_head) = (Mo/H, 0)` or `(2Mo/H, +Mo) (solver sign convention; see the ledger ruling 3A-1)`. Call
     `inground_demand(H, L_embed, EI_col=Mp_col/φy_col, EI_shaft=Mp_sh/φy_sh, Ds, P_dead_comp, profile, V_head,
     soil_bounds, M_head)`. Every bound unstable → check "Shaft p-y solve" NG with "soil too soft or shaft too short".
   - `cantilever`: `M(z) = Mo + Vo·z`, `V(z) = Vo`, `z ∈ [0, L_eq_in]`, 11 points. `Df = L_eq_in`.
