@@ -8,14 +8,17 @@ compression, plus tags _frame, _station (in), _case, _bound, _Pmin, _Pmax
 import math
 import re
 
-_DEAD = re.compile(r"DEAD|(?<![A-Z])DC", re.IGNORECASE)
+# Plain load-case names only (no combination operator).  The brief's trailing
+#  would reject "DC1", so a letter may not directly follow DC/DL/SW/SELF;
+# digits, '_', '-' and spaces may.  DEAD may be followed by anything plain.
+_DEAD = re.compile(r"^(DEAD|(DC|DL|SW|SELF)(?![A-Z]))[\w\- ]*$", re.IGNORECASE)
 _EXTREME = re.compile(r"(?<![A-Z])(EQ|EXT|SEIS)", re.IGNORECASE)
 _IGNORE = re.compile(r"SERV", re.IGNORECASE)
 
 
 def default_case_category(case):
     """Strength / Extreme / Dead / Ignore; first match wins."""
-    if _DEAD.search(case):
+    if "+" not in case and _DEAD.match(case.strip()):
         return "Dead"
     if _EXTREME.search(case):
         return "Extreme"

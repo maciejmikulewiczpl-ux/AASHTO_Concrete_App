@@ -37,7 +37,8 @@ def test_resultants_hypot():
     ("Str-I1", "Strength"), ("DEAD", "Dead"), ("DC1", "Dead"),
     ("EQ-X", "Extreme"), ("EXTREME", "Extreme"), ("Seismic", "Extreme"),
     ("Service-I", "Ignore"), ("FREQ", "Strength"), ("SEQUENCE", "Strength"),
-    ("1.0DC+EQ", "Dead"), ("Strength-III", "Strength"), ("dead load", "Dead"),
+    ("1.0DC+EQ", "Extreme"), ("1.25DC+1.75LL", "Strength"), ("SDC", "Strength"),
+    ("DC", "Dead"), ("Dead-Cap", "Dead"), ("Ext-I", "Extreme"), ("Strength-III", "Strength"), ("dead load", "Dead"),
 ])
 def test_category_defaults(name, exp):
     assert cd.default_case_category(name) == exp
