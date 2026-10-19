@@ -90,3 +90,95 @@ def test_brentq_contract():
     assert _brentq(lambda x: x * x - 2, 0.0, 2.0, xtol=1e-12) == pytest.approx(math.sqrt(2), abs=1e-10)
     with pytest.raises(ValueError):
         _brentq(lambda x: x * x + 1, -1.0, 1.0)
+
+
+def test_brentq_raises_runtimeerror_when_not_converged():
+    # scipy.optimize.brentq (disp=True) raises RuntimeError when maxiter is exhausted
+    with pytest.raises(RuntimeError):
+        _brentq(lambda x: x ** 3 - 2, 0.0, 5.0, xtol=1e-14, maxiter=1)
+
+
+# ---------------------------------------------------------------- Task 3 -----
+import dataclasses
+
+from seismic_port import shear as sh
+from seismic_port.provisions import CodeProvisions, get_provisions
+
+PROV_KEYS = ["SDC 2.1", "AASHTO SGS 3rd Ed."]
+BALANCE = {"balance_k_ratio_adjacent", "balance_k_ratio_any", "balance_T_ratio",
+           "ref_balanced_stiffness", "ref_balanced_stiffness_any",
+           "ref_balanced_geometry", "ref_balance_tuning"}
+
+
+def _close(a, b):
+    return a == pytest.approx(b, rel=REL, abs=1e-9)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_shear_matches_golden(name):
+    s = _sec(name)
+    for key, g in GOLDEN["sections"][name]["shear"].items():
+        pk, P, mu, hinge = key.split("|")
+        prov = get_provisions(pk)
+        phi_vn, vc, vs = sh.shear_capacity(s, float(P), float(mu), hinge == "True", prov)
+        assert _close(phi_vn, g["phiVn"]), key
+        assert _close(vc, g["Vc"]), key
+        assert _close(vs, g["Vs"]), key
+        b = sh.shear_breakdown(s, float(P), float(mu), hinge == "True", prov)
+        for k, v in g["breakdown"].items():
+            if isinstance(v, str):
+                assert getattr(b, k) == v, (key, k)
+            else:
+                assert _close(getattr(b, k), v), (key, k)
+
+
+def test_shear_tension_gives_zero_vc():
+    s = _sec(NAMES[0])
+    for pk in PROV_KEYS:
+        assert sh.shear_capacity(s, -200.0, 3.0, True, get_provisions(pk))[1] == 0.0
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_min_transverse_matches_golden(name):
+    g, s = GOLDEN["sections"][name], _sec(name)
+    d = GOLDEN["detailing"][name]
+    p = g["params"]
+    dbl, dsp = bar_diameter(p["long_bar_no"]), bar_diameter(p["spiral_bar_no"])
+    assert _close(sh.longitudinal_bar_spacing(p["D"], p["cover"], dsp, dbl, p["n_bars"]), d["lng_spacing"])
+    for got, exp in ((sh.max_transverse_spacing(p["D"], dbl, False), d["max_trans"]),
+                     (sh.max_transverse_spacing(p["D"], dbl, True), d["max_trans_bundled"]),
+                     (sh.max_transverse_spacing_caltrans(dbl), d["max_trans_caltrans"]),
+                     (sh.max_longitudinal_spacing_caltrans(p["D"]), d["max_long_caltrans"])):
+        assert _close(got[0], exp[0]) and got[1] == exp[1]
+    assert sh.min_transverse_bar_no(p["long_bar_no"], p.get("long_bundle", 1) > 1) == d["min_bar_no"]
+    assert _close(sh.max_bar_diameter(p["fc"], 300.0, p["D"], 68.0), d["max_bar_diameter"])
+    for b, a in zip((1, 2, 3), d["anchorage"]):
+        assert _close(sh.anchorage_length(dbl, 68.0, p["fc"], b), a)
+    for b, a in zip((1, 2, 3), d["eff_bar_d"]):
+        assert _close(sh.effective_bar_diameter(dbl, b), a)
+    assert _close(sh.min_transverse_ratio(p["fc"], 68.0, s.Ag, s.Acore, 0.0, 0.0, 0.005), d["min_ratio_aashto"])
+    assert _close(sh.min_transverse_ratio(p["fc"], 68.0, s.Ag, s.Acore), d["min_ratio_aci"])
+    assert _close(sh.axial_load_ratio(400.0, p["fc"], s.Ag), d["axial_ratio"])
+    for (H, Pd), exp in zip(d["caltrans_min_args"], d["caltrans_min"]):
+        got = sh.caltrans_min_transverse_ratio(p["D"], H, s.rho_l, Pd, p["fc"], s.Ag)
+        assert _close(got[0], exp[0]) and got[1] == exp[1] and got[2] == exp[2]
+
+
+@pytest.mark.parametrize("pk", PROV_KEYS)
+def test_refs_copied_verbatim(pk):
+    prov = get_provisions(pk)
+    gold = GOLDEN["provisions"][pk]
+    got = dataclasses.asdict(prov)
+    assert set(got) == set(gold)              # same fields, balance fields dropped
+    assert not (set(got) & BALANCE)
+    for k, v in gold.items():
+        assert got[k] == v, k                 # every ref_* string and number identical
+    assert sum(k.startswith("ref_") for k in gold) >= 14
+
+
+def test_provision_key_aliases():
+    assert get_provisions("SDC_2_0") is get_provisions("SDC 2.1")
+    assert get_provisions("SDC 2.0") is get_provisions("SDC 2.1")
+    assert get_provisions("AASHTO_SGS") is get_provisions("AASHTO SGS 3rd Ed.")
+    assert get_provisions("AASHTO_SGS").shaft_demand_factor == 1.25
+    assert isinstance(get_provisions("SDC_2_0"), CodeProvisions)

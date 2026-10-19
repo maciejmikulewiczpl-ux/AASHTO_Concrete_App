@@ -27,7 +27,8 @@ def _brentq(f, a: float, b: float, xtol: float = 1e-12, maxiter: int = 200,
             rtol: float = 4 * 2.220446049250313e-16) -> float:
     """Brent's method root finder (same contract as scipy.optimize.brentq).
 
-    Requires ``f(a)`` and ``f(b)`` of opposite sign, otherwise ``ValueError``.
+    Requires ``f(a)`` and ``f(b)`` of opposite sign, otherwise ``ValueError``;
+    raises ``RuntimeError`` if not converged within ``maxiter`` (as scipy).
     """
     xpre, xcur = a, b
     fpre, fcur = f(xpre), f(xcur)
@@ -68,7 +69,8 @@ def _brentq(f, a: float, b: float, xtol: float = 1e-12, maxiter: int = 200,
         else:
             xcur += delta if sbis > 0 else -delta
         fcur = f(xcur)
-    return xcur
+    # scipy.optimize.brentq (disp=True) raises RuntimeError when maxiter is exhausted.
+    raise RuntimeError(f"Failed to converge after {maxiter} iterations")
 
 
 @dataclass

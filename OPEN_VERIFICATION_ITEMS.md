@@ -1,6 +1,6 @@
 # Open Verification Items — REMIND THE USER AT THE START OF EVERY TASK
 
-Last updated: 2026-09-29. Single source of truth for everything that is implemented but
+Last updated: 2026-10-18. Single source of truth for everything that is implemented but
 **not yet verified against the printed AASHTO LRFD 10th Ed.** or **awaiting a user decision**.
 
 - Every new task on this project starts by reminding the user of this list (count + critical items).
@@ -54,6 +54,26 @@ Design choices awaiting a **DECIDE**:
 |---|---|---|
 | H1 | DECIDE | Circular work + review fixes + 2026-09-29 Chapter-5 fixes are **uncommitted**. The pre-commit hook will flag `index.html` / `calc_engine.py` (lines modified in place — nothing removed); commit needs the user's go-ahead. |
 | H3 | DECIDE | `tests/golden/rect_i_baseline.json` must be regenerated (reviewed) whenever fixes intentionally change rect/I results. Last regenerated 2026-09-29 for F1/F2/M4 (reviewed with an old-vs-new engine diff). |
+
+---
+
+## E. Column-on-shaft (seismic provisions ported 2026-10)
+
+Ported verbatim from `Seismic Column` @ 9265d67 into `seismic_port/provisions.py` / `shear.py`. Not independently verified here; P convention in the shear functions is compression-positive.
+
+| ID | Status | Item |
+|---|---|---|
+| E1 | VERIFY | Flexural overstrength factor (Mo = 1.2·Mp, A706). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §4.4.2 (Mo = 1.2·Mp, A706)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.5 (Mpo = λmo·Mp, λmo = 1.2 A706)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E2 | VERIFY | Concrete shear model and transverse shear (vc, α', Vs; φs = 0.90; 0.032 per Sept-2024 errata for SGS). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.7.2 (concrete) & §5.3.7.3 (transverse)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.6.2 (concrete) & §8.6.3 (transverse), φs = 0.90 per §8.6.1". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E3 | VERIFY | Minimum transverse ratio ρs,min (Table 5.3.8.2-1 / 0.005 floor). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.8.2 Table 5.3.8.2-1 (min ρs); §5.3.8.4 (Type II shafts)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.6.5 (ρs ≥ 0.005); confinement §8.8.2 separate". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E4 | VERIFY | Shaft demand factor (SDC_2_0 = 1.0, SGS = 1.25) for oversized (Type II) shafts. Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §6.2.5.3 (Type II shaft: MD ≤ φMne, or ≤ 0.8φMne slurry)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.9 (oversized shafts: Mne ≥ 1.25·Mpo)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E5 | VERIFY | Shaft confinement fraction (SGS 0.5; SDC none) — upstream cites SGS §8.8.12. Upstream refs — SDC 2.1: "(none; see provisions.py comment, SDC 2.1 §5.3.8.4 / §5.3.8.5)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.8.12 (ρs,shaft ≥ 0.5·ρs,column)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E6 | VERIFY | Minimum shaft oversize (SDC 24 in; SGS 0 / Owner's discretion). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §6.2.5.3 (Type II shaft: MD ≤ φMne, or ≤ 0.8φMne slurry)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.9 (oversized shafts: Mne ≥ 1.25·Mpo)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E7 | VERIFY | Detailing spacing / bar size (max tie spacing, longitudinal lateral spacing, max bar diameter, anchorage). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §8.4.1.1 (max tie spacing min(6·dbl, 8 in)) & §8.4.2 (longitudinal lateral spacing)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.8.6 (max bar diameter) & §8.8.9 (max tie spacing, min tie size)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E8 | VERIFY | Max shear reinforcement Vs ≤ 0.25√f'c·Ae. Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.7.4 (max shear reinf.: Vs ≤ 0.25√f'c·Ae)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.6.4 (Vs ≤ 0.25√f'c·Ae)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E9 | VERIFY | Maximum axial load (SDC ρdl ≤ 0.15; SGS Pu ≤ 0.2·f'c·Ag). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.3 (ρdl = Pdl/f'c·Ag ≤ 0.15)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.7.2 (Pu ≤ 0.2·f'c·Ag)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| E10 | VERIFY | Longitudinal steel limits, confined concrete / M-φ, plastic hinge, ductility, P-Δ, min strength. Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.9 (0.01 ≤ ρl ≤ 0.04); Caltrans SDC 2.1 §3.3.6 (concrete) / §5.3.5; Mander et al. (1988); Caltrans SDC 2.1 §5.3.6.2 (moment-curvature); Caltrans SDC 2.1 §5.3.4 (equivalent plastic-hinge length); Caltrans SDC 2.1 §4.4.1 (μd ≤ 5, single-column bent); Caltrans SDC 2.1 §4.4.4 (P-Δ: Pdl·Δr ≤ 0.25·Mp); Caltrans SDC 2.1 §4.4 (minimum lateral strength)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.8.1 (0.01 ≤ ρl ≤ 0.04); AASHTO SGS 3rd Ed. §8.4.4; Mander et al. (1988); AASHTO SGS 3rd Ed. §8.4 / §4.11.5 (moment-curvature); AASHTO SGS 3rd Ed. §4.11.6 (analytical plastic-hinge length); AASHTO SGS 3rd Ed. §4.9 (μD limits); AASHTO SGS 3rd Ed. §4.11.5 (P-Δ: Pdl·Δr ≤ 0.25·Mp); AASHTO SGS 3rd Ed. §8.7.1 (minimum lateral strength)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
+| **S6** | BLOCKED | AASHTO LRFD Art. 4.5.3.2.2b (δb, δs, Cm, Pe, φK) and §5.6.4.3 EI equations not in repo — moment magnification not coded until the user supplies them. |
 
 ---
 
