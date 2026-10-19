@@ -62,7 +62,7 @@ ROW_KEYS = ("Pu", "Mu", "Vu", "Tu", "_case", "_frame", "_station", "_step", "_bo
             "_slender_limit3", "_slender_status", "_M2", "_M3", "_Mu1", "_delta2", "_delta3",
             "_db2", "_ds2", "_db3", "_ds3", "_Pe_b2", "_Pe_s2", "_Pe_b3", "_Pe_s3", "_sPe_s2",
             "_sPe_s3", "_Cm2", "_Cm3", "_EI", "_beta_d", "_Pmag", "_sPu", "_unstable",
-            "_unstable_reason")
+            "_unstable_reason", "_neglect_note", "_neglect_note2", "_neglect_note3")
 RES_KEYS = ("Mr", "flexStatus", "_flexP", "_flexDC", "Vr2", "shearStatus", "Tr",
             "torsionConsider", "long_ok_2", "long_dc_2", "epsS")
 MAX_COL_ITER = 4
@@ -294,9 +294,10 @@ def _ov_trans(ov):
 
 # ─── Bent run ───────────────────────────────────────────────────────
 
-def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None):
+def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=None):
     """One bent.  `sway`: the sway-group context of pass 2 (colshaft_slender
-    make_magnifier; None = the bent alone)."""
+    make_magnifier; None = the bent alone).  `design_Df`: the Df for the design-pass
+    ℓu (ruling MF-5 redesign; None = the up-front estimate)."""
     name = str(bent.get("name") or "")
     w = []
     nosol = []
@@ -356,6 +357,8 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None):
     # check below (final Df -> lu) is authoritative
     L_eq = bent.get("L_eq_in")
     Df0 = float(L_eq) if basis == "cantilever" and L_eq is not None else 0.0
+    if design_Df is not None:
+        Df0 = float(design_Df)
     tf_design = transform_for(Df0)
 
     # ── column LRFD ──
@@ -507,7 +510,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None):
             csh.col_trans_screen(column, prov, S, col_long, t)
             and (not col_rows or rows_pass(column, full_cage(col_long, t), col_rows, tf_final))))
         if t is None:
-            nosol.append("Column transverse: no candidate from the merged cage on passes both "
+            nosol.append(WALK_NOSOL + " passes both "
                          "the LRFD rows and the seismic transverse criteria")
         else:
             col_trans, changed, col_changed = t, True, True
@@ -577,6 +580,15 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None):
                  f"max δ axis 2 = {dmax['2']:.3f}, axis 3 = {dmax['3']:.3f}")
     status = bent_status(bool(nosol), csl.ST_REFINED in sl,
                          any(not c["ok"] for c in final_checks), unstable)
+    # ruling MF-5: the design pass used ℓu = H + Df0; when the final check (ℓu = H + Df)
+    # fails only on magnified column rows, redesign the column once with the final ℓu
+    if (slender_on and design_Df is None and not ov.get("col_long") and not ov.get("col_trans")
+            and abs(Df - Df0) > 1e-9 and magnified_only_ng(col_summ, final_checks, nosol)):
+        out = run_bent(bent, pr, cats, prov, params, settings, mode, sway=sway, design_Df=Df)
+        out["warnings"].insert(0, f"slenderness: column redesigned once with the final ℓu (Df = "
+                               f"{Df / 12.0:.2f} ft; the design pass used Df = {Df0 / 12.0:.2f} ft)")
+        out["redesigned_final_lu"] = True
+        return out
     w += S.warnings
     out = _bent_result(name, status, lrfd, S, final, source, final_checks, nosol, w, axial, H)
     out["Df_for_lu"] = Df
@@ -590,6 +602,25 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None):
             raw = cl.cage_inputs(cl.base_circ_inputs(column), col_full)
             out["magnification"] = magnification_summary(tf_final, raw, col_rows_t, col_raw)
     return out
+
+
+WALK_NOSOL = "Column transverse: no candidate from the merged cage on"
+
+
+def magnified_only_ng(col_summ, final_checks, nosol):
+    """Ruling MF-5: True when the final checks fail ONLY on column LRFD rows that are
+    magnified (applied δ > 1) or unstable.  The only NO SOLUTION entry allowed is the
+    column transverse walk's (it fails on the same final-ℓu LRFD rows)."""
+    if any(not x.startswith(WALK_NOSOL) for x in nosol):
+        return False
+    bad = [c for c in final_checks if not c["ok"]]
+    bad_rows = [r for r in col_summ if not r.get("ok")]
+    if not bad or not bad_rows or len(bad) != len(bad_rows):
+        return False
+    if any(c.get("group") != "Column LRFD" for c in bad):
+        return False
+    return all(r.get("_unstable") or max(r.get("_delta2") or 1.0, r.get("_delta3") or 1.0) > 1.0
+               for r in bad_rows)
 
 
 def magnification_summary(tf, raw, rows_t, raw_rows):
@@ -614,7 +645,9 @@ def magnification_summary(tf, raw, rows_t, raw_rows):
                     "Cm": r.get("_Cm" + ax), "db": r.get("_db" + ax), "ds": r.get("_ds" + ax),
                     "delta": r.get("_delta" + ax), "klr": r.get("_klr" + ax),
                     "limit": r.get("_slender_limit" + ax), "status": r.get("_slender_status"),
-                    "unstable": bool(r.get("_unstable"))}
+                    "unstable": bool(r.get("_unstable")),
+                    "neglect_note": next((x.get("_neglect_note" + ax) for x in rows_t
+                                          if x.get("_neglect_note" + ax)), None)}
     sw = tf.sway
     return {"beta_d": tf.beta_d, "beta_d_source": tf.beta_d_source, "phi_K": csl.PHI_K,
             "Ec": e["Ec"], "Es": e["Es"], "Ig": e["Ig"], "Is": e["Is"], "EI1": e["EI1"],
@@ -695,13 +728,45 @@ def sway_context(group, infos, i):
     tabs = [{(c, st): float(p) for c, st, p in (m.get("Pu_cases") or [])} for m in others]
     keys = set(tabs[0]).intersection(*tabs[1:]) if tabs else set()
     pu = {k: sum(t[k] for t in tabs) for k in keys}
+    # ruling MF-3: collapsed member-mode rows -> each other member's maximum compression
+    # over all its Strength cases (non-ambiguous, conservative)
+    pu[csl.MEMBER_KEY] = sum(max(t.values(), default=0.0) for t in tabs)
     return {"group": group, "n_members": len(infos), "Pe_others": pe, "Pu_others": pu}
 
 
-def sway_pass2(specs, results, rerun):
+SWAY_MAX_ITER = 3
+
+
+def _pe_s(info, fallback=None):
+    """{axis: Pe_s} from a magnification summary, or from a bent result (its
+    `magnification`; a result without one -> `fallback`)."""
+    m = info.get("magnification") if info and "status" in info else info
+    if not m:
+        return dict(fallback) if fallback else None
+    return {ax: float((m.get("Pe_s") or {}).get(ax) or 0.0) for ax in ("2", "3")}
+
+
+def _check_only_spec(spec, res):
+    """The bent spec with its final column cages as overrides (check-only column)."""
+    F = res.get("final") or {}
+    ov = dict(spec.get("override") or {})
+    if F.get("col_long") and F.get("col_trans"):
+        cl_, ct = F["col_long"], F["col_trans"]
+        ov["col_long"] = {"bar": cl_["bar"], "n": cl_["n"], "bundle": cl_.get("bundle", 1)}
+        ov["col_trans"] = {"bar": ct["bar"], "s": ct["s"], "ties": ct.get("ties", 0)}
+    return dict(spec, override=ov)
+
+
+def sway_pass2(specs, results, rerun, max_iter=SWAY_MAX_ITER):
     """Re-run every member of a multi-bent sway group with the group sums (in place).
     A member without a pass-1 magnification summary (no final cage) stops the group:
-    the pass-1 (bent alone) results stay, with a warning on every member."""
+    the pass-1 (bent alone) results stay, with a warning on every member.
+
+    Ruling MF-2 (consistency): after a pass-2 run, every member's final Pe_s must be >=
+    the Pe_s the other members counted for it.  If not, pass 2 is re-run with, per
+    member, min(counted, latest) Pe_s, up to `max_iter` runs; still inconsistent -> a
+    warning and a final check-only run (final column cages as overrides) with the min
+    values, so the status reflects them."""
     for group, idx in sway_groups(specs).items():
         infos = [results[i].get("magnification") for i in idx]
         if any(not m for m in infos):
@@ -710,8 +775,38 @@ def sway_pass2(specs, results, rerun):
                     f"sway group {group}: a member has no final cage; δs computed for each bent "
                     "alone (ΣPu/ΣPe of the group not applied)")
             continue
-        for k, i in enumerate(idx):
-            results[i] = rerun(specs[i], sway_context(group, infos, k))
+        used = [_pe_s(m) for m in infos]
+
+        def run_all(spec_of):
+            ctx = [dict(m, Pe_s=used[k]) for k, m in enumerate(infos)]
+            new = [rerun(spec_of(k, i), sway_context(group, ctx, k)) for k, i in enumerate(idx)]
+            for k, i in enumerate(idx):
+                results[i] = new[k]
+            return [_pe_s(r, used[k]) for k, r in enumerate(new)]
+
+        consistent = False
+        for it in range(max_iter):
+            latest = run_all(lambda k, i: specs[i])
+            low = [k for k in range(len(idx)) if any(
+                latest[k][ax] < used[k][ax] * (1.0 - 1e-9) - 1e-9 for ax in ("2", "3"))]
+            if not low:
+                consistent = True
+                break
+            used = [{ax: min(used[k][ax], latest[k][ax]) for ax in ("2", "3")}
+                    for k in range(len(idx))]
+        if consistent:
+            if it:
+                for i in idx:
+                    results[i]["warnings"].append(
+                        f"sway group {group}: pass 2 repeated {it + 1} times until every member's "
+                        "Pe_s ≥ the value the others counted (ruling MF-2)")
+            continue
+        final_res = [results[i] for i in idx]
+        run_all(lambda k, i: _check_only_spec(specs[i], final_res[k]))
+        for i in idx:
+            results[i]["warnings"].append(
+                f"sway group {group}: Pe_s not consistent after {max_iter} pass-2 runs; final "
+                "check-only run of the column cages with the minimum Pe_s values (ruling MF-2)")
 
 
 # ─── Entry point ────────────────────────────────────────────────────

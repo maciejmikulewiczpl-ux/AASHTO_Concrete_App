@@ -768,6 +768,14 @@ test('magnification rows (ruling M12): per axis table cells and the EI / beta_d 
   const note = CS.magNote(b);
   assert.ok(/βd = 0.250 \(user override\)/.test(note) && /Eq. 5.6.4.3-1/.test(note) && /Sway group G \(2 bents, two-pass\)/.test(note), note);
   assert.deepStrictEqual(CS.magRows({}), []);
+  // minor 6: a neglected axis whose delta would be unstable shows the note, not blank cells
+  b.magnification.axes['2'] = { braced: false, K_braced: 1.0, K_unbraced: 1.0, Pe_b: 1, Pe_s: 1, sPe_s: 1, Cm: 1.0, db: 1.0,
+    ds: null, delta: 1.0, row: 1, case: 'C', Pu: 10, sPu: 10, unstable: false,
+    neglect_note: 'neglected per §5.6.4.3 screen (δ would be unstable)' };
+  const n = CS.magRows(b)[0];
+  assert.deepStrictEqual([n.ds, n.delta], ['n/a', '1.000 (neglected per §5.6.4.3 screen (δ would be unstable))']);
+  // minor 4 documented in the report equations
+  assert.ok(CS.MAG_EQ.some(x => /component maxima/.test(x)));
 });
 
 const di = process.argv.indexOf('--dump');

@@ -412,3 +412,74 @@ def test_unstable_note_and_status_texts():
     assert cs.UNSTABLE_REASON == "magnification unstable (Pu ≥ φK·Pe)"
     assert cs.PHI_K == 0.75
     assert cs._RANK == {"neglect": 0, "magnified": 1, "refined analysis required": 2}
+
+
+# ── review fix round 1 (rulings MF-1, MF-3, MF-4, minor 6) ─────────
+
+def test_EI_cache_keys_on_transverse_bar():
+    """MF-1: Is depends on the ring radius (transverse bar size); the cached EI for a #5
+    hoop must not be reused for a #8 hoop, and the cached path equals the uncached one."""
+    bent = {"slender": {"2": {"braced": False, "lu": 240.0}, "3": {"braced": False, "lu": 240.0},
+                        "beta_d": 0.5}}
+    tf = cs.make_magnifier(bent, {}, {"slenderness_on": True})
+    c5 = _cage(HEAVY)
+    c8 = _cage(dict(HEAVY, trans_bar=8))
+    e5 = tf.props(c5["inputs"])
+    e8 = tf.props(c8["inputs"])
+    assert e5["Is"] == pytest.approx(11378.32143075, rel=1e-6)
+    assert e8["Is"] < e5["Is"] * 0.97 and e8["EI"] < e5["EI"]
+    for c, e in ((c5, e5), (c8, e8)):
+        u = cs.EI_circular(c["inputs"], 0.5)
+        assert (e["Is"], e["EI1"], e["EI2"], e["EI"]) == (u["Is"], u["EI1"], u["EI2"], u["EI"])
+    (t5,) = tf(c5, [_row()])
+    (t8,) = tf(c8, [_row()])
+    assert t8["_EI"] == e8["EI"] and t5["_EI"] == e5["EI"] and t8["_delta2"] > t5["_delta2"]
+    # f'c changes Ec -> a different key too
+    m6 = dict(MEMBER, fc=6.0)
+    c6 = dict(HEAVY, inputs=cl.cage_inputs(cl.base_circ_inputs(m6), HEAVY))
+    assert tf.props(c6["inputs"])["Ec"] > e5["Ec"]
+
+
+def test_beta_d_sums_absolute_resultants():
+    """MF-4: per station the SUM OF ABSOLUTE Dead resultants (sign-independent)."""
+    rows = [_fr(0.0, "Str", -900.0, 1200.0, 900.0), _fr(240.0, "Str", -910.0, 600.0, 450.0),
+            _fr(0.0, "DC", -300.0, 300.0, 0.0, step=""), _fr(240.0, "DC", -310.0, 100.0, 0.0, step=""),
+            _fr(0.0, "DW", -50.0, -100.0, 0.0, step="")]
+    src = {"rows": rows, "frames": ["F1"], "categories": {"DW": "Dead"}}
+    v, txt = cs.beta_d({"slender": {"gamma_p": 1.25}}, src)
+    # |300| + |-100| = 400 (a signed sum would give 200)
+    assert v == pytest.approx(1.25 * 400.0 / 1500.0) and "Σ|M_dead|" in txt
+    # biaxial per case: DC (300, 400) -> 500
+    rows[2] = _fr(0.0, "DC", -300.0, 300.0, 400.0, step="")
+    assert cs.beta_d({"slender": {"gamma_p": 1.0}}, src)[0] == pytest.approx(600.0 / 1500.0)
+
+
+def test_member_mode_sway_sum_pu():
+    """MF-3: a collapsed member-mode row uses SumPu = own Pu + the others' maximum
+    compression over all their cases (MEMBER_KEY), without the fallback warning."""
+    bent = {"slender": {"2": {"braced": False, "lu": 240.0}, "3": {"braced": False, "lu": 240.0},
+                        "beta_d": 0.5}}
+    sway = {"group": "G", "n_members": 3, "Pe_others": {"2": 20000.0, "3": 20000.0},
+            "Pu_others": {("C", "S1"): 1500.0, cs.MEMBER_KEY: 2600.0}}
+    w = []
+    tf = cs.make_magnifier(bent, {}, {"slenderness_on": True}, w, sway=sway)
+    row = {"Pu": -400.0, "Mu": 100.0, "Vu": 1.0, "Tu": 0.0, "_case": "(member)",
+           "_bound": "envelope", "_Pmin": -700.0, "_Pmax": -400.0, "_frame": "F1"}
+    (t,) = tf(_cage(CAGE), [row])
+    assert t["_sPu"] == pytest.approx(3300.0)
+    assert not [x for x in w if "ΣPu" in x]
+
+
+def test_neglected_axis_with_unstable_delta_note():
+    """Minor 6: a neglected axis whose delta_s would be unstable is tagged, delta = 1."""
+    bent = {"slender": {"2": {"braced": False, "K_source": "analysis", "K": 1.0, "lu": 240.0},
+                        "3": {"braced": False, "K_source": "analysis", "K": 1.0, "lu": 240.0},
+                        "beta_d": 0.5}}
+    sway = {"group": "G", "n_members": 2, "Pe_others": {"2": 0.0, "3": 0.0},
+            "Pu_others": {("C", "S1"): 1.0e6}}
+    tf = cs.make_magnifier(bent, {}, {"slenderness_on": True}, sway=sway)
+    (t,) = tf(_cage(CAGE), [_row()])            # K lu / r = 20 < 22 -> neglect
+    assert t["_slender_status"] == cs.ST_NEGLECT and t["_ds2"] is None
+    assert t["_delta2"] == 1.0 and not t["_unstable"] and t["Mu"] == 100.0
+    assert t["_neglect_note"] == t["_neglect_note2"] == cs.NEGLECT_NOTE
+    assert cs.NEGLECT_NOTE == "neglected per §5.6.4.3 screen (δ would be unstable)"

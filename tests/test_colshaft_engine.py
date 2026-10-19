@@ -769,9 +769,10 @@ def test_sway_group_two_pass():
              {"Pe_s": {"2": 300.0, "3": 70.0}, "Pu_cases": [["C", "S", 30.0], ["D", None, 1.0]]}]
     ctx = ee.sway_context("G", infos, 1)
     assert ctx["Pe_others"] == {"2": 400.0, "3": 120.0} and ctx["n_members"] == 3
-    assert ctx["Pu_others"] == {("C", "S"): 40.0, ("D", None): 6.0}
+    assert ctx["Pu_others"] == {("C", "S"): 40.0, ("D", None): 6.0, ("(member)", None): 40.0}
     # case D missing on member 1 -> not in the sums of member 0 (fallback in the magnifier)
-    assert ee.sway_context("G", infos, 0)["Pu_others"] == {("C", "S"): 50.0}
+    assert ee.sway_context("G", infos, 0)["Pu_others"] == {("C", "S"): 50.0,
+                                                           ("(member)", None): 50.0}
     assert ee.sway_groups([{"sway_group": "A"}, {"sway_group": ""}, {"sway_group": "A"},
                            {"sway_group": "B"}]) == {"A": [0, 2]}
 
@@ -1222,3 +1223,93 @@ def test_slender_unbraced_analysis_K_below_one_warns():
            "3": {"braced": False, "K_source": "analysis", "K": 1.2, "lu": None}}
     with pytest.raises(ValueError, match="buckling analysis"):
         ee.run_colshaft(payload([bent1(slender=bad)], settings={"slenderness_on": True}))
+
+
+# ── review fix round 1 (rulings MF-2, MF-3, MF-5) ───────────────────
+
+def _fake_res(pe, final=None):
+    return {"status": "OK", "warnings": [], "final": final or {
+        "col_long": {"bar": 11, "n": 15, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0, "ties": 0}},
+        "magnification": {"Pe_s": {"2": pe, "3": pe}, "Pu_cases": [["C", "S", 100.0]]}}
+
+
+def test_sway_pass2_consistency_member_gets_lighter():
+    """MF-2: member 0 gets lighter in pass 2 (Pe_s 1000 -> 800): pass 2 is repeated with
+    min(counted, latest) so member 1 finally counts 800 for it; then consistent."""
+    specs = [{"name": "A", "sway_group": "G"}, {"name": "B", "sway_group": "G"}]
+    results = [_fake_res(1000.0), _fake_res(1000.0)]
+    calls = []
+
+    def rerun(spec, ctx):
+        calls.append((spec["name"], ctx["Pe_others"]["2"], spec.get("override")))
+        return _fake_res(800.0 if spec["name"] == "A" else 1000.0)
+    ee.sway_pass2(specs, results, rerun)
+    assert [c[:2] for c in calls] == [("A", 1000.0), ("B", 1000.0), ("A", 1000.0), ("B", 800.0)]
+    assert all(c[2] is None for c in calls)
+    assert any("pass 2 repeated 2 times" in w for w in results[0]["warnings"])
+
+
+def test_sway_pass2_inconsistent_after_max_iter_check_only():
+    """MF-2: a member that keeps getting lighter -> warning after 3 runs and a final
+    check-only run (final column cages as overrides) with the minimum Pe_s values."""
+    specs = [{"name": "A", "sway_group": "G"}, {"name": "B", "sway_group": "G"}]
+    results = [_fake_res(1000.0), _fake_res(1000.0)]
+    calls = []
+    pe = {"A": 1000.0}
+
+    def rerun(spec, ctx):
+        calls.append((spec["name"], ctx["Pe_others"]["2"], spec.get("override")))
+        if spec["name"] == "A" and not spec.get("override"):
+            pe["A"] -= 100.0
+        return _fake_res(pe["A"] if spec["name"] == "A" else 1000.0)
+    ee.sway_pass2(specs, results, rerun)
+    assert len(calls) == 2 * ee.SWAY_MAX_ITER + 2
+    last_b = [c for c in calls if c[0] == "B"][-1]
+    assert last_b[1] == pytest.approx(700.0)            # the minimum A value
+    assert calls[-2][2]["col_long"] == {"bar": 11, "n": 15, "bundle": 1}
+    assert calls[-2][2]["col_trans"] == {"bar": 5, "s": 6.0, "ties": 0}
+    assert any("not consistent after 3 pass-2 runs" in w for w in results[1]["warnings"])
+
+
+def test_sway_context_member_mode_key():
+    """MF-3: collapsed member rows -> the others' maximum compression over all cases."""
+    infos = [{"Pe_s": {"2": 1.0, "3": 1.0}, "Pu_cases": [["C", "S", 10.0], ["D", None, 50.0]]},
+             {"Pe_s": {"2": 1.0, "3": 1.0}, "Pu_cases": [["C", "S", 20.0], ["E", "x", 70.0]]},
+             {"Pe_s": {"2": 1.0, "3": 1.0}, "Pu_cases": [["C", "S", 30.0]]}]
+    import colshaft_slender as csl
+    assert ee.sway_context("G", infos, 0)["Pu_others"][csl.MEMBER_KEY] == pytest.approx(100.0)
+    assert ee.sway_context("G", infos, 2)["Pu_others"][csl.MEMBER_KEY] == pytest.approx(120.0)
+
+
+def test_magnified_only_ng_helper():
+    row_ok = {"ok": True}
+    mag_bad = {"ok": False, "_delta2": 1.3, "_delta3": 1.0}
+    plain_bad = {"ok": False, "_delta2": 1.0, "_delta3": 1.0}
+    col_ng = {"group": "Column LRFD", "ok": False}
+    seis_ng = {"group": "Seismic", "ok": False}
+    assert ee.magnified_only_ng([row_ok, mag_bad], [col_ng], [])
+    assert ee.magnified_only_ng([{"ok": False, "_unstable": True}], [col_ng], [])
+    assert not ee.magnified_only_ng([plain_bad], [col_ng], [])
+    assert not ee.magnified_only_ng([mag_bad], [col_ng, seis_ng], [])
+    assert not ee.magnified_only_ng([row_ok], [], [])
+    assert ee.magnified_only_ng([mag_bad], [col_ng], [ee.WALK_NOSOL + " passes both ..."])
+    assert not ee.magnified_only_ng([mag_bad], [col_ng], ["Column LRFD longitudinal: ..."])
+
+
+def test_redesign_with_final_lu():
+    """MF-5: bent 2 (soil basis) designs with lu = H (Df unknown up front); at the final
+    lu = H + Df the magnified rows fail (previously NO SOLUTION from the transverse walk).
+    The column is redesigned once with the final lu: heavier steel, no NO SOLUTION."""
+    sl = {"2": {"braced": False, "K": 2.2, "lu": None}, "3": {"braced": False, "K": 2.2, "lu": None}}
+    r = ee.run_colshaft(payload([bent2(slender=sl)], settings={"slenderness_on": True}))
+    strict_json(r)
+    b = r["bents"][0]
+    assert b["redesigned_final_lu"] is True
+    assert b["no_solution"] == [] and b["status"] != "NO SOLUTION"
+    assert b["final"]["col_long"]["Ast"] > run("2b")["bents"][1]["final"]["col_long"]["Ast"]
+    assert b["warnings"][0].startswith("slenderness: column redesigned once with the final ℓu")
+    assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
+    # an override is never redesigned
+    ov = {"col_long": {"bar": 11, "n": 15, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    r2 = ee.run_colshaft(payload([bent2(slender=sl, override=ov)], settings={"slenderness_on": True}))
+    assert "redesigned_final_lu" not in r2["bents"][0]

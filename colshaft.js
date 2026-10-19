@@ -873,9 +873,11 @@
       var pes = isNum(a.Pe_s) ? fmt(a.Pe_s, 0) + (isNum(a.sPe_s) && Math.abs(a.sPe_s - a.Pe_s) > 1e-6 ? ' (Σ ' + fmt(a.sPe_s, 0) + ')' : '') : '—';
       return { axis: ax, K_braced: fmtD(a.K_braced, 2), K_unbraced: a.braced ? 'braced' : fmtD(a.K_unbraced, 2),
         EI: isNum(m.EI) ? m.EI.toExponential(3) : '—', Pe_b: fmtD(a.Pe_b, 0), Pe_s: a.braced ? '—' : pes,
-        Cm: fmtD(a.Cm, 3), db: a.unstable && !isNum(a.db) ? 'unstable' : fmtD(a.db, 3),
-        ds: a.unstable && !isNum(a.ds) ? 'unstable' : fmtD(a.ds, 3),
-        delta: a.unstable && !isNum(a.delta) ? UNSTABLE_REASON : fmtD(a.delta, 3),
+        Cm: fmtD(a.Cm, 3),
+        db: !isNum(a.db) ? (a.unstable ? 'unstable' : a.neglect_note ? 'n/a' : '—') : fmtD(a.db, 3),
+        ds: !isNum(a.ds) ? (a.unstable ? 'unstable' : a.neglect_note ? 'n/a' : '—') : fmtD(a.ds, 3),
+        delta: a.unstable && !isNum(a.delta) ? UNSTABLE_REASON :
+          (a.neglect_note && (!isNum(a.db) || !isNum(a.ds)) ? fmtD(a.delta, 3) + ' (' + a.neglect_note + ')' : fmtD(a.delta, 3)),
         row: a.row ? String(a.row) + (a.case ? ' (' + a.case + ')' : '') : '—',
         Pu: isNum(a.Pu) ? fmt(a.Pu, 0) + (isNum(a.sPu) && Math.abs(a.sPu - a.Pu) > 1e-6 ? ' (Σ ' + fmt(a.sPu, 0) + ')' : '') : '—' };
     });
@@ -952,7 +954,8 @@
     'δs = 1 / (1 − ΣPu/(φK·ΣPe,s))   (Eq. 4.5.3.2.2b-4; Pe,s with the unbraced K; δs = 1.0 on a braced axis)',
     'Pe = π²·EI / (K·ℓu)²   (Eq. 4.5.3.2.2b-5), EI = max(Eq. 5.6.4.3-1, 5.6.4.3-2), φK = 0.75',
     'Cm = 0.6 + 0.4·(M1b/M2b)   (Eq. 4.5.3.2.2b-6, braced axes only; Cm = 1.0 otherwise, incl. δb of an unbraced axis)',
-    'Mc = max(δb, δs)·M2 per axis (conservative bound of Eq. 4.5.3.2.2b-1: the CSiBridge rows do not separate M2b from M2s); Mu = √(Mc2² + Mc3²)'
+    'Mc = max(δb, δs)·M2 per axis (conservative bound of Eq. 4.5.3.2.2b-1: the CSiBridge rows do not separate M2b from M2s); Mu = √(Mc2² + Mc3²)',
+    'Envelope and member-mode rows: |M2| and |M3| are the component maxima over the envelope (not necessarily concurrent), magnified separately and combined by √ (conservative)'
   ];
   var MAG_REF = 'AASHTO LRFD 10th Art. 4.5.3.2.2b and §5.6.4.3 (user-supplied text, 2026-10-19)';
   function lrfdRowsTable(checkRows) {
@@ -1359,7 +1362,7 @@
         ]);
       }).join('') + grid([
         field('&beta;d (blank = auto)', inp(P + 'slender.beta_d', 'num', w)),
-        field('&gamma;p (load factor applied to Dead-case moments for &beta;d; blank = 1.25)', inp(P + 'slender.gamma_p', 'num', w)),
+        field('&gamma;p (load factor applied to Dead-case moments for &beta;d; blank = 1.25; use the largest permanent-load factor in your Strength combinations, e.g. 1.5 for DW)', inp(P + 'slender.gamma_p', 'num', w)),
         field('Sway group (blank = this bent alone)', inp(P + 'sway_group', 'str', w))
       ]) + '</div>';
     return h;

@@ -305,10 +305,12 @@ def beta_d(bent: dict, rows_by_case: dict, warnings: list = None):
     """(beta_d, source text) for a bent (ruling M7).
 
     `bent.slender.beta_d` (>= 0) wins.  Else min(1, gamma_p * max|M_dead| / max|Mu|):
-    M_dead = the resultant of the Dead-category moments at each column station,
-    summed over the Dead cases (DC + DW act together; a single case is just its
-    rows), Mu = the Strength demand-row resultants of the column frames, gamma_p =
-    `bent.slender.gamma_p` (default 1.25).  No Dead rows -> 1.0 with NO_DEAD_WARNING."""
+    M_dead at a column station = the SUM OF THE ABSOLUTE resultant moments of the
+    Dead-category cases there (ruling MF-4: a true upper bound regardless of sign;
+    per case the resultant of the per-component |max|), max over the stations;
+    Mu = the Strength demand-row resultants of the column frames; gamma_p =
+    `bent.slender.gamma_p` (default 1.25; use the largest permanent-load factor of the
+    Strength combinations, e.g. 1.5 for DW).  No Dead rows -> 1.0 with NO_DEAD_WARNING."""
     sl = bent.get("slender") or {}
     bd = sl.get("beta_d")
     if not _empty(bd):
@@ -328,24 +330,21 @@ def beta_d(bent: dict, rows_by_case: dict, warnings: list = None):
         if warnings is not None:
             warnings.append(NO_DEAD_WARNING)
         return 1.0, "no Dead rows: 1.0 (conservative upper value)"
-    per_case = {}          # (frame, station, case) -> [M2, M3], signed max-|.| component
+    per_case = {}          # (frame, station, case) -> [|M2|, |M3|] maxima
     for r in dead:
         k = (r.frame, round(r.station_in, 6), r.case)
         cur = per_case.setdefault(k, [0.0, 0.0])
-        for i, m in enumerate((r.M2, r.M3)):
-            if abs(m) > abs(cur[i]):
-                cur[i] = m
+        cur[0] = max(cur[0], abs(r.M2))
+        cur[1] = max(cur[1], abs(r.M3))
     at = {}
     for (f, st, _), (m2, m3) in per_case.items():
-        s = at.setdefault((f, st), [0.0, 0.0])
-        s[0] += m2
-        s[1] += m3
-    Md = max(math.hypot(*v) for v in at.values())
+        at[(f, st)] = at.get((f, st), 0.0) + math.hypot(m2, m3)
+    Md = max(at.values())
     Ms = max((d["Mu"] for d in cd.demand_rows(rows, list(fs), cats, "Strength")), default=0.0)
     if Ms <= 0:
         return 1.0, "no Strength moment: 1.0 (conservative upper value)"
     v = min(1.0, gp * Md / Ms)
-    return v, (f"γp·max|M_dead| / max|Mu| = {gp:g} × {Md / 12.0:.1f} / {Ms / 12.0:.1f} kip-ft"
+    return v, (f"γp·max Σ|M_dead| / max|Mu| = {gp:g} × {Md / 12.0:.1f} / {Ms / 12.0:.1f} kip-ft"
                + (" (capped at 1.0)" if gp * Md / Ms > 1.0 else ""))
 
 
@@ -372,6 +371,11 @@ def _comp(row):
 
 def _sway_key(row):
     return (row.get("_case"), None if row.get("_bound") == "envelope" else row.get("_step"))
+
+
+MEMBER_CASE = "(member)"          # colshaft_demands.collapse_member rows
+MEMBER_KEY = (MEMBER_CASE, None)
+NEGLECT_NOTE = "neglected per §5.6.4.3 screen (δ would be unstable)"
 
 
 def pu_by_case(rows) -> dict:
@@ -423,7 +427,9 @@ def make_magnifier(bent: dict, rows_by_case: dict, settings: dict, warnings: lis
         return cache[key] or {"2": 1.0, "3": 1.0}
 
     def props(raw):
-        k = (raw.get("circ_bar1"), raw.get("circ_n1"), raw.get("circ_bundle1"), raw.get("D"))
+        # ruling MF-1: Is depends on the ring radius (cover, transverse bar size, ring 2)
+        # and EI on Ec / Es -> key on every raw input
+        k = tuple(sorted((key, repr(v)) for key, v in raw.items()))
         if k not in ei_cache:
             e = EI_circular(raw, bd)
             e["Pe_b"] = {ax: euler_Pe(e["EI"], a["Kb"], a["lu"]) for ax, a in axes.items()}
@@ -436,6 +442,8 @@ def make_magnifier(bent: dict, rows_by_case: dict, settings: dict, warnings: lis
         if not sway:
             return P
         key = _sway_key(row)
+        if row.get("_case") == MEMBER_CASE:          # ruling MF-3 (collapsed member rows)
+            key = MEMBER_KEY
         others = (sway.get("Pu_others") or {}).get(key)
         if others is None:
             n = int(sway.get("n_members") or 1)
@@ -481,6 +489,9 @@ def make_magnifier(bent: dict, rows_by_case: dict, settings: dict, warnings: lis
                           "_sPe_s" + ax: sPe, "_db" + ax: db, "_ds" + ax: ds})
                 if st == ST_NEGLECT:
                     dl[ax] = 1.0
+                    if P > 0 and (db is None or ds is None):
+                        t["_neglect_note" + ax] = NEGLECT_NOTE
+                        t["_neglect_note"] = NEGLECT_NOTE
                 elif db is None or ds is None:
                     unstable = True
                     dl[ax] = None
