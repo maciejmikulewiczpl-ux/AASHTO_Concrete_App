@@ -74,6 +74,7 @@ Ported verbatim from `Seismic Column` @ 9265d67 into `seismic_port/provisions.py
 | E9 | VERIFY | Maximum axial load (SDC ρdl ≤ 0.15; SGS Pu ≤ 0.2·f'c·Ag). Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.3 (ρdl = Pdl/f'c·Ag ≤ 0.15)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.7.2 (Pu ≤ 0.2·f'c·Ag)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
 | E10 | VERIFY | Longitudinal steel limits, confined concrete / M-φ, plastic hinge, ductility, P-Δ, min strength. Upstream refs — SDC 2.1: "Caltrans SDC 2.1 §5.3.9 (0.01 ≤ ρl ≤ 0.04); Caltrans SDC 2.1 §3.3.6 (concrete) / §5.3.5; Mander et al. (1988); Caltrans SDC 2.1 §5.3.6.2 (moment-curvature); Caltrans SDC 2.1 §5.3.4 (equivalent plastic-hinge length); Caltrans SDC 2.1 §4.4.1 (μd ≤ 5, single-column bent); Caltrans SDC 2.1 §4.4.4 (P-Δ: Pdl·Δr ≤ 0.25·Mp); Caltrans SDC 2.1 §4.4 (minimum lateral strength)"; AASHTO SGS: "AASHTO SGS 3rd Ed. §8.8.1 (0.01 ≤ ρl ≤ 0.04); AASHTO SGS 3rd Ed. §8.4.4; Mander et al. (1988); AASHTO SGS 3rd Ed. §8.4 / §4.11.5 (moment-curvature); AASHTO SGS 3rd Ed. §4.11.6 (analytical plastic-hinge length); AASHTO SGS 3rd Ed. §4.9 (μD limits); AASHTO SGS 3rd Ed. §4.11.5 (P-Δ: Pdl·Δr ≤ 0.25·Mp); AASHTO SGS 3rd Ed. §8.7.1 (minimum lateral strength)". source: Seismic Column/AASHTO Seismic 3rd Edn.pdf (Caltrans SDC 2.1 for the SDC_2_0 set). |
 | E11 | VERIFY | p-y soil springs and pile solver (`seismic_port/soil.py`, `pile_solver.py`, ported 2026-10-18). Upstream refs (literature, not code provisions): "Matlock (1970) soft clay — cyclic"; "API / O'Neill–Murchison sand — cyclic (A = 0.9)"; "Welch & Reese stiff clay (no free water) — static envelope"; Reese, Cox & Koop (1974) sand p_u; Davisson & Robinson (1965). Soil-stiffness bounds (2.0, 0.5) on p are upstream's default. Fixed-fixed head: V = 2·Mo/H with M_head = **+Mo** (upstream caller convention; its solve_lateral docstring says −Mp, which puts 3·Mo at the interface). Validated: Hetényi long-beam closed form (< 1 %). source: seismic_column/soil.py, pile_solver.py, sdc_capacity.py @ 9265d67. |
+| E12 | DECIDE | Column-on-shaft LRFD transverse search (`colshaft_lrfd.design_transverse`, port of `optimizeShearCirc`): pass = shearStatus ∈ {OK, NR} and Tr ≥ \|Tu\| where torsion is considered. The longitudinal-steel check for V+T (engine `long_ok_2`, §5.7.3.5 / Eq. 5.7.3.6.3-1) is **not** part of the pass; failing rows are listed in `TransResult.long_vt_ng_rows` and the note. Make it drive the longitudinal search? (Random 500-row test: 6 rows NG with the ρ-min cage.) Added 2026-10-18. |
 | **S6** | BLOCKED | AASHTO LRFD Art. 4.5.3.2.2b (δb, δs, Cm, Pe, φK) and §5.6.4.3 EI equations not in repo — moment magnification not coded until the user supplies them. |
 
 ---
@@ -82,7 +83,7 @@ Ported verbatim from `Seismic Column` @ 9265d67 into `seismic_port/provisions.py
 
 | Need | Closes |
 |---|---|
-| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, H1, H3 |
+| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, H1, H3, E12 |
 
 Not implemented (optional): the C5.7.2.8-1 alternative for circular members (d<sub>v</sub> = M<sub>n</sub>/(A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub>) with M<sub>n</sub> ignoring axial load and half-section steel); the engine uses the permitted 0.9d<sub>e</sub> alternative.
 
