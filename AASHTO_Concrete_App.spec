@@ -31,6 +31,7 @@ hiddenimports += _h
 # --- Application source files ---
 datas += [
     ('index.html',           '.'),
+    ('colshaft.js',          '.'),
     ('api.py',               '.'),
     ('calc_engine.py',       '.'),
     ('pt_engine.py',         '.'),
@@ -45,6 +46,19 @@ hiddenimports += [
     'clr',
     'webview.platforms.winforms',
 ]
+
+# --- Column on Shaft modules (imported lazily/indirectly) ---
+hiddenimports += [
+    'circ_engine',
+    'csi_import',
+    'colshaft_demands',
+    'colshaft_lrfd',
+    'colshaft_slender',
+    'colshaft_seismic',
+    'colshaft_shaft',
+    'colshaft_engine',
+]
+hiddenimports += collect_submodules('seismic_port')
 
 a = Analysis(
     ['app.py'],

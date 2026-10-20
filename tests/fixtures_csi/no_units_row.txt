@@ -1,0 +1,5 @@
+TABLE:  Element Forces - Frames
+Frame	Station	OutputCase	P	V2	V3	T	M2	M3
+7	0	DL	-100	1	2	3	4	5
+
+7	10	DL	-90	1	2	3	4	5

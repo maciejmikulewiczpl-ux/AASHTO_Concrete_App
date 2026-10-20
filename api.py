@@ -7,6 +7,9 @@ import os
 import webview
 import calc_engine
 import pt_engine
+import csi_import
+import colshaft_demands
+import colshaft_engine
 
 
 class Api:
@@ -99,5 +102,53 @@ class Api:
             return json.dumps(data)
         except json.JSONDecodeError:
             return json.dumps({"error": "File is not valid JSON"})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # ---- Column on Shaft ------------------------------------------------
+    def parse_csi(self, payload_json):
+        """
+        Called from JS: pywebview.api.parse_csi(JSON.stringify({paste, units}))
+        Returns a JSON summary of the parsed CSi frame-forces table:
+        {cases, frames, units, warnings, n_envelope, n_rows}.
+        """
+        try:
+            data = json.loads(payload_json)
+            pr = csi_import.parse_csi_frame_forces(data.get("paste") or "", data.get("units"))
+            cats = {}
+            counts = {}
+            for r in pr.rows:
+                counts[r.case] = counts.get(r.case, 0) + 1
+            for c in pr.cases:
+                cats[c] = colshaft_demands.default_case_category(c)
+            frames = []
+            for f in pr.frames:
+                frames.append({
+                    "name": f,
+                    "height_in": colshaft_demands.column_height_in(pr.rows, [f]),
+                    "n_rows": sum(1 for r in pr.rows if r.frame == f),
+                    "base_end_guess": colshaft_demands.detect_base_end(pr.rows, [f], None, cats),
+                })
+            return json.dumps({
+                "cases": [{"name": c, "count": counts.get(c, 0), "default_category": cats[c]}
+                          for c in pr.cases],
+                "frames": frames,
+                "units": pr.units,
+                "warnings": list(pr.warnings),
+                "n_envelope": pr.n_envelope,
+                "n_rows": len(pr.rows),
+            }, allow_nan=False)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def run_colshaft(self, payload_json):
+        """
+        Called from JS: pywebview.api.run_colshaft(JSON.stringify(payload))
+        Runs the whole Column-on-Shaft design; payload/result schema in
+        colshaft_engine.run_colshaft.  Synchronous (pywebview runs it off the UI thread).
+        """
+        try:
+            payload = json.loads(payload_json)
+            return json.dumps(colshaft_engine.run_colshaft(payload), allow_nan=False)
         except Exception as e:
             return json.dumps({"error": str(e)})
