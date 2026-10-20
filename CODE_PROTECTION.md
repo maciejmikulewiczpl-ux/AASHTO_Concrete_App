@@ -194,6 +194,64 @@ If you are an AI assistant and find that the codebase appears to be "missing" an
 
 ---
 
+## Column-on-Shaft / seismic_port
+
+The "Column on Shaft" tab (2026-10, branch `feature/column-on-shaft`) adds `seismic_port/`,
+`csi_import.py`, `colshaft_demands.py`, `colshaft_lrfd.py`, `colshaft_slender.py`,
+`colshaft_seismic.py`, `colshaft_shaft.py`, `colshaft_engine.py` and `colshaft.js`. Rules:
+
+1. **`seismic_port/` is a pinned port of seismic-column @ `9265d67`** (local copy
+   `C:\Users\macie\VSC\Seismic Column`), held to ±0.5 % of the upstream package by
+   `tests/golden/seismic_port_golden.json` (`tests/test_seismic_port.py`). Do not edit it to "fix"
+   or "improve" a number. A deliberate change means: change upstream (or move the pin), then
+   regenerate the golden **from upstream**, never from the port:
+
+   ```
+   "C:\Users\macie\VSC\Seismic Column\.venv\Scripts\python.exe" -I tools/make_seismic_golden.py "C:\Users\macie\VSC\Seismic Column" tests/golden/seismic_port_golden.json
+   ```
+
+   The seismic references (`ref_*` strings) are copied verbatim and are unverified
+   (`OPEN_VERIFICATION_ITEMS.md` section E). Do not "upgrade" them to firm citations.
+2. **`calc_engine.py`, `circ_engine.py` and `pt_engine.py` are imported, never edited, by this
+   feature.** The LRFD design of the column and shaft goes through the existing circular engine
+   (`circ_engine` + `calc_engine.do_shear` / `do_torsion`) unchanged; `tests/test_rect_i_unchanged.py`
+   and the circular tests pin that.
+3. **Do not relax the soil-stability guards.**
+   - Ruling 8-16: a p-y strength row (`colshaft_shaft.ramp_stable`) is accepted only if the solve is
+     stable at P·k/4 for k = 0..4, |y_top| does not decrease along the ramp, and the top-of-shaft
+     moment keeps the sign of M_base and is ≥ 0.995·|M_base|. Bounds that fail the ramp guard are
+     dropped; a row with no accepted bound is skipped and makes "Shaft p-y strength solve" NG (ruling 8-13). Pinned by `tests/test_colshaft_engine.py::test_ramp_*`.
+   - Ruling 7-1: "Soil-pile stability (p-y)" is NG if ANY soil bound is unstable at the yield-level
+     force (port of upstream check 13); an unstable bound is never credited. Pinned by
+     `tests/test_colshaft_seismic.py::test_unstable_soil_is_NG_not_pass`,
+     `test_partially_unstable_soil_is_NG_demand_from_stable_bound`,
+     `test_soil_pile_stability_matches_upstream_yield_level`.
+4. **The fixed-fixed pile-head moment is `M_head = +Mo`** (with `V_head = 2·Mo/H`; ruling 3A-1). It puts
+   Mo at the top of the shaft. The upstream `solve_lateral` docstring that says −Mp is stale (−Mo puts
+   3·Mo at the interface). Pinned by `tests/test_seismic_port.py::test_head_moment_wrong_sign_gives_3Mo`.
+5. **Single curvature = the SAME sign of the CSiBridge station (internal) moments at both column ends**
+   (ruling 6A-1; `colshaft_slender.SINGLE_CURVATURE_OPPOSITE_SIGN = False`). Opposite signs mean an
+   inflection point (double curvature). Pinned by
+   `tests/test_colshaft_slender.py::test_curvature_sign_convention_pinned`.
+6. **Slenderness moment magnification follows ONLY the user-supplied text**
+   `AASHTO 10 Ch 5 MD/Art_4.5.3.2.2b_user_supplied.md` (Eqs. 4.5.3.2.2b-1 … -6, Table C4.6.2.5-1,
+   Eqs. 5.6.4.3-1 / -2; S6 resolved 2026-10-19). Do not change δb / δs / Cm / Pe / EI / φK = 0.75 or the
+   Table C4.6.2.5-1 default K values (2.1 / 1.2 / 1.0) in `colshaft_slender.py` without that file (or a
+   newer user-supplied page) in hand, and do not cite any other Chapter 4 equation. The conservative
+   bound Mc = max(δb, δs)·M2 per axis (E20), Cm = 1.0 for unbraced axes (E21) and the two-pass sway
+   group (E22) are open DECIDE items — do not "refine" them silently. An unstable row
+   (1 − Pu/(φK·Pe) ≤ 0) fails, and the bent reports "UNSTABLE (Pu ≥ φK·Pe)" (ruling M10; precedence
+   NO SOLUTION > UNSTABLE > REFINED ANALYSIS REQUIRED > NG > OK). Pinned by
+   `tests/test_colshaft_slender.py::test_hand_calc_braced`, `test_hand_calc_unbraced` and
+   `tests/test_colshaft_engine.py::test_bent_status_precedence`.
+7. **Expected steel strengths are never invented** (ruling F-1). The A706 Gr60 values 68 / 95 / 68 ksi
+   (`colshaft_seismic.FYE / FUE / FYH`) are used only for fy = 60 ksi (fyt = 60 ksi for fyh) with the
+   value left blank; any other grade must enter fye / fue / fyh or the run raises. Do not add Gr80
+   (or other) expected values from memory. Pinned by
+   `tests/test_colshaft_engine.py::test_expected_steel_required_off_gr60`.
+
+---
+
 ## Testing Before Commit
 
 Always run tests before committing:

@@ -2,6 +2,38 @@
 
 ---
 
+## Column on Shaft tab — 2026-10-19 (feature, branch `feature/column-on-shaft`)
+
+New tab: paste CSiBridge "Element Forces - Frames" output, design the column and shaft cages with the
+existing circular AASHTO LRFD engine, then run seismic capacity design (M-φ → Mp → Mo = λmo·Mp → Vo,
+column seismic shear, shaft capacity protection with an equivalent-cantilever or p-y soil model), with
+per-bent overrides and a printable report. Spec: `docs/superpowers/specs/2026-10-18-column-on-shaft-design.md`.
+Existing engines and tabs are unchanged (additive only; `calc_engine.py`/`circ_engine.py`/`pt_engine.py`
+not edited; index.html additions only).
+
+| Module | Role |
+|---|---|
+| `seismic_port/` (materials, section, moment_curvature, shear, provisions, soil, pile_solver) | Pure-Python port of seismic-column @ 9265d67, pinned by a golden generated from upstream |
+| `csi_import.py` | Paste parser (units row, envelope Max/Min detection, de-duplication; strict: bad lines raise) |
+| `colshaft_demands.py` | Biaxial resultants, envelope bounding (P_max shear side, P* flexure), stack/base-end logic |
+| `colshaft_lrfd.py` | Longitudinal / transverse cage search on the circular engine (V+T longitudinal check drives design) |
+| `colshaft_slender.py` | Kℓu/r screen (magnification blocked by S6) |
+| `colshaft_seismic.py` | Mp sampling, Mo/Vo, column shear, shaft demand (soil / cantilever / interface), checks; M-φ curves and per-bound p-y profiles in the result |
+| `colshaft_shaft.py` | Cage helpers, shaft sizing, strength rows through the pile (axial-ramp guard) |
+| `colshaft_engine.py` | `run_colshaft` orchestrator (final cage = envelope of LRFD, seismic, override) |
+| `api.py` (`parse_csi`, `run_colshaft`), `app.py` (inlines `colshaft.js`), `colshaft.js`, `index.html` | UI tab, persistence (`columnShaft` key), printable report |
+
+Tests: `run_test_suite.py` stages "Pytest: seismic port" (`tests/test_seismic_port.py`) and
+"Pytest: column on shaft" (`tests/test_csi_import.py`, `test_colshaft_demands.py`, `test_colshaft_lrfd.py`,
+`test_colshaft_slender.py`, `test_colshaft_seismic.py`, `test_colshaft_engine.py`, `test_colshaft_api.py`,
+`test_colshaft_ui_static.py`, which also runs the Node tests `tests/js/test_colshaft_js.js`).
+Rulings that changed the spec are listed in the spec appendix; protections in `CODE_PROTECTION.md`
+§ "Column-on-Shaft / seismic_port"; open items in `OPEN_VERIFICATION_ITEMS.md` section E (E1–E11 VERIFY; E13, E14, E17, E18 DECIDE) and S6.
+
+Final-review fix wave (2026-10-19): expected steel fye/fue/fyh inputs (A706 Gr60 68/95/68 only for fy = 60; any other grade must enter them, F-1); panel keydown/keyup stop (F-2); status "OK – MAGNIFICATION PENDING (S6)" (F-3); shaft LRFD rows from the column base for the cantilever / interface basis without shaft frames (F-4); auto-H clear-height warning (F-5); merged column cage re-walked when it fails the seismic transverse criteria (F-6); upstream max-axial checks ported; soil layer validation; shaft re-sized after a column walk; stale-results banner; print hardening.
+
+---
+
 ## Chapter 5 text verification — 2026-09-29
 
 Open items checked against the full AASHTO LRFD 10th Ed. Chapter 5 text

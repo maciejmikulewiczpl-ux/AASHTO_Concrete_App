@@ -1,0 +1,1438 @@
+"""Column-on-Shaft orchestrator (Task 8, colshaft_engine.run_colshaft).
+
+Fixtures: tests/fixtures_csi/frame1227_strI1.txt (user sample, Strength envelope
+only) and tests/fixtures_csi/colshaft_2bent.txt (synthetic, kip/ft/kip-ft):
+  bent 1 = column frame 101 (D 60 in, H 20 ft) + shaft frame 102 (Ds 84 in);
+  bent 2 = column frame 201 (D 54 in, H 25 ft), no shaft frames (soil basis).
+Cases DEAD (Dead), Str-I / Str-II / Str-III (Strength envelopes), EQ-X (Extreme).
+
+Runs are expensive (seconds), so each distinct payload runs once per session
+(RUNS) and several tests share it.
+"""
+import copy
+import json
+import math
+import os
+import time
+from dataclasses import replace
+
+import pytest
+
+import colshaft_engine as ee
+import colshaft_lrfd as cl
+import colshaft_seismic as cs
+import colshaft_shaft as csh
+import csi_import as ci
+from seismic_port.pile_solver import solve_lateral
+from seismic_port.provisions import get_provisions
+
+HERE = os.path.dirname(__file__)
+
+
+def _read(name):
+    with open(os.path.join(HERE, "fixtures_csi", name), encoding="utf-8") as f:
+        return f.read()
+
+
+PASTE_1227 = _read("frame1227_strI1.txt")
+PASTE_2B = _read("colshaft_2bent.txt")
+
+SOIL = {"layers": [
+    {"thickness_ft": 20.0, "py_model": "welch_stiff_clay", "gamma_pcf": 125.0,
+     "su_top_ksf": 2.5, "su_bot_ksf": 3.0, "eps50": 0.005},
+    {"thickness_ft": 60.0, "py_model": "api_sand", "gamma_pcf": 125.0,
+     "phi_deg": 36.0, "k_pci": 90.0, "submerged": True}], "J": 0.5, "cyclic": True}
+SOFT = {"layers": [{"thickness_ft": 80.0, "py_model": "matlock_soft_clay", "gamma_pcf": 110.0,
+                    "su_top_ksf": 0.1, "su_bot_ksf": 0.15, "eps50": 0.02, "submerged": True}],
+        "J": 0.5, "cyclic": True}
+COL1 = dict(D=60.0, fc=4.0, fy=60.0, cover=2.0, trans_type="hoop")
+SHAFT1 = dict(D=84.0, fc=4.0, fy=60.0, cover=3.0, trans_type="hoop")
+COL2 = dict(D=54.0, fc=4.0, fy=60.0, cover=2.0, trans_type="hoop")
+SHAFT2 = dict(D=78.0, fc=4.0, fy=60.0, cover=3.0, trans_type="hoop")
+SLENDER = {"2": {"braced": False, "K": 2.1, "lu": None},
+           "3": {"braced": False, "K": 2.1, "lu": None}, "beta_d": None, "gamma_p": 1.25}
+
+
+def bent1(**kw):
+    b = {"name": "B1", "col_frames": ["101"], "shaft_frames": ["102"], "column": dict(COL1),
+         "shaft": dict(SHAFT1), "end_condition_long": "fixed-free",
+         "end_condition_trans": "fixed-free", "shaft_basis": "cantilever", "L_eq_in": 120.0,
+         "slender": copy.deepcopy(SLENDER)}
+    b.update(kw)
+    return b
+
+
+def bent2(**kw):
+    b = {"name": "B2", "col_frames": ["201"], "column": dict(COL2), "shaft": dict(SHAFT2),
+         "soil": copy.deepcopy(SOIL), "L_embed_in": 720.0, "slender": copy.deepcopy(SLENDER)}
+    b.update(kw)
+    return b
+
+
+def payload(bents, code="SDC 2.1", paste=PASTE_2B, **kw):
+    p = {"paste": paste, "code": code, "bents": bents}
+    p.update(kw)
+    return p
+
+
+def strict_json(r):
+    s = json.dumps(r, allow_nan=False)
+    assert json.loads(s) == r
+    return s
+
+
+BIG = dict(SLENDER, **{"2": {"braced": False, "K": 2.1, "lu": 800.0}})
+PAYLOADS = {
+    # base run (slender key present, slenderness off by default)
+    "2b": lambda: payload([bent1(), bent2()]),
+    # 6-#5 column override + #4 @ 6 shaft transverse override + a missing frame
+    "ov": lambda: payload([bent1(col_frames=["101", "999"], override={
+        "col_long": {"bar": 5, "n": 6, "bundle": 1}, "col_trans": {"bar": 4, "s": 6.0},
+        "shaft_trans": {"bar": 4, "s": 6.0}})]),
+    "mo_hi": lambda: payload([bent1(override={"col_long": {"bar": 10, "n": 22, "bundle": 1}})]),
+    # SGS + heavy column transverse override: drives shaft long + trans sizing
+    "sgs": lambda: payload([bent1(override={"col_trans": {"bar": 8, "s": 3.0}})],
+                           code="AASHTO_SGS"),
+    # no shaft frames, very long cantilever: shaft flexure cannot be met
+    "nosol": lambda: payload([bent1(shaft_frames=[], L_eq_in=2400.0)]),
+    # no shaft frames, interface basis (ruling F-4)
+    "iface": lambda: payload([bent1(shaft_frames=[], shaft_basis="interface")]),
+    "slender": lambda: payload([bent1(), bent1(name="B1R", slender=BIG)],
+                               settings={"slenderness_on": True}),
+    "member": lambda: payload([bent1(), bent2()], settings={"envelope_mode": "member"}),
+}
+RUNS = {}
+
+
+def run(key):
+    if key not in RUNS:
+        t = time.time()
+        RUNS[key] = ee.run_colshaft(PAYLOADS[key]())
+        RUNS[key + ":t"] = time.time() - t
+    return RUNS[key]
+
+
+def chk(b, name):
+    m = [c for c in b["final_checks"] if c["name"] == name]
+    assert len(m) == 1, (name, [c["name"] for c in b["final_checks"]])
+    return m[0]
+
+
+# ── end to end ──────────────────────────────────────────────────────
+
+def test_end_to_end_fixture():
+    """The user's kip-ft sample, two bents on frame 1227 (no Dead rows -> P_dead given)."""
+    col = dict(D=84.0, fc=5.0, fy=60.0, cover=2.0, trans_type="hoop", hoop_closure="weld")
+    shaft = dict(D=108.0, fc=5.0, fy=60.0, cover=3.0, trans_type="hoop")
+    pl = payload([
+        {"name": "A", "col_frames": ["1227"], "column": col, "shaft": shaft, "P_dead": -2500.0,
+         "shaft_basis": "cantilever", "L_eq_in": 120.0, "H_in": 480.0},
+        {"name": "B", "col_frames": ["1227"], "column": col, "shaft": shaft, "P_dead": -2500.0,
+         "shaft_basis": "interface"}], paste=PASTE_1227)
+    t = time.time()
+    r = ee.run_colshaft(pl)
+    dt = time.time() - t
+    assert dt < 30.0, dt
+    strict_json(r)
+    assert r["parse"]["n_rows"] == 6 and r["parse"]["cases"] == ["Str-I1"]
+    assert r["parse"]["categories"] == {"Str-I1": "Strength"}
+    assert r["code"] == "SDC 2.1"
+    a, b = r["bents"]
+    assert (a["name"], b["name"]) == ("A", "B")
+    for x in (a, b):
+        assert x["status"] in ee.STATUS_RANK
+        assert set(x["final"]) == {"col_long", "col_trans", "shaft_long", "shaft_trans"}
+        assert x["axial"]["P_dead"] == -2500.0 and x["axial"]["dead_cases"] == {}
+        assert x["axial"]["P_ext_min"] == x["axial"]["P_ext_max"] == -2500.0
+        # ruling F-4: no shaft frames, no soil -> the base rows taken down the shaft
+        assert {c["group"] for c in x["final_checks"]} == {"Seismic", "Column LRFD", "Shaft LRFD"}
+    assert a["lrfd"]["shaft"]["source"] == csh.CANT_SOURCE
+    assert b["lrfd"]["shaft"]["source"] == csh.IFACE_SOURCE
+    assert a["H_in"] == 480.0
+    assert b["H_in"] == pytest.approx(16.8333 * 12.0)          # station span (ruling 8-11)
+    assert a["final"]["col_long"] == b["final"]["col_long"]
+    # the short bent cannot meet the seismic column shear: named NO SOLUTION
+    assert b["status"] == "NO SOLUTION"
+    assert any("Column seismic transverse" in s for s in b["no_solution"])
+
+
+def test_end_to_end_two_bent_synthetic():
+    r = run("2b")
+    assert RUNS["2b:t"] < 30.0
+    strict_json(r)
+    assert r["parse"]["categories"] == {"DEAD": "Dead", "Str-I": "Strength", "Str-II": "Strength",
+                                        "Str-III": "Strength", "EQ-X": "Extreme"}
+    b1, b2 = r["bents"]
+    assert b1["status"] == b2["status"] == "OK"
+    assert b1["axial"]["P_dead"] == -950.0 and b1["axial"]["dead_cases"] == {"DEAD": -950.0}
+    assert (b1["axial"]["P_ext_min"], b1["axial"]["P_ext_max"]) == (-1400.0, -500.0)
+    assert b1["H_in"] == pytest.approx(240.0) and b2["H_in"] == pytest.approx(300.0)
+    assert b1["lrfd"]["shaft"]["source"] == "shaft frames"
+    assert b2["lrfd"]["shaft"]["source"] == csh.PY_SOURCE
+    for b in (b1, b2):
+        groups = {c["group"] for c in b["final_checks"]}
+        assert groups == {"Seismic", "Column LRFD", "Shaft LRFD"}
+        assert all(c["ok"] for c in b["final_checks"])
+        assert b["final"]["col_long"]["Ast"] >= b["lrfd"]["col"]["long"]["Ast"] - 1e-9
+        assert b["final"]["shaft_long"]["Ast"] >= b["lrfd"]["shaft"]["long"]["Ast"] - 1e-9
+        # slenderness off (default) although bent.slender is given: no tags
+        assert all("_slender_status" not in x for x in b["lrfd"]["col"]["check_rows"])
+    assert chk(b2, "Shaft p-y strength solve")["ok"]
+
+
+def test_strict_json_with_infinite_ratio():
+    c = cs.Check("Soil-pile stability (p-y)", 1, 0, False, "x")
+    d = ee.check_dict(c)
+    assert d["ratio"] is None and d["ratio_infinite"] is True
+    assert ee.sanitize({"a": math.inf, "b": [math.nan, 1.5, (2, -math.inf)], 3: True}) == \
+        {"a": None, "b": [None, 1.5, [2, None]], "3": True}
+    strict_json(ee.sanitize(c))
+
+
+# ── overrides / final cage ──────────────────────────────────────────
+
+def test_override_kept_and_fails():
+    r = run("ov")
+    strict_json(r)
+    b = r["bents"][0]
+    assert b["final_source"]["col_long"] == "Override"
+    assert {k: b["final"]["col_long"][k] for k in ("bar", "n", "bundle")} == \
+        {"bar": 5, "n": 6, "bundle": 1}
+    assert b["status"] == "NG"
+    assert any(not c["ok"] and c["group"] == "Column LRFD" for c in b["final_checks"])
+    assert b["no_solution"] == []
+    rl = chk(b, "Column longitudinal ratio (rho_l)")
+    r_l = 6 * 0.31 / (math.pi * 900.0)
+    assert rl["ok"] is False and rl["capacity"] == pytest.approx(r_l)
+    assert rl["ratio"] == pytest.approx(0.01 / r_l)              # max(lo/r, r/hi)
+
+
+def test_override_transverse_kept():
+    sh = run("ov")["bents"][0]                           # shaft_trans #4 @ 6 override
+    assert sh["final_source"]["shaft_trans"] == "Override"
+    t = sh["final"]["shaft_trans"]
+    assert (t["bar"], t["s"], t["ties"]) == (4, 6.0, 0)
+    # weak COLUMN transverse override #4 @ 6: kept as entered (never upgraded by the
+    # seismic merge or the 8-15 walk), checks fail -> NG, not NO SOLUTION
+    assert sh["final_source"]["col_trans"] == "Override"
+    t = sh["final"]["col_trans"]
+    assert (t["bar"], t["s"], t["ties"]) == (4, 6.0, 0)
+    assert sh["lrfd"]["col"]["trans"] is None
+    assert chk(sh, "Transverse steel ratio (min)")["ok"] is False      # rho_s #4 @ 6 too low
+    assert sh["status"] == "NG" and sh["no_solution"] == []
+    col = run("sgs")["bents"][0]                         # col_trans #8 @ 3 override
+    assert col["final_source"]["col_trans"] == "Override"
+    t = col["final"]["col_trans"]
+    assert (t["bar"], t["s"], t["ties"]) == (8, 3.0, 0)
+    assert col["status"] == "OK"
+    assert col["lrfd"]["col"]["trans"] is None           # never designed
+
+
+def test_shaft_rho_l_checked_only_when_overridden():
+    names = {c["name"] for c in run("2b")["bents"][0]["final_checks"]}
+    assert "Shaft longitudinal ratio (rho_l)" not in names
+    prov = get_provisions("SDC 2.1")
+    c = ee.rho_l_check(ee.long_cage(5, 6, 1, 84.0), prov, "Shaft")
+    assert c["name"] == "Shaft longitudinal ratio (rho_l)" and c["ok"] is False
+    hi = ee.rho_l_check({"rho_l": 0.05}, prov)
+    assert hi["ok"] is False and hi["ratio"] == pytest.approx(0.05 / prov.rho_l_max)
+
+
+def test_seismic_governs_transverse():
+    b = run("2b")["bents"][0]
+    assert b["final_source"]["col_trans"] == "Seismic"
+    tr = b["lrfd"]["col"]["trans"]
+    assert b["final"]["col_trans"]["Av_s"] > csh.av_per_s(tr)
+    req = b["seismic"]["required_transverse"]
+    assert (b["final"]["col_trans"]["bar"], b["final"]["col_trans"]["s"]) == (req["bar"], req["s"])
+    assert b["final"]["col_trans"]["ties"] == max(tr["ties"], req["ties"])
+    assert chk(b, "Column shear")["ok"]
+
+
+def test_merge_trans_rule():
+    a = {"bar": 5, "s": 4.0, "ties": 0}
+    b = {"bar": 6, "s": 6.0, "ties": 0}            # 2*0.44/6 = 0.1467 < 2*0.31/4 = 0.155
+    assert csh.heavier_trans(a, b) == (a, "a")
+    c = {"bar": 6, "s": 0.44 / 0.31 * 4.0, "ties": 0}   # equal Av/s -> larger bar
+    assert csh.heavier_trans(a, c)[1] == "b"
+    assert csh.av_per_s({"bar": 5, "s": 4.0, "ties": 2}) == pytest.approx(4 * 0.31 / 4.0)
+    # ruling 8-15: bar / pitch of the larger Av/s, ties = max of both
+    m, which = csh.merge_trans({"bar": 5, "s": 4.0, "ties": 2}, {"bar": 8, "s": 4.0, "ties": 0})
+    assert (m["bar"], m["s"], m["ties"], which) == (8, 4.0, 2, "b")
+
+
+def test_walk_trans_from_start():
+    seq = list(cl.transverse_candidates(None))
+    start = csh.trans_cage(*[seq[10][i] for i in (0, 2, 1)])
+    seen = []
+
+    def ok(t):
+        seen.append((t["bar"], t["ties"], t["s"]))
+        return len(seen) == 4
+    t = csh.walk_trans(start, None, ok)
+    assert seen == [(b, n, s) for b, n, s in seq[10:14]]
+    assert (t["bar"], t["ties"], t["s"]) == seq[13]
+    assert csh.walk_trans(start, None, lambda t: False) is None
+
+
+def test_merged_cage_failing_lrfd_walks_to_next(monkeypatch):
+    """If the merged column cage fails the LRFD rows (both designs passed
+    separately), the next candidate passing both is taken (ruling 8-15)."""
+    base = run("2b")["bents"][0]["final"]["col_trans"]
+    bad = (base["bar"], base["s"], base["ties"])
+    real = ee.rows_pass
+
+    def fake(member, cage, rows, tf):
+        if member is not None and float(member["D"]) == 60.0 and \
+                (cage["trans_bar"], cage["s"], cage["ties"]) == bad:
+            return False
+        return real(member, cage, rows, tf)
+    monkeypatch.setattr(ee, "rows_pass", fake)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    strict_json(b)
+    t = b["final"]["col_trans"]
+    assert b["final_source"]["col_trans"] == "LRFD+Seismic"
+    seq = [(x[0], x[1], round(x[2], 2)) for x in cl.transverse_candidates({"code": "SDC 2.1"})]
+    k = seq.index((bad[0], bad[2], round(bad[1], 2)))
+    assert seq.index((t["bar"], t["ties"], round(t["s"], 2))) > k
+    assert b["status"] == "OK"
+
+
+def test_merged_shaft_cage_failing_lrfd_walks_to_next(monkeypatch):
+    """Shaft branch of ruling 8-15: the shaft cage fails its LRFD rows on the final
+    cages although the LRFD design passed -> walk to the next candidate passing the
+    shaft LRFD rows and the shaft seismic checks."""
+    base = run("2b")["bents"][0]["final"]["shaft_trans"]
+    bad = (base["bar"], base["s"], base["ties"])
+    real = ee.rows_pass
+
+    def fake(member, cage, rows, tf):
+        if float(member["D"]) == 84.0 and (cage["trans_bar"], cage["s"], cage["ties"]) == bad:
+            return False
+        return real(member, cage, rows, tf)
+    monkeypatch.setattr(ee, "rows_pass", fake)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    strict_json(b)
+    t = b["final"]["shaft_trans"]
+    assert b["final_source"]["shaft_trans"] == "LRFD+Seismic"
+    seq = [(x[0], x[1], round(x[2], 2)) for x in cl.transverse_candidates({"code": "SDC 2.1"})]
+    assert seq.index((t["bar"], t["ties"], round(t["s"], 2))) > \
+        seq.index((bad[0], bad[2], round(bad[1], 2)))
+    assert b["status"] == "OK"
+    assert b["Df_for_lu"] == 120.0                  # recomputed after the walk (cantilever L_eq)
+
+
+def test_walk_trans_start_not_in_candidates():
+    """A merged cage with extra ties is not a candidate: the walk starts at the
+    first candidate whose Av/s >= the merged cage's, never at index 0."""
+    start = csh.trans_cage(5, 4.0, 3)               # maxLegs 2 -> ties 0 only in the list
+    floor = csh.av_per_s(start)
+    seq = list(cl.transverse_candidates(None))
+    first = next(c for c in seq if csh.av_per_s({"bar": c[0], "s": c[2], "ties": c[1]}) >= floor)
+    seen = []
+    csh.walk_trans(start, None, lambda t: seen.append((t["bar"], t["ties"], t["s"])) or True)
+    assert seen == [first] and seq.index(first) > 0
+    assert csh.walk_trans(csh.trans_cage(8, 0.5, 6), None, lambda t: True) is None
+
+
+def test_mo_uses_final_cage():
+    lo = run("ov")["bents"][0]["seismic"]                  # 6-#5
+    hi = run("mo_hi")["bents"][0]["seismic"]               # 22-#10
+    assert hi["Mo"] > lo["Mo"] * 1.1
+    assert hi["shaft_Mdemand"] > lo["shaft_Mdemand"]
+    assert hi["Vo"] > lo["Vo"]
+
+
+def test_bent_without_shaft_frames():
+    r = run("nosol")
+    strict_json(r)
+    b = r["bents"][0]
+    names = {c["name"] for c in b["final_checks"] if c["group"] == "Seismic"}
+    assert {"Shaft flexure (capacity protection)", "Shaft shear (capacity protection)",
+            "Shaft oversize"} <= names
+    assert b["final"]["shaft_long"]["n"] >= 6
+    # ruling F-4: no shaft frames on the cantilever basis -> the governing base Strength
+    # rows taken down the equivalent cantilever (Mu = |M_b| + |V_b|*L_eq, Vu = |V_b|)
+    sh = b["lrfd"]["shaft"]
+    assert sh["source"] == csh.CANT_SOURCE and sh["n_rows"] == len(sh["rows"]) > 0
+    for x in sh["rows"]:
+        assert x["_source"] == csh.CANT_SOURCE
+        assert x["Mu"] == pytest.approx(x["_base_Mu"] + x["_base_Vu"] * 2400.0)
+        assert x["Vu"] == pytest.approx(x["_base_Vu"])
+    lr = [c for c in b["final_checks"] if c["group"] == "Shaft LRFD"]
+    assert len(lr) == len(sh["rows"]) and all("cantilever strength" in c["name"] for c in lr)
+    # the 200-ft cantilever cannot be designed: named NO SOLUTION, never OK
+    assert b["status"] == "NO SOLUTION"
+    assert any(s.startswith("Shaft LRFD longitudinal") for s in b["no_solution"])
+
+
+def test_base_strength_rows_unit():
+    """Ruling F-4 profiles: cantilever M grows linearly to L_eq; interface = base values;
+    the selection is the top-5 M union top-5 V of the base rows (spec 4.4a)."""
+    rows = [{"Pu": -100.0 - i, "Mu": (-1) ** i * 100.0 * i, "Vu": (-1) ** i * (20.0 - i),
+             "Tu": 5.0, "_case": str(i), "_frame": "F", "_station": 0.0, "_Pmin": -200.0,
+             "_Pmax": -50.0, "_bound": "envelope"} for i in range(20)]
+    cant = csh.base_strength_rows(rows, "cantilever", 120.0)
+    assert [x["_case"] for x in cant] == [x["_case"] for x in csh.governing_base_rows(rows)]
+    for x in cant:
+        i = int(x["_case"])
+        assert x["Mu"] == pytest.approx(100.0 * i + (20.0 - i) * 120.0)
+        assert x["Vu"] == pytest.approx(20.0 - i)
+        assert (x["Pu"], x["Tu"], x["_Pmin"], x["_Pmax"], x["_bound"]) == \
+            (-100.0 - i, 5.0, -200.0, -50.0, "envelope")
+        assert x["_source"] == csh.CANT_SOURCE and x["_station"] is None
+    ifc = csh.base_strength_rows(rows, "interface", 999.0)
+    for x in ifc:
+        i = int(x["_case"])
+        assert (x["Mu"], x["Vu"]) == (100.0 * i, 20.0 - i)
+        assert x["_source"] == csh.IFACE_SOURCE
+    with pytest.raises(ValueError):
+        csh.base_strength_rows(rows, "soil")
+
+
+def test_interface_basis_without_shaft_frames_checks_shaft():
+    """Ruling F-4, interface basis: the shaft LRFD rows are the base rows (Mu = |M_b|)."""
+    b = run("iface")["bents"][0]
+    strict_json(b)
+    sh = b["lrfd"]["shaft"]
+    assert sh["source"] == csh.IFACE_SOURCE and sh["rows"]
+    for x in sh["rows"]:
+        assert (x["Mu"], x["Vu"]) == (pytest.approx(x["_base_Mu"]), pytest.approx(x["_base_Vu"]))
+    lr = [c for c in b["final_checks"] if c["group"] == "Shaft LRFD"]
+    assert len(lr) == len(sh["rows"])
+    assert b["final"]["shaft_long"]["Ast"] >= sh["long"]["Ast"] - 1e-9
+
+
+# ── shaft seismic sizing (ruling 8-2) ───────────────────────────────
+
+def test_first_passing_bisection():
+    calls = []
+
+    def pred(i):
+        calls.append(i)
+        return i >= 37
+    assert csh.first_passing(list(range(100)), pred) == 37
+    assert len(calls) <= 9
+    assert csh.first_passing(list(range(10)), lambda i: False) is None
+    assert csh.first_passing(list(range(10)), lambda i: True) == 0
+
+
+def test_long_candidates_sorted_and_bounded():
+    c = csh.long_candidates(SHAFT1, {"code": "SDC 2.1"})
+    As = [x[0] for x in c]
+    assert As == sorted(As) and len(c) > 50
+    Ag = math.pi * 84.0 ** 2 / 4.0
+    prov = get_provisions("SDC 2.1")
+    assert all(prov.rho_l_min - 1e-9 <= a / Ag <= prov.rho_l_max + 1e-9 for a in As)
+    assert all(x[1] >= cl.N_MIN for x in c)
+
+
+def _seis(b, sh_long, sh_trans, code):
+    return cs.seismic_design(COL1, SHAFT1, ee.full_cage(b["final"]["col_long"], b["final"]["col_trans"]),
+                             ee.full_cage(sh_long, sh_trans),
+                             {k: b["axial"][k] for k in ("P_dead", "P_ext_min", "P_ext_max")},
+                             dict(bent1(), H_in=b["H_in"]), get_provisions(code))
+
+
+def test_shaft_longitudinal_sized_for_capacity_protection():
+    """SGS (factor 1.25): the LRFD shaft cage fails the shaft flexure check, so the
+    shaft longitudinal steps up until it passes; the next lighter cage fails."""
+    b = run("sgs")["bents"][0]
+    strict_json(b)
+    assert b["final_source"]["shaft_long"] == "Seismic"
+    assert b["final"]["shaft_long"]["Ast"] > b["lrfd"]["shaft"]["long"]["Ast"]
+    assert chk(b, "Shaft flexure (capacity protection)")["ok"]
+    c = [x for x in csh.long_candidates(SHAFT1, {"code": "AASHTO_SGS"})
+         if x[0] < b["final"]["shaft_long"]["Ast"] - 1e-9]
+    a = c[-1]
+    tr = b["lrfd"]["shaft"]["trans"]                # the transverse the long sizing used
+    S = _seis(b, ee.long_cage(a[3], a[1], a[2], 84.0), ee.trans_cage(tr["bar"], tr["s"], tr["ties"]),
+              "AASHTO_SGS")
+    assert not csh.checks_ok(S, (csh.SHAFT_FLEX,))
+
+
+def test_shaft_transverse_sized_for_confinement():
+    """SGS shaft confinement (rho_s,shaft >= 0.5 rho_s,col) with a heavy column
+    transverse override drives the shaft transverse: the first candidate in
+    transverse_candidates order (Av/s >= the LRFD one) that passes is taken."""
+    b = run("sgs")["bents"][0]
+    assert b["status"] == "OK"
+    assert b["final_source"]["shaft_trans"] == "Seismic"
+    t = b["final"]["shaft_trans"]
+    assert (t["bar"], t["s"], t["ties"]) == (7, 3.0, 0)
+    assert t["Av_s"] >= csh.av_per_s(b["lrfd"]["shaft"]["trans"])
+    assert chk(b, "Shaft confinement (oversized)")["ok"]
+    assert chk(b, "Shaft shear (capacity protection)")["ok"]
+    prov = get_provisions("AASHTO_SGS")
+    need = chk(b, "Shaft confinement (oversized)")["demand"]
+    lg = b["final"]["shaft_long"]
+    for bar, ties, s in cl.transverse_candidates({"code": "AASHTO_SGS"}):
+        if (bar, s) == (7, 3.0):
+            break
+        sec = cs.to_section(SHAFT1, ee.full_cage(lg, ee.trans_cage(bar, s, ties)), prov)
+        assert sec.rho_s < need
+
+
+def test_shaft_trans_screen_matches_full_check():
+    """The cheap screen of size_shaft_transverse uses exactly seismic_design's shaft
+    shear / confinement inputs: screen pass <=> full-check pass."""
+    b = run("sgs")["bents"][0]
+    lg = b["final"]["shaft_long"]
+    S0 = _seis(b, lg, b["final"]["shaft_trans"], "AASHTO_SGS")
+    prov = get_provisions("AASHTO_SGS")
+    outcomes = set()
+    for bar, s in ((6, 3.0), (7, 3.25), (7, 3.0), (8, 4.0)):
+        t = ee.trans_cage(bar, s, 0)
+        scr = csh.shaft_trans_screen(SHAFT1, prov, S0, lg, t)
+        full = csh.checks_ok(_seis(b, lg, t, "AASHTO_SGS"), csh.SHAFT_TRANS)
+        assert scr == full, (bar, s)
+        outcomes.add(scr)
+    assert outcomes == {True, False}
+
+
+def test_shaft_sizing_no_solution_names_check():
+    """A very long equivalent cantilever: no shaft cage within rho_l,max carries it."""
+    b = run("nosol")["bents"][0]
+    assert b["status"] == "NO SOLUTION"
+    assert any(s.startswith("Shaft flexure (capacity protection)") for s in b["no_solution"])
+
+
+# ── strength rows through the pile (spec 4.4a, rulings 8-12 / 8-13) ─
+
+def test_strength_rows_through_pile():
+    b = run("2b")["bents"][1]
+    sh = b["lrfd"]["shaft"]
+    assert sh["source"] == csh.PY_SOURCE
+    rows = sh["rows"]
+    # 3 Strength cases -> 3 base rows; the top-5 M + top-5 V union is all of them
+    assert len(rows) == 3
+    assert {r["_case"] for r in rows} == {"Str-I", "Str-II", "Str-III"}
+    prof = cs.soil_profile(SOIL)
+    EI = b["seismic"]["EI_shaft"]
+    for r in rows:
+        assert r["_source"] == "p-y strength" and r["_station"] is None
+        assert r["Mu"] >= r["_base_Mu"] and r["Vu"] >= r["_base_Vu"]
+        assert r["_Pmin"] <= r["Pu"] <= r["_Pmax"]
+        base = {"Pu": r["Pu"], "Mu": r["_base_Mu"], "Vu": r["_base_Vu"], "Tu": r["Tu"],
+                "_Pmin": r["_Pmin"], "_Pmax": r["_Pmax"]}
+        # interface M and V equal the base M and V (axial 0) within 0.5 %
+        out, info = csh.pile_strength_row(base, 720.0, EI, 78.0, prof, (2.0, 0.5), axial_comp=0.0)
+        assert out is not None
+        for x in info["bounds"]:
+            assert x["stable"]
+            assert x["M_interface"] == pytest.approx(r["_base_Mu"], rel=5e-3)
+            assert x["V_interface"] == pytest.approx(r["_base_Vu"], rel=5e-3)
+
+
+def test_head_moment_same_sense_as_shear():
+    """Shaft alone (Hcol = 0): M_head = -M_base puts +M_base at the top of shaft and
+    the moment grows below it (same sense as V); the result matches a cantilever
+    load V at height M/V on the column + shaft model (mesh difference < 5 %)."""
+    assert csh.head_loads(5000.0, 400.0) == (400.0, -5000.0)
+    prof = cs.soil_profile(SOIL)
+    s = solve_lateral(0.0, 720.0, 9e8, 9e8, 84.0, 0.0, prof, 400.0, M_head=-5000.0)
+    assert s.stable and s.ground_index == 0
+    assert s.moment[0] == pytest.approx(5000.0, rel=1e-6)
+    assert s.moment[1] > s.moment[0] > 0
+    cant = solve_lateral(12.5, 720.0, 9e8, 9e8, 84.0, 0.0, prof, 400.0)
+    assert s.max_inground_moment == pytest.approx(cant.max_inground_moment, rel=0.05)
+    assert s.max_moment_depth == pytest.approx(cant.max_moment_depth, abs=1e-6)
+    wrong = solve_lateral(0.0, 720.0, 9e8, 9e8, 84.0, 0.0, prof, 400.0, M_head=+5000.0)
+    assert wrong.moment[0] == pytest.approx(-5000.0, rel=1e-6)
+
+
+def test_inground_moment_grows_with_axial():
+    prof = cs.soil_profile(SOIL)
+    row = {"Pu": -1000.0, "Mu": 5000.0, "Vu": 400.0, "Tu": 0.0}
+    ms = []
+    for P in (0.0, 2000.0, 6000.0, 12000.0):
+        _, info = csh.pile_strength_row(row, 720.0, 9e8, 84.0, prof, (0.5,), axial_comp=P)
+        x = info["bounds"][0]
+        assert x["stable"] and x["M_interface"] == pytest.approx(5000.0, rel=5e-3)
+        ms.append(x["Mmax"])
+    assert ms == sorted(ms) and ms[-1] > ms[0]
+    # default axial = most compression (-_Pmin), compression-positive for the solver
+    _, info = csh.pile_strength_row(dict(row, _Pmin=-1500.0), 720.0, 9e8, 84.0, prof, (2.0,))
+    assert info["axial_comp"] == 1500.0
+
+
+def test_unstable_strength_row_rejected_by_solver_guard():
+    prof = cs.soil_profile(SOFT)
+    rows = [{"Pu": -1000.0, "Mu": 9e5, "Vu": 3000.0, "Tu": 0.0, "_case": "X",
+             "_Pmin": -1500.0, "_Pmax": -1000.0}]
+    out, info = csh.pile_strength_row(rows[0], 120.0, 9e8, 66.0, prof, (0.5,))
+    assert out is None and info["bounds"][0]["stable"] is False
+    got, skipped = csh.strength_rows_through_pile(rows, 120.0, 9e8, 66.0, prof, (0.5,))
+    assert got == [] and skipped == rows
+
+
+def test_py_strength_check_ng_when_row_skipped(monkeypatch):
+    """Ruling 8-13: a governing strength row unstable on every bound makes the
+    final check "Shaft p-y strength solve" NG (bent 2 run with slenderness on, which
+    also pins lu = H + Df_eq_gov)."""
+    real = csh.pile_strength_row
+
+    def fake(row, *a, **k):
+        out, info = real(row, *a, **k)
+        return (None, info) if row.get("_case") == "Str-II" else (out, info)
+    monkeypatch.setattr(csh, "pile_strength_row", fake)
+    b = ee.run_colshaft(payload([bent2()], settings={"slenderness_on": True}))["bents"][0]
+    strict_json(b)
+    c = chk(b, "Shaft p-y strength solve")
+    assert c["ok"] is False and c["demand"] == 1 and c["capacity"] == 3
+    assert "Str-II" in c["detail"]
+    assert b["status"] == "NG"
+    assert len(b["lrfd"]["shaft"]["rows"]) == 2
+    Df = b["seismic"]["pile"]["Df_eq_gov"]
+    assert Df and b["Df_for_lu"] == Df
+    r0 = b["lrfd"]["col"]["check_rows"][0]
+    assert r0["_klr2"] == pytest.approx(2.1 * (300.0 + Df) / (0.25 * 54.0))
+
+
+SOFT2 = {"layers": [{"thickness_ft": 80.0, "py_model": "matlock_soft_clay", "gamma_pcf": 110.0,
+                     "su_top_ksf": 0.3, "su_bot_ksf": 0.5, "eps50": 0.02, "submerged": True}],
+         "J": 0.5, "cyclic": True}
+
+
+@pytest.mark.parametrize("P", [8000.0, 12000.0])
+def test_ramp_guard_rejects_post_buckled_state(P):
+    """Ruling 8-16: soft clay x0.5, M 5000 / V 400.  The solver reports a stable
+    (post-buckled, wavy) state at the full axial load, but the solve at P = 0
+    runs away: the axial-ramp guard rejects the bound and the row is skipped."""
+    prof = cs.soil_profile(SOFT2)
+    p = replace(prof, stiffness_factor=prof.stiffness_factor * 0.5)
+    assert csh._cached_pile_solve(0.0, 720.0, 9e8, 9e8, 84.0, P, p, 400.0, -5000.0).stable
+    row = {"Pu": -P, "Mu": 5000.0, "Vu": 400.0, "Tu": 0.0, "_case": "X", "_Pmin": -P}
+    out, info = csh.pile_strength_row(row, 720.0, 9e8, 84.0, prof, (0.5,))
+    assert out is None and info["bounds"][0]["stable"] is False
+    assert "unstable at P = 0" in info["bounds"][0]["reject"]
+    rows, skipped = csh.strength_rows_through_pile([row], 720.0, 9e8, 84.0, prof, (0.5,))
+    assert rows == [] and skipped == [row]
+    assert ee.py_check(skipped, 1)["ok"] is False
+
+
+def test_ramp_guard_engine_soft_soil_ng():
+    b = ee.run_colshaft(payload([bent2(soil=copy.deepcopy(SOFT2), soil_bounds=[0.5])]))["bents"][0]
+    strict_json(b)
+    c = chk(b, "Shaft p-y strength solve")
+    assert c["ok"] is False and c["demand"] == c["capacity"] == 3
+    assert b["lrfd"]["shaft"] is None and b["status"] == "NG"
+    # Task 11: the unstable overstrength bound is still drawn (stable False, never governing)
+    pr = b["seismic"]["pile"]["profiles_by_bound"]
+    assert [(x["factor"], x["stable"], x["governing"]) for x in pr] == [(0.5, False, False)]
+
+
+def test_ramp_guard_accepts_stiff_case_unchanged():
+    prof = cs.soil_profile(SOIL)
+    p = replace(prof, stiffness_factor=prof.stiffness_factor * 2.0)
+    row = {"Pu": -12000.0, "Mu": 5000.0, "Vu": 400.0, "Tu": 0.0, "_Pmin": -12000.0}
+    out, info = csh.pile_strength_row(row, 720.0, 9e8, 84.0, prof, (2.0,))
+    full = csh._cached_pile_solve(0.0, 720.0, 9e8, 9e8, 84.0, 12000.0, p, 400.0, -5000.0)
+    assert info["bounds"][0]["stable"] and info["bounds"][0]["reject"] is None
+    assert out["Mu"] == full.max_inground_moment and out["Vu"] == max(full.max_inground_shear, 400.0)
+
+
+class _Sol:
+    def __init__(self, stable, y, m):
+        self.stable, self.head_deflection, self.moment = stable, y, [m, m]
+
+
+@pytest.mark.parametrize("sols, why", [
+    ([(True, 1.0, 5000.0)] * 5, None),
+    ([(True, 1.0, 5000.0), (True, 1.1, 5000.0), (False, 9.0, 5000.0)] + [(True, 2.0, 5000.0)] * 2,
+     "solver unstable"),
+    ([(True, 1.0, 5000.0), (True, 1.2, 5000.0), (True, 0.9, 5000.0)] + [(True, 2.0, 5000.0)] * 2,
+     "head deflection decreases"),
+    ([(True, 1.0, 5000.0), (True, 1.1, -5000.0)] + [(True, 2.0, 5000.0)] * 3, "top-of-shaft moment"),
+    ([(True, 1.0, 5000.0), (True, 1.1, 4900.0)] + [(True, 2.0, 5000.0)] * 3, "top-of-shaft moment"),
+])
+def test_ramp_stable_criteria(monkeypatch, sols, why):
+    calls = []
+
+    def fake(Hcol, L, EIc, EIs, Ds, P, prof, V, M):
+        calls.append(P)
+        return _Sol(*sols[len(calls) - 1])
+    monkeypatch.setattr(csh, "_cached_pile_solve", fake)
+    s, reason = csh.ramp_stable(720.0, 9e8, 84.0, 8000.0, None, 400.0, -5000.0, 5000.0)
+    if why is None:
+        assert reason is None and calls == [0.0, 2000.0, 4000.0, 6000.0, 8000.0]
+    else:
+        assert reason.startswith(why)
+
+
+def test_py_check_unit():
+    ok = ee.py_check([], 4)
+    assert ok["ok"] and ok["name"] == "Shaft p-y strength solve" and ok["group"] == "Shaft LRFD"
+    ng = ee.py_check([{"_case": "S1", "Mu": 1e4, "Vu": 100.0}], 4)
+    assert ng["ok"] is False and "S1" in ng["detail"] and ng["ratio"] == 0.25
+
+
+def test_governing_base_rows_top5_union():
+    rows = [{"Mu": float(i), "Vu": float(20 - i), "_case": str(i)} for i in range(20)]
+    sel = csh.governing_base_rows(rows)
+    assert [r["_case"] for r in sel] == ["0", "1", "2", "3", "4", "15", "16", "17", "18", "19"]
+    rows2 = [{"Mu": float(i), "Vu": float(i), "_case": str(i)} for i in range(20)]
+    assert len(csh.governing_base_rows(rows2)) == 5
+
+
+# ── slenderness (ruling 8-7) ────────────────────────────────────────
+
+def test_slenderness_toggle_changes_only_when_on():
+    off = run("2b")["bents"][0]
+    r = run("slender")
+    strict_json(r)
+    on, rf = r["bents"]
+    # lu = H + L_eq = 240 + 120 in; r = 15 in; K lu / r = 2.1*360/15 = 50.4 -> magnified (M11)
+    rows = on["lrfd"]["col"]["check_rows"]
+    assert rows and all(x["_slender_status"] == "magnified" for x in rows)
+    assert rows[0]["_klr2"] == pytest.approx(2.1 * 360.0 / 15.0)
+    for x in rows:          # Mc = max(db, ds) * M per axis, then the resultant (ruling M6)
+        assert x["_delta2"] >= 1.0 and x["_delta2"] == max(x["_db2"], x["_ds2"])
+        assert x["Mu"] == pytest.approx(math.hypot(x["_delta2"] * abs(x["_M2"]),
+                                                   x["_delta3"] * abs(x["_M3"])))
+        assert x["Mu"] > x["_Mu1"]
+    assert on["status"] == "OK" and off["status"] == "OK"
+    assert on["final"]["col_long"]["Ast"] >= off["final"]["col_long"]["Ast"]
+    assert any("moments magnified" in x for x in on["warnings"])
+    assert not any("S6" in x for x in on["warnings"])
+    # off: no magnification keys at all
+    assert all("_delta2" not in x for x in off["lrfd"]["col"]["check_rows"])
+    assert "magnification" not in off
+    # beta_d from the DEAD rows (ruling M7), EI = the larger of 5.6.4.3-1/-2
+    m = on["magnification"]
+    assert 0.0 < m["beta_d"] < 1.0 and "γp" in m["beta_d_source"]
+    assert m["EI"] == max(m["EI1"], m["EI2"]) and m["phi_K"] == 0.75
+    a2 = m["axes"]["2"]
+    assert (a2["K_braced"], a2["K_unbraced"], a2["lu"]) == (1.0, 2.1, 360.0)
+    assert a2["Pe_s"] == pytest.approx(math.pi ** 2 * m["EI"] / (2.1 * 360.0) ** 2)
+    assert a2["delta"] == max(a2["db"], a2["ds"]) and m["sway"] is None
+    # K lu / r >= 100 -> refined analysis required, never OK
+    assert rf["status"] == "REFINED ANALYSIS REQUIRED"
+
+
+def test_bent_status_precedence():
+    assert ee.bent_status(True, True, True) == "NO SOLUTION"
+    assert ee.bent_status(False, True, True) == "REFINED ANALYSIS REQUIRED"
+    assert ee.bent_status(False, False, True) == "NG"
+    assert ee.bent_status(False, False, False) == "OK"
+    # ruling M10: NO SOLUTION > UNSTABLE > REFINED > NG > OK
+    assert ee.bent_status(False, False, False, True) == ee.ST_UNSTABLE
+    assert ee.bent_status(False, True, True, True) == ee.ST_UNSTABLE
+    assert ee.bent_status(True, False, False, True) == "NO SOLUTION"
+    order = ["OK", "NG", "REFINED ANALYSIS REQUIRED", ee.ST_UNSTABLE, "NO SOLUTION"]
+    assert sorted(ee.STATUS_RANK, key=ee.STATUS_RANK.get) == order
+    assert ee.ST_UNSTABLE == "UNSTABLE (Pu ≥ φK·Pe)"
+    # ruling M11: the S6 pending status is gone
+    assert not hasattr(ee, "ST_OK_PENDING")
+
+
+def test_unstable_final_cage_status():
+    """Override cage + very long lu: Pu >= phiK*Pe on the final rows -> UNSTABLE status
+    (above REFINED), the rows fail with the recorded reason (ruling M10)."""
+    sl = {"2": {"braced": False, "K": 2.1, "lu": 2000.0}, "3": {"braced": False, "K": 2.1,
+                                                                 "lu": 2000.0}}
+    ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    r = ee.run_colshaft(payload([bent1(slender=sl, override=ov)],
+                                settings={"slenderness_on": True}))
+    strict_json(r)
+    b = r["bents"][0]
+    assert b["status"] == ee.ST_UNSTABLE
+    rows = b["lrfd"]["col"]["check_rows"]
+    assert any(x["_unstable"] for x in rows)
+    assert all(not x["ok"] for x in rows if x["_unstable"])
+    assert any(c["detail"].startswith("magnification unstable (Pu ≥ φK·Pe)")
+               for c in b["final_checks"] if c["name"].startswith("Row "))
+    assert b["magnification"]["axes"]["2"]["unstable"]
+    assert any("magnification unstable" in w for w in b["warnings"])
+
+
+def test_sway_group_two_pass():
+    """Ruling M9: two identical bents in one sway group -> pass 2 with SumPe = 2 Pe_s and
+    SumPu = 2 Pu (same cases): ds equals the single-bent value for identical members;
+    a group context is reported, and sway_context sums the other member only."""
+    a = bent1(name="G1", sway_group="G")
+    b = bent1(name="G2", sway_group="G")
+    r = ee.run_colshaft(payload([a, b], settings={"slenderness_on": True}))
+    strict_json(r)
+    alone = run("slender")["bents"][0]
+    for x in r["bents"]:
+        m = x["magnification"]
+        assert m["sway"]["group"] == "G" and m["sway"]["n_members"] == 2
+        assert m["sway"]["Pe_others"]["2"] == pytest.approx(alone["magnification"]["Pe_s"]["2"])
+        a2 = m["axes"]["2"]
+        assert a2["sPe_s"] == pytest.approx(2 * a2["Pe_s"])
+        assert a2["sPu"] == pytest.approx(2 * a2["Pu"])
+        assert a2["ds"] == pytest.approx(alone["magnification"]["axes"]["2"]["ds"])
+        assert not any("ΣPu = Pu ×" in w for w in x["warnings"])
+    infos = [{"Pe_s": {"2": 100.0, "3": 50.0}, "Pu_cases": [["C", "S", 10.0], ["D", None, 5.0]]},
+             {"Pe_s": {"2": 200.0, "3": None}, "Pu_cases": [["C", "S", 20.0]]},
+             {"Pe_s": {"2": 300.0, "3": 70.0}, "Pu_cases": [["C", "S", 30.0], ["D", None, 1.0]]}]
+    ctx = ee.sway_context("G", infos, 1)
+    assert ctx["Pe_others"] == {"2": 400.0, "3": 120.0} and ctx["n_members"] == 3
+    assert ctx["Pu_others"] == {("C", "S"): 40.0, ("D", None): 6.0, ("(member)", None): 40.0}
+    # case D missing on member 1 -> not in the sums of member 0 (fallback in the magnifier)
+    assert ee.sway_context("G", infos, 0)["Pu_others"] == {("C", "S"): 50.0,
+                                                           ("(member)", None): 50.0}
+    assert ee.sway_groups([{"sway_group": "A"}, {"sway_group": ""}, {"sway_group": "A"},
+                           {"sway_group": "B"}]) == {"A": [0, 2]}
+
+
+# ── envelope mode (ruling 8-8) ──────────────────────────────────────
+
+def test_member_mode_never_less_steel_than_station_mode():
+    r = run("member")
+    strict_json(r)
+    assert r["settings"]["envelope_mode"] == "member"
+    for s, m in zip(run("2b")["bents"], r["bents"]):     # bent 1 (shaft frames), bent 2 (p-y)
+        assert m["lrfd"]["col"]["n_rows"] == 1
+        assert m["lrfd"]["col"]["long"]["Ast"] >= s["lrfd"]["col"]["long"]["Ast"] - 1e-9
+        assert m["final"]["col_long"]["Ast"] >= s["final"]["col_long"]["Ast"] - 1e-9
+        assert m["final"]["col_trans"]["Av_s"] >= s["final"]["col_trans"]["Av_s"] - 1e-12
+        assert m["final"]["shaft_long"]["Ast"] >= s["final"]["shaft_long"]["Ast"] - 1e-9
+    assert r["bents"][0]["lrfd"]["shaft"]["n_rows"] == 1
+    # p-y bent: base rows come from the station rows, so the same governing rows are solved
+    assert r["bents"][1]["lrfd"]["shaft"]["source"] == csh.PY_SOURCE
+    assert len(r["bents"][1]["lrfd"]["shaft"]["rows"]) == 3
+
+
+def test_envelope_mode_validated():
+    with pytest.raises(ValueError, match="envelope_mode"):
+        ee.run_colshaft(payload([bent1()], settings={"envelope_mode": "bent"}))
+
+
+# ── input validation / warnings ─────────────────────────────────────
+
+def test_unknown_code_raises():
+    with pytest.raises(ValueError, match="Unknown seismic code"):
+        ee.run_colshaft(payload([bent1()], code="SDC 9.9"))
+    for k in ("SDC_2_0", "AASHTO_SGS", "SDC 2.1", "AASHTO SGS 3rd Ed."):
+        assert ee.validate_code(k) is get_provisions(k)
+
+
+def test_categories_validated_and_normalised():
+    cases = ["DEAD", "Str-I", "EQ-X", "DW"]
+    out = ee.validate_categories({"Str-I": "extreme", "DW": " dead ", "EQ-X": ""}, cases)
+    assert out == {"DEAD": "Dead", "Str-I": "Extreme", "EQ-X": "Extreme", "DW": "Dead"}
+    with pytest.raises(ValueError, match="Unknown load-case category"):
+        ee.validate_categories({"Str-I": "Service"}, cases)
+    with pytest.raises(ValueError, match="Unknown load-case category"):
+        ee.run_colshaft(payload([bent1()], categories={"DEAD": "Permanent"}))
+
+
+def test_missing_dead_requires_p_dead():
+    with pytest.raises(ValueError, match="P_dead"):
+        ee.run_colshaft(payload([{"name": "X", "col_frames": ["1227"], "column": COL1,
+                                  "shaft": SHAFT1, "L_eq_in": 120.0}], paste=PASTE_1227))
+
+
+def _with_dw(paste):
+    out = []
+    for ln in paste.splitlines():
+        out.append(ln)
+        c = ln.split("\t")
+        if len(c) > 5 and c[2] == "DEAD":
+            c[2] = "DW"
+            c[5] = f"{float(c[5]) * 0.1:.3f}"
+            out.append("\t".join(c))
+    return "\n".join(out) + "\n"
+
+
+def test_p_dead_is_sum_of_dead_cases():
+    """Ruling 8-14: P_dead = sum over the Dead cases of each case's most compressive
+    base axial (DC + DW)."""
+    pr = ci.parse_csi_frame_forces(_with_dw(PASTE_2B))
+    cats = ee.validate_categories({"DW": "Dead"}, pr.cases)
+    w = []
+    ax = ee.seismic_axial({"name": "B1"}, pr.rows, ["101"], cats, "auto", w)
+    assert ax["dead_cases"] == {"DEAD": -950.0, "DW": -95.0}
+    assert ax["P_dead"] == pytest.approx(-1045.0)
+    assert (ax["P_ext_min"], ax["P_ext_max"]) == (-1400.0, -500.0)
+    # forced base end -> the top-of-frame rows
+    ax = ee.seismic_axial({"name": "B1"}, pr.rows, ["101"], cats, "max", w)
+    assert ax["P_dead"] == pytest.approx(-990.0)
+    # a single partial-looking Dead case warns
+    pr2 = ci.parse_csi_frame_forces(PASTE_2B.replace("\tDEAD\t", "\tDC\t"))
+    w2 = []
+    ax2 = ee.seismic_axial({"name": "B1"}, pr2.rows, ["101"],
+                           ee.validate_categories(None, pr2.cases), "auto", w2)
+    assert ax2["P_dead"] == -950.0 and any("single Dead case 'DC'" in x for x in w2)
+
+
+def test_warnings_collected():
+    r = run("ov")
+    b = r["bents"][0]
+    assert any("frame 999 not found" in x for x in b["warnings"])
+    assert any(x.startswith("B1: ") and "frame 999" in x for x in r["parse"]["warnings"])
+
+
+def test_seismic_mc_cache_is_transparent():
+    """seismic_design(mc_cache=...) memoises M-phi only; results are identical."""
+    b = run("2b")["bents"][0]
+    f = b["final"]
+    args = (COL1, SHAFT1, ee.full_cage(f["col_long"], f["col_trans"]),
+            ee.full_cage(f["shaft_long"], f["shaft_trans"]),
+            {k: b["axial"][k] for k in ("P_dead", "P_ext_min", "P_ext_max")},
+            dict(bent1(), H_in=b["H_in"]), get_provisions("SDC 2.1"))
+    cache = {}
+    plain = cs.seismic_design(*args)
+    c1 = cs.seismic_design(*args, mc_cache=cache)
+    n = len(cache)
+    c2 = cs.seismic_design(*args, mc_cache=cache)
+    assert n == len(plain.Mp_by_P) + 1 and len(cache) == n
+    for r in (c1, c2):
+        assert (r.Mo, r.shaft_Mp, r.EI_col, r.EI_shaft) == \
+            (plain.Mo, plain.shaft_Mp, plain.EI_col, plain.EI_shaft)
+
+
+# ── Task 11: M-phi curves and per-bound p-y profiles in the result ──
+
+def test_mphi_curves_in_result():
+    """mphi = column M-phi at the P that set Mo; mphi_shaft = shaft M-phi at P_dead.
+    Both are read from the cached M-phi results (test_seismic_mc_cache_is_transparent
+    pins that the cache holds only the Mp samples + the shaft: no extra solves)."""
+    for b in run("2b")["bents"]:
+        S = b["seismic"]
+        m, ms = S["mphi"], S["mphi_shaft"]
+        assert m["P"] == S["Mp_P"] and m["Mp"] == S["Mp"]
+        assert S["Mo"] == pytest.approx(S["lambda_mo"] * m["Mp"])
+        assert ms["P"] == b["axial"]["P_dead"] and ms["Mp"] == S["shaft_Mp"]
+        for c in (m, ms):
+            assert 2 <= len(c["phi"]) == len(c["M"]) <= cs.MPHI_MAX_PTS
+            assert all(x < y for x, y in zip(c["phi"], c["phi"][1:]))
+            assert 0 < c["phi_y"] < c["phi_u"] and c["failure_mode"] in ("concrete", "steel")
+            assert c["phi"][-1] == pytest.approx(c["phi_u"], rel=0.05)
+        assert set(S["refs"]) >= {"overstrength", "shear", "shaft_capacity", "transverse"}
+        assert S["refs"]["overstrength"] == get_provisions("SDC 2.1").ref_overstrength
+
+
+def test_downsample_idx():
+    assert cs.downsample_idx(5, 80) == [0, 1, 2, 3, 4]
+    idx = cs.downsample_idx(500, 80, (123, 377))
+    assert len(idx) <= 80 and idx == sorted(set(idx))
+    assert {0, 499, 123, 377} <= set(idx)
+
+
+class _FakeMC:
+    def __init__(self, n):
+        self.phi = [i * 1e-5 for i in range(n)]
+        self.M = [1000.0 * math.sin(math.pi * i / (n - 1)) for i in range(n)]
+        self.phi_y, self.Mp, self.phi_u, self.failure_mode = 1e-4, 900.0, self.phi[-1], "steel"
+
+
+def test_mphi_dict_downsamples_keeping_peak_and_ends():
+    mc = _FakeMC(301)
+    d = cs.mphi_dict(mc, -500.0)
+    assert len(d["phi"]) <= cs.MPHI_MAX_PTS and d["P"] == -500.0
+    assert d["phi"][0] == 0.0 and d["phi"][-1] == mc.phi[-1]
+    assert max(d["M"]) == max(mc.M)
+    assert (d["phi_y"], d["Mp"], d["phi_u"], d["failure_mode"]) == (1e-4, 900.0, mc.phi[-1], "steel")
+
+
+def test_profiles_by_bound_datum_and_governing():
+    """Every overstrength soil bound's profile, z below the TOP OF SHAFT (the datum of
+    shaft_profile / profile_gov / Df_eq_gov); the governing one equals shaft_profile."""
+    b1, b2 = run("2b")["bents"]
+    assert b1["seismic"]["pile"] is None            # cantilever basis: no p-y profiles
+    S = b2["seismic"]
+    pile = S["pile"]
+    assert "top of shaft" in pile["profiles_datum"]
+    pr = pile["profiles_by_bound"]
+    assert [x["factor"] for x in pr] == [x["factor"] for x in pile["bounds"]] == [2.0, 0.5]
+    assert [x["stable"] for x in pr] == [x["stable"] for x in pile["bounds"]]
+    gov = [x for x in pr if x["governing"]]
+    assert len(gov) == 1
+    g = gov[0]
+    by_z = {round(z, 6): (m, v, y) for z, m, v, y in pile["profile_gov"]}
+    assert len(g["z"]) <= cs.PROFILE_MAX_PTS and g["z"][0] == pytest.approx(0.0)
+    assert g["z"][-1] == pytest.approx(pile["L_embed"])
+    sp = {round(z, 6): (m, v) for z, m, v in S["shaft_profile"]}
+    for z, m, v, y in zip(g["z"], g["M"], g["V"], g["y"]):
+        assert sp[round(z, 6)] == (m, v) and by_z[round(z, 6)] == (m, v, y)
+    assert max(abs(m) for m in g["M"]) == pytest.approx(pile["M_inground"])
+    for x in pr:
+        assert len(x["z"]) == len(x["M"]) == len(x["V"]) == len(x["y"])
+
+
+class _FakePile:
+    def __init__(self, n, g0, H):
+        self.x = [H * i / g0 for i in range(g0)] + [H + 3.0 * i for i in range(n - g0)]
+        self.moment = [float(i) for i in range(n)]
+        self.moment[250] = -1e6                       # extreme |M| deep in the shaft
+        self.shear = [1.0] * n
+        self.shear[311] = 5e4
+        self.y = [0.01] * n
+        self.ground_index, self.stable = g0, True
+
+
+def test_bound_profile_downsamples_keeping_extremes():
+    s = _FakePile(400, 10, 240.0)
+    p = cs._bound_profile(2.0, s, 240.0, True)
+    assert len(p["z"]) <= cs.PROFILE_MAX_PTS
+    assert p["z"][0] == 0.0 and p["z"][-1] == s.x[-1] - 240.0
+    assert -1e6 in p["M"] and 5e4 in p["V"]
+    assert p["factor"] == 2.0 and p["stable"] is True and p["governing"] is True
+
+
+# ── final-review fix wave (rulings F-1 .. F-6, minors 7c / 7d / 7e) ──
+
+def test_expected_steel_gr60_defaults_and_entered():
+    """Ruling F-1: fy = 60 (fyt = 60) with blank fye / fue / fyh -> A706 Gr60 68/95/68."""
+    es = cs.expected_steel(COL1)
+    assert (es["fye"], es["fue"], es["fyh"]) == (68.0, 95.0, 68.0)
+    assert es["source"] == cs.GR60_LABEL
+    es = cs.expected_steel(dict(COL1, fye=70.0, fue="", fyh=None))
+    assert (es["fye"], es["fue"], es["fyh"]) == (70.0, 95.0, 68.0) and "fue/fyh" in es["source"]
+    es = cs.expected_steel(dict(COL1, fy=80.0, fyt=60.0, fye=88.0, fue=110.0))
+    assert (es["fye"], es["fue"], es["fyh"], es["source"]) == (88.0, 110.0, 68.0, "entered; fyh = "
+                                                                + cs.GR60_LABEL)
+    # the base run (fy = 60, blanks) used and reports the defaults
+    b = run("2b")["bents"][0]
+    assert b["expected_steel"]["column"]["source"] == cs.GR60_LABEL
+    assert b["expected_steel"]["shaft"]["fye"] == 68.0
+
+
+@pytest.mark.parametrize("member", [dict(COL1, fy=80.0), dict(COL1, fy=80.0, fye=90.0),
+                                    dict(COL1, fy=80.0, fye=90.0, fue=115.0),
+                                    dict(COL1, fyt=75.0, fye=68.0, fue=95.0)])
+def test_expected_steel_required_off_gr60(member):
+    with pytest.raises(ValueError, match="Expected strengths fye/fue \\(fyh\\) must be entered"):
+        cs.expected_steel(member)
+    with pytest.raises(ValueError, match="Bent B1 column: Expected strengths"):
+        ee.run_colshaft(payload([bent1(column=member)]))
+
+
+def test_gr80_mp_responds_to_fye():
+    """Ruling F-1: Mp follows the entered expected strengths (no hidden Gr60 values)."""
+    from seismic_port.moment_curvature import moment_curvature
+    prov = get_provisions("SDC 2.1")
+    cage = {"bar": 10, "n": 20, "bundle": 1, "trans_bar": 6, "s": 4.0, "ties": 0}
+    gr60 = moment_curvature(cs.to_section(COL1, cage, prov), 950.0).Mp
+    hi = dict(COL1, fy=80.0, fye=90.0, fue=115.0, fyh=68.0)
+    gr80 = moment_curvature(cs.to_section(hi, cage, prov), 950.0).Mp
+    assert gr80 > gr60 * 1.15
+
+
+def test_gr80_run_warns_lambda_mo_and_reports_values():
+    col = dict(COL1, fy=80.0, fye=90.0, fue=115.0, fyh=68.0)
+    b = ee.run_colshaft(payload([bent1(column=col)]))["bents"][0]
+    strict_json(b)
+    assert b["expected_steel"]["column"] == {"fye": 90.0, "fue": 115.0, "fyh": 68.0,
+                                             "source": "entered"}
+    assert any("1.2 is the A706 Gr60 value" in x for x in b["warnings"])
+    assert not any("A706 Gr60 value" in x for x in run("2b")["bents"][0]["warnings"])
+
+
+def test_auto_height_warning():
+    """Ruling F-5: an auto H (station span) warns that it may not be the clear height."""
+    b1 = run("2b")["bents"][0]
+    assert b1["H_auto"] is True
+    assert any(x.startswith("H taken from the frame station span (20.00 ft)") and "CLEAR height"
+               in x for x in b1["warnings"])
+    b = ee.run_colshaft(payload([bent1(H_in=240.0)]))["bents"][0]
+    assert b["H_auto"] is False and not any("station span" in x for x in b["warnings"])
+
+
+def _lrfd_ties_scenario(monkeypatch):
+    """The reviewer's F-6 example on bent 1: the LRFD column transverse is one bar size
+    below the seismic one at its pitch, with 2 cross-ties (larger Av/s, smaller rho_s:
+    the seismic port ignores cross-ties)."""
+    req = run("2b")["bents"][0]["seismic"]["required_transverse"]
+    real = ee.lrfd_member
+
+    def fake(member, rows, params, tf, ovl, ovt):
+        lg, tr = real(member, rows, params, tf, ovl, ovt)
+        if float(member["D"]) == 60.0 and tr is not None:
+            tr = replace(tr, bar=req["bar"] - 1, s=req["s"], ties=2)
+        return lg, tr
+    monkeypatch.setattr(ee, "lrfd_member", fake)
+    return req
+
+
+def test_merged_cage_failing_seismic_criteria_walks(monkeypatch):
+    """Ruling F-6: the merged cage (LRFD bar/pitch + 2 ties) fails the seismic transverse
+    criteria although both designs passed -> the walk takes the first candidate passing
+    both (was: a false NG on 'Transverse steel ratio (min)')."""
+    req = _lrfd_ties_scenario(monkeypatch)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    strict_json(b)
+    assert b["lrfd"]["col"]["trans"]["ties"] == 2
+    t = b["final"]["col_trans"]
+    assert b["final_source"]["col_trans"] == "LRFD+Seismic"
+    assert t["rho_s"] >= b["seismic"]["rho_s_min"] - 1e-12
+    assert chk(b, "Transverse steel ratio (min)")["ok"] and chk(b, "Column shear")["ok"]
+    assert b["status"] == "OK", [c["name"] for c in b["final_checks"] if not c["ok"]]
+    assert (t["bar"], t["s"]) != (req["bar"] - 1, req["s"])
+
+
+def test_shaft_resized_after_column_walk(monkeypatch):
+    """Minor 7e: when the column walk changes the cage (and so Mo), the shaft sizing
+    runs once more against the new Mo."""
+    _lrfd_ties_scenario(monkeypatch)
+    calls = []
+    real = ee.size_shaft
+
+    def spy(*a):
+        calls.append(a[7].Mo)
+        return real(*a)
+    monkeypatch.setattr(ee, "size_shaft", spy)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    assert len(calls) == 2 and calls[1] != calls[0]
+    assert calls[1] == pytest.approx(b["seismic"]["Mo"])
+    assert chk(b, "Shaft flexure (capacity protection)")["ok"]
+
+
+def test_max_axial_checks_ported():
+    """Minor 7c: upstream _build_checks 11a / 11b (sdc_capacity.py:1042-1065) at P_dead,
+    with the ported ref_max_axial string."""
+    sdc, sgs = get_provisions("SDC 2.1"), get_provisions("AASHTO_SGS")
+    cage = {"bar": 10, "n": 20, "bundle": 1, "trans_bar": 6, "s": 4.0, "ties": 0}
+    sec = cs.to_section(COL1, cage, sdc)
+    (c,) = cs.max_axial_checks(sdc, sec, 950.0, 5.0)
+    assert c.name == "Axial load ratio" and c.ref == sdc.ref_max_axial
+    assert c.demand == pytest.approx(950.0 / (4.0 * sec.Ag)) and c.capacity == 0.15 and c.ok
+    (c,) = cs.max_axial_checks(sgs, sec, 3000.0, 5.0)
+    assert c.name == "Maximum axial load" and c.ref == sgs.ref_max_axial
+    assert c.capacity == pytest.approx(0.2 * 4.0 * sec.Ag) and c.ok is False
+    (c,) = cs.max_axial_checks(sgs, sec, 3000.0, 2.0)          # mu_d <= 2: information only
+    assert c.ok is True and "n/a" in c.detail
+    b = run("2b")["bents"][0]
+    assert chk(b, "Axial load ratio")["ok"]
+    assert chk(run("sgs")["bents"][0], "Maximum axial load")["ok"]
+
+
+@pytest.mark.parametrize("layer,bad", [
+    ({"thickness_ft": 20.0, "py_model": "welch_stiff_clay", "gamma_pcf": 120.0}, "su_top_ksf"),
+    ({"thickness_ft": 20.0, "py_model": "matlock_soft_clay", "gamma_pcf": 120.0,
+      "su_top_ksf": 0.5, "su_bot_ksf": 0.0}, "su_bot_ksf"),
+    ({"thickness_ft": 20.0, "py_model": "api_sand", "gamma_pcf": 120.0, "phi_deg": 34.0}, "k_pci"),
+    ({"thickness_ft": 20.0, "py_model": "api_sand", "gamma_pcf": 120.0, "k_pci": 90.0}, "phi_deg"),
+    ({"thickness_ft": 20.0, "py_model": "elastic_subgrade", "gamma_pcf": 120.0}, "k_pci"),
+    ({"thickness_ft": 0.0, "py_model": "elastic_subgrade", "gamma_pcf": 120.0, "k_pci": 5.0},
+     "thickness_ft"),
+])
+def test_soil_layer_validation(layer, bad):
+    """Minor 7d: the p-y defaults (su = phi = k = 0) are rejected with a named field."""
+    with pytest.raises(ValueError, match=bad):
+        cs.soil_profile({"layers": [dict(SOIL["layers"][0]), layer]})
+    with pytest.raises(ValueError, match="soil layer 2"):
+        ee.run_colshaft(payload([bent2(soil={"layers": [dict(SOIL["layers"][0]), layer]})]))
+    cs.soil_profile(SOIL)                                   # the valid profile passes
+
+
+def test_moment_details_quote_kip_ft():
+    """Minor 7k: check details quoting kip-in moments also give the kip-ft value."""
+    c = chk(run("2b")["bents"][0], "Shaft flexure (capacity protection)")
+    assert "kip-in (" in c["detail"] and "kip-ft) at P_dead" in c["detail"]
+    ng = ee.py_check([{"_case": "S1", "Mu": 12000.0, "Vu": 100.0}], 4)
+    assert "M=12000 kip-in (1000 kip-ft)" in ng["detail"]
+
+
+# ── follow-ups 2026-10-19: longitudinal V(+T) check enforcement, K default ──
+
+LMEM = dict(D=48.0, fc=4.0, fy=60.0, fyt=60.0, cover=2.0, ag=0.75, trans_type="hoop",
+            hoop_closure="lap")
+LROW = {"Pu": -200.0, "Mu": 20000.0, "Vu": 400.0, "Tu": 0.0, "Vp": 0, "Ms": 0, "Ps": 0,
+        "_frame": "F1", "_station": 0.0, "_case": "STR", "_bound": "concurrent",
+        "_Pmin": -200.0, "_Pmax": -200.0}
+LCAGE = {"bar": 11, "n": 12, "bundle": 1, "trans_bar": 5, "s": 5.0, "ties": 0}
+
+
+def test_row_pass_ignores_non_enforced_long_check():
+    """User decision 2026-10-19: a failing long_ok_2 counts only where enforced
+    (bars_terminated or torsion considered); the final check / status ignore it otherwise."""
+    summ, checks, _ = ee.lrfd_check_rows(LMEM, LCAGE, [LROW], None, "Column LRFD")
+    assert summ[0]["long_ok_2"] is False and summ[0]["long_enforced"] is False
+    assert summ[0]["ok"] and checks[0]["ok"] and summ[0]["ratio"] < 1.0
+    assert "long. V+T " + cl.LONG_NA in checks[0]["detail"]
+    assert ee.bent_status(False, False, any(not c["ok"] for c in checks)) == "OK"
+    term = dict(LMEM, bars_terminated=True)
+    summ_t, checks_t, _ = ee.lrfd_check_rows(term, LCAGE, [LROW], None, "Column LRFD")
+    assert summ_t[0]["long_enforced"] is True and not summ_t[0]["ok"] and not checks_t[0]["ok"]
+    assert "long. V+T NG" in checks_t[0]["detail"] and summ_t[0]["ratio"] > 1.0
+    assert ee.bent_status(False, False, any(not c["ok"] for c in checks_t)) == "NG"
+    assert ee.rows_pass(LMEM, LCAGE, [LROW], None) and not ee.rows_pass(term, LCAGE, [LROW], None)
+
+
+def test_engine_status_ignores_failing_non_enforced_long_check(monkeypatch):
+    """End to end: every row's long_ok_2 forced False (no torsion) -> bars continuous
+    (default) gives the same cages and status as the base run, the rows report the
+    check as not enforced; the per-member summary carries the §5.7.3.5 reason."""
+    real = cl.cc.compute_row_capacities_circ
+
+    def fake(*a, **k):
+        res = real(*a, **k)
+        res["long_ok_2"], res["long_dc_2"] = False, 1.5
+        return res
+    monkeypatch.setattr(cl.cc, "compute_row_capacities_circ", fake)
+    b = ee.run_colshaft(payload([bent1()]))["bents"][0]
+    base = run("2b")["bents"][0]
+    assert b["status"] == base["status"] == "OK"
+    assert b["final"] == base["final"]
+    for part in ("col", "shaft"):
+        rows = b["lrfd"][part]["check_rows"]
+        assert rows and all(x["long_ok_2"] is False and x["long_enforced"] is False and x["ok"]
+                            for x in rows)
+        lc = b["lrfd"][part]["long_check"]
+        assert lc["enforced"] == "none" and lc["bars_terminated"] is False
+        assert "§5.7.3.5" in lc["note"] and "discontinuous" in lc["note"]
+    assert all(cl.LONG_NA in c["detail"] for c in b["final_checks"] if c["group"] != "Seismic")
+
+
+def test_long_check_summary_follows_flag():
+    b = run("2b")["bents"][0]
+    assert b["lrfd"]["col"]["long_check"]["enforced"] == "none"
+    assert b["lrfd"]["shaft"]["long_check"]["enforced"] == "none"
+    assert cl.long_check_summary({"bars_terminated": True}, [])["enforced"] == "all"
+
+
+def test_slender_K_default_and_report_fields():
+    """K_source default: unbraced fixed-free Euler 2.0 with the bent warning; the result
+    lists K / source / end condition per axis (user decision 2026-10-19)."""
+    sl = {"2": {"braced": False, "K_source": "default", "end_condition": "fixed-free", "K": None,
+                "lu": None},
+          "3": {"braced": True, "K_source": "default", "end_condition": "fixed-fixed", "K": None,
+                "lu": None}}
+    r = ee.run_colshaft(payload([bent1(slender=sl)], settings={"slenderness_on": True}))
+    b = r["bents"][0]
+    k2, k3 = b["slender_K"]["2"], b["slender_K"]["3"]
+    assert (k2["K"], k2["source"], k2["end_condition"]) == (2.1, "default", "fixed-free")
+    assert "case (e) design value" in k2["label"] and "Table C4.6.2.5-1" in k2["label"]
+    assert (k3["K"], k3["braced"], k3["K_braced"]) == (1.0, True, 1.0)
+    assert k2["K_braced"] == 1.0 and k2["K_unbraced"] == 2.1
+    # lu = H + L_eq = 360 in, r = 15 in -> K lu / r = 50.4 (axis 2), 24 (axis 3)
+    rows = b["lrfd"]["col"]["check_rows"]
+    assert rows[0]["_klr2"] == pytest.approx(50.4) and rows[0]["_klr3"] == pytest.approx(24.0)
+    assert any("Table C4.6.2.5-1 design values" in w for w in b["warnings"])
+    # legacy payload (K, no K_source) -> analysis: no default-K warning, K as entered
+    legacy = run("slender")["bents"][0]
+    assert legacy["slender_K"]["2"]["source"] == "analysis"
+    assert legacy["slender_K"]["2"]["K"] == 2.1
+    assert not any("Default K values" in w for w in legacy["warnings"])
+    assert legacy["slender_K"]["2"]["K_braced"] == 1.0          # legacy: no K_braced
+    # slenderness off: no slender_K
+    assert "slender_K" not in run("2b")["bents"][0]
+
+
+def test_slender_unbraced_analysis_K_below_one_warns():
+    sl = {"2": {"braced": False, "K_source": "analysis", "K": 0.8, "lu": None},
+          "3": {"braced": False, "K_source": "analysis", "K": 1.2, "lu": None}}
+    b = ee.run_colshaft(payload([bent1(slender=sl)], settings={"slenderness_on": True}))["bents"][0]
+    assert b["slender_K"]["2"]["K"] == 0.8
+    assert any("below the C5.6.4.3 floor" in w for w in b["warnings"])
+    bad = {"2": {"braced": False, "K_source": "analysis", "K": 0.0, "lu": None},
+           "3": {"braced": False, "K_source": "analysis", "K": 1.2, "lu": None}}
+    with pytest.raises(ValueError, match="buckling analysis"):
+        ee.run_colshaft(payload([bent1(slender=bad)], settings={"slenderness_on": True}))
+
+
+# ── review fix round 1 (rulings MF-2, MF-3, MF-5) ───────────────────
+
+def _fake_res(pe, final=None):
+    return {"status": "OK", "warnings": [], "final": final or {
+        "col_long": {"bar": 11, "n": 15, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0, "ties": 0}},
+        "magnification": {"Pe_s": {"2": pe, "3": pe}, "Pu_cases": [["C", "S", 100.0]]}}
+
+
+def test_sway_pass2_consistency_member_gets_lighter():
+    """MF-2: member 0 gets lighter in pass 2 (Pe_s 1000 -> 800): pass 2 is repeated with
+    min(counted, latest) so member 1 finally counts 800 for it; then consistent."""
+    specs = [{"name": "A", "sway_group": "G"}, {"name": "B", "sway_group": "G"}]
+    results = [_fake_res(1000.0), _fake_res(1000.0)]
+    calls = []
+
+    def rerun(spec, ctx):
+        calls.append((spec["name"], ctx["Pe_others"]["2"], spec.get("override")))
+        return _fake_res(800.0 if spec["name"] == "A" else 1000.0)
+    ee.sway_pass2(specs, results, rerun)
+    assert [c[:2] for c in calls] == [("A", 1000.0), ("B", 1000.0), ("A", 1000.0), ("B", 800.0)]
+    assert all(c[2] is None for c in calls)
+    assert any("pass 2 repeated 2 times" in w for w in results[0]["warnings"])
+
+
+def test_sway_pass2_inconsistent_after_max_iter_check_only():
+    """MF-2: a member that keeps getting lighter -> warning after 3 runs and a final
+    check-only run (final column cages as overrides) with the minimum Pe_s values."""
+    specs = [{"name": "A", "sway_group": "G"}, {"name": "B", "sway_group": "G"}]
+    results = [_fake_res(1000.0), _fake_res(1000.0)]
+    calls = []
+    pe = {"A": 1000.0}
+
+    seen_specs = []
+
+    def rerun(spec, ctx):
+        seen_specs.append(spec)
+        calls.append((spec["name"], ctx["Pe_others"]["2"], spec.get("override")))
+        if spec["name"] == "A" and not spec.get("override"):
+            pe["A"] -= 100.0
+        return _fake_res(pe["A"] if spec["name"] == "A" else 1000.0)
+    ee.sway_pass2(specs, results, rerun)
+    assert len(calls) == 2 * ee.SWAY_MAX_ITER + 2
+    last_b = [c for c in calls if c[0] == "B"][-1]
+    assert last_b[1] == pytest.approx(700.0)            # the minimum A value
+    assert calls[-2][2]["col_long"] == {"bar": 11, "n": 15, "bundle": 1}
+    assert calls[-2][2]["col_trans"] == {"bar": 5, "s": 6.0, "ties": 0}
+    assert all(sp.get("_check_only") for sp in seen_specs[-2:])
+    assert any("not consistent after 3 pass-2 runs" in w for w in results[1]["warnings"])
+
+
+def test_sway_context_member_mode_key():
+    """MF-3: collapsed member rows -> the others' maximum compression over all cases."""
+    infos = [{"Pe_s": {"2": 1.0, "3": 1.0}, "Pu_cases": [["C", "S", 10.0], ["D", None, 50.0]]},
+             {"Pe_s": {"2": 1.0, "3": 1.0}, "Pu_cases": [["C", "S", 20.0], ["E", "x", 70.0]]},
+             {"Pe_s": {"2": 1.0, "3": 1.0}, "Pu_cases": [["C", "S", 30.0]]}]
+    import colshaft_slender as csl
+    assert ee.sway_context("G", infos, 0)["Pu_others"][csl.MEMBER_KEY] == pytest.approx(100.0)
+    assert ee.sway_context("G", infos, 2)["Pu_others"][csl.MEMBER_KEY] == pytest.approx(120.0)
+
+
+def test_magnified_only_ng_helper():
+    row_ok = {"ok": True}
+    mag_bad = {"ok": False, "_delta2": 1.3, "_delta3": 1.0}
+    plain_bad = {"ok": False, "_delta2": 1.0, "_delta3": 1.0}
+    col_ng = {"group": "Column LRFD", "ok": False}
+    seis_ng = {"group": "Seismic", "ok": False}
+    assert ee.magnified_only_ng([row_ok, mag_bad], [col_ng], [])
+    assert ee.magnified_only_ng([{"ok": False, "_unstable": True}], [col_ng], [])
+    assert not ee.magnified_only_ng([plain_bad], [col_ng], [])
+    assert not ee.magnified_only_ng([mag_bad], [col_ng, seis_ng], [])
+    assert not ee.magnified_only_ng([row_ok], [], [])
+    assert ee.magnified_only_ng([mag_bad], [col_ng], [ee.WALK_NOSOL + " passes both ..."])
+    assert not ee.magnified_only_ng([mag_bad], [col_ng], ["Column LRFD longitudinal: ..."])
+
+
+def test_redesign_with_final_lu():
+    """MF-5: bent 2 (soil basis) designs with lu = H (Df unknown up front); at the final
+    lu = H + Df the magnified rows fail (previously NO SOLUTION from the transverse walk).
+    The column is redesigned once with the final lu: heavier steel, no NO SOLUTION."""
+    sl = {"2": {"braced": False, "K": 2.2, "lu": None}, "3": {"braced": False, "K": 2.2, "lu": None}}
+    r = ee.run_colshaft(payload([bent2(slender=sl)], settings={"slenderness_on": True}))
+    strict_json(r)
+    b = r["bents"][0]
+    assert b["redesigned_final_lu"] is True and b["lu_iterations"] == 1
+    assert b["no_solution"] == [] and b["status"] != "NO SOLUTION"
+    assert b["final"]["col_long"]["Ast"] > run("2b")["bents"][1]["final"]["col_long"]["Ast"]
+    assert b["warnings"][0].startswith("slenderness: column redesigned 1 time(s) with the final ℓu")
+    assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
+    # an override is never redesigned
+    ov = {"col_long": {"bar": 11, "n": 15, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    r2 = ee.run_colshaft(payload([bent2(slender=sl, override=ov)], settings={"slenderness_on": True}))
+    assert "redesigned_final_lu" not in r2["bents"][0]
+
+
+# ── review fix round 2 (rulings MF-5b, MF-2 label) ──────────────────
+
+def _sl(K):
+    return {"2": {"braced": False, "K": K, "lu": None}, "3": {"braced": False, "K": K, "lu": None}}
+
+
+def test_lu_iteration_converges_or_reports():
+    """MF-5b/5c: bent 2, K = 2.3 needs two redesigns (the heavier column deepens Df) and
+    then passes the LRFD rows; K = 2.4 settles within 1 % but still fails at the final lu,
+    so the final MF-5c redesign for max(lu) x 1.02 is kept (it passes)."""
+    b = ee.run_colshaft(payload([bent2(slender=_sl(2.3))],
+                                settings={"slenderness_on": True}))["bents"][0]
+    assert b["lu_iterations"] == 2 and b["no_solution"] == []
+    assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
+    assert b["warnings"][0].startswith("slenderness: column redesigned 2 time(s)")
+    assert not any("did not converge" in w for w in b["warnings"])
+    b = ee.run_colshaft(payload([bent2(slender=_sl(2.4))],
+                                settings={"slenderness_on": True}))["bents"][0]
+    # MF-5c: designed for max(lu seen) x 1.02 -> passes at its own final lu (before: the
+    # ~1 % Df residual left the transverse walk with NO SOLUTION)
+    assert b["lu_iterations"] >= 1 and b["lu_margin"] == ee.LU_MARGIN == 1.02
+    assert b["no_solution"] == [] and b["status"] != "NO SOLUTION"
+    assert all(x["ok"] for x in b["lrfd"]["col"]["check_rows"])
+    assert b["warnings"][0].startswith("slenderness: column designed for ℓu × 1.02")
+    assert "lu_margin" not in run("slender")["bents"][0]
+    # off / no redesign needed: 0 iterations
+    assert run("slender")["bents"][0]["lu_iterations"] == 0
+
+
+def test_lu_iteration_stops_at_max(monkeypatch):
+    """MF-5b: never more than LU_MAX_ITER redesigns; then the non-convergence warning."""
+    monkeypatch.setattr(ee, "lu_not_settled", lambda bent, Df, Df0, H: True)
+    monkeypatch.setattr(ee, "magnified_only_ng", lambda *a: True)
+    b = ee.run_colshaft(payload([bent1()], settings={"slenderness_on": True}))["bents"][0]
+    assert b["lu_iterations"] == ee.LU_MAX_ITER == 4
+    # O3: the margin run (accepted here) resolved it; no stale "last result kept" text
+    assert b["lu_margin"] == 1.02
+    assert any("did not converge after 4 redesigns; resolved by the margin run" in w
+               for w in b["warnings"])
+    assert not any("last result kept" in w for w in b["warnings"])
+
+
+def test_margin_run_rejected_warning(monkeypatch):
+    """O3: a margin run that does not pass is dropped with a warning."""
+    orig = ee.run_bent
+
+    def fake(*a, **k):
+        if k.get("lu_margin"):
+            return {"no_solution": ["x"], "status": "NO SOLUTION", "lrfd": {}, "warnings": []}
+        return orig(*a, **k)
+    monkeypatch.setattr(ee, "run_bent", fake)
+    monkeypatch.setattr(ee, "lu_not_settled", lambda bent, Df, Df0, H: False)
+    monkeypatch.setattr(ee, "magnified_only_ng", lambda *a: True)
+    b = ee.run_colshaft(payload([bent1()], settings={"slenderness_on": True}))["bents"][0]
+    assert "lu_margin" not in b and b["lu_iterations"] == 0
+    assert any("margin redesign at ℓu × 1.02 tried; did not pass" in w for w in b["warnings"])
+
+
+def test_lu_not_settled_uses_actual_axis_lu():
+    """O2: compares the ℓu each axis uses; explicit ℓu on both axes never loops."""
+    both = {"slender": {"2": {"lu": 500.0}, "3": {"lu": 600.0}}}
+    assert not ee.lu_not_settled(both, 300.0, 0.0, 240.0) and not ee.default_lu_axes(both)
+    one = {"slender": {"2": {"lu": 500.0}, "3": {"lu": None}}}
+    assert ee.lu_not_settled(one, 300.0, 0.0, 240.0) and ee.default_lu_axes(one)
+    assert not ee.lu_not_settled(one, 300.0, 297.0, 240.0)       # 3 in of 540 in < 1 %
+    assert ee.axis_lu(one, 240.0, 300.0) == {"2": 500.0, "3": 540.0}
+
+
+def test_check_only_source_label():
+    """MF-2: the sway check-only run labels the column cages "LRFD (sway check-only)",
+    never "Override"; a real user override still says "Override"."""
+    ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    b = ee.run_colshaft(payload([bent1(override=ov, _check_only=["col_long", "col_trans"])]))["bents"][0]
+    assert b["final_source"]["col_long"] == ee.SRC_CHECK_ONLY == "LRFD (sway check-only)"
+    assert b["final_source"]["col_trans"] == ee.SRC_CHECK_ONLY
+    b = ee.run_colshaft(payload([bent1(override=ov)]))["bents"][0]
+    assert b["final_source"]["col_long"] == "Override"
+
+
+
+def test_check_only_spec_keeps_user_override():
+    """O1: only the cages the check-only run adds are labelled check-only."""
+    res = _fake_res(1.0)
+    sp = ee._check_only_spec({"name": "A", "override": {"col_long": {"bar": 10, "n": 20}}}, res)
+    assert sp["_check_only"] == ["col_trans"]
+    assert sp["override"]["col_long"] == {"bar": 10, "n": 20}
+    assert sp["override"]["col_trans"] == {"bar": 5, "s": 6.0, "ties": 0}
+    ov = {"col_long": {"bar": 14, "n": 13, "bundle": 1}, "col_trans": {"bar": 5, "s": 6.0}}
+    b = ee.run_colshaft(payload([bent1(override=ov, _check_only=["col_trans"])]))["bents"][0]
+    assert b["final_source"]["col_long"] == "Override"
+    assert b["final_source"]["col_trans"] == ee.SRC_CHECK_ONLY
+
+
+# ── Ruling C-1: real concurrent (correspondence) CSiBridge output ───
+
+def test_end_to_end_concurrent_correspondence_fixture():
+    """The user's concurrent sample (StepType "Max P" / "Min P") vs the envelope sample of
+    the same frame: concurrent rows need less column steel; cage pinned as a regression."""
+    col = dict(D=96.0, fc=4.0, fy=60.0, cover=2.0, trans_type="hoop", hoop_closure="lap")
+    shaft = dict(D=120.0, fc=4.0, fy=60.0, cover=3.0, trans_type="hoop", hoop_closure="lap")
+
+    def one(paste):
+        return ee.run_colshaft(payload([
+            {"name": "A", "col_frames": ["1227"], "column": dict(col), "shaft": dict(shaft),
+             "P_dead": -2500.0, "shaft_basis": "cantilever", "L_eq_in": 120.0}], paste=paste))
+    rc = one(_read("frame1227_strI1_concurrent.txt"))
+    strict_json(rc)
+    assert rc["parse"]["n_rows"] == 6 and rc["parse"]["n_envelope"] == 0
+    b = rc["bents"][0]
+    assert b["status"] == "OK"
+    assert all(x["_bound"] == "concurrent" for x in b["lrfd"]["col"]["check_rows"])
+    re_ = one(PASTE_1227)["bents"][0]
+    assert b["final"]["col_long"]["Ast"] < re_["final"]["col_long"]["Ast"]
+    fl, ft = b["final"]["col_long"], b["final"]["col_trans"]
+    assert (fl["bar"], fl["n"], fl["bundle"]) == (14, 33, 1)
+    assert fl["Ast"] == pytest.approx(74.25)
+    assert (ft["bar"], ft["s"], ft["ties"]) == (7, 3.75, 0)

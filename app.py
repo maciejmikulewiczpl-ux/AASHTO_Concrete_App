@@ -17,6 +17,17 @@ def get_html():
         base = os.path.dirname(os.path.abspath(__file__))
 
     html_path = os.path.join(base, 'index.html')
+    # The window gets the HTML as a string (no base URL), so a relative
+    # <script src> cannot load: inline colshaft.js (Column on Shaft tab).
+    # Without colshaft.js the tag is left unchanged.
+    js_path = os.path.join(base, 'colshaft.js')
+    if os.path.exists(html_path) and os.path.exists(js_path):
+        with open(html_path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        with open(js_path, 'r', encoding='utf-8') as f:
+            js = f.read()
+        return html.replace('<script src="colshaft.js"></script>',
+                            '<script>\n' + js + '\n</script>', 1)
     if os.path.exists(html_path):
         with open(html_path, 'r', encoding='utf-8') as f:
             return f.read()

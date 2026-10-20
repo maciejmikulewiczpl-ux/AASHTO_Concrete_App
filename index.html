@@ -391,6 +391,7 @@ canvas { width: 100% !important; height: 100% !important; }
   <button class="tab-btn" data-tab="report">Report</button>
   <button class="tab-btn" data-tab="summary">Project Summary</button>
   <button class="tab-btn" data-tab="limitations">Limitations</button>
+  <button class="tab-btn" data-tab="colshaft">Column on Shaft</button>
 </div>
 
 <div class="content">
@@ -1048,7 +1049,25 @@ canvas { width: 100% !important; height: 100% !important; }
       </ul>
     </div>
   </div>
+  <div class="card" style="margin-top:14px;">
+    <div class="card-header" style="background:linear-gradient(135deg,#e67e22,#f39c12);">Column on Shaft</div>
+    <div class="card-body">
+      <ul style="font-size:0.88rem;line-height:1.7;color:#333;">
+        <li><b>Not modelled</b> &mdash; displacement demand and capacity, ductility demand, balanced stiffness and column silos stay in the separate seismic app. Enter &mu;<sub>D</sub> and any override reinforcement here. The p-y analysis is used only for the shaft's in-ground moment and shear and the equivalent fixity depth.</li>
+        <li><b>Slenderness: approximate moment magnification</b> &mdash; optional K&#8467;<sub>u</sub>/r screen (&sect;5.6.4.3) and moment magnification per AASHTO Art. 4.5.3.2.2b (user-supplied text): M<sub>c</sub> = max(&delta;<sub>b</sub>, &delta;<sub>s</sub>)&middot;M<sub>2</sub> per axis (conservative bound &mdash; the CSiBridge rows do not separate gravity and sway moments), C<sub>m</sub> = 1.0 for unbraced axes, EI per &sect;5.6.4.3, sway groups by a two-pass approximation, default K from Table C4.6.2.5-1. K&#8467;<sub>u</sub>/r &ge; 100 reports &ldquo;refined analysis required&rdquo;; P<sub>u</sub> &ge; &phi;<sub>K</sub>&middot;P<sub>e</sub> reports UNSTABLE. No refined P-&Delta; analysis.</li>
+        <li><b>No service-limit crack control</b> for the column or the shaft (open decision S4).</li>
+        <li><b>Circular members only</b> &mdash; circular column on a circular (oversized) shaft. No rectangular, I- or box members, no prestressing.</li>
+        <li><b>Envelope rows bounded conservatively</b> &mdash; CSiBridge Max/Min rows are not concurrent. Biaxial M and V are combined from the envelope maxima (up to &radic;2 conservative), shear-side checks use the least compression and flexure the worst axial load in the range; results are labelled &ldquo;envelope-bounded (conservative)&rdquo;.</li>
+        <li><b>No direct CSiBridge read</b> &mdash; paste the &ldquo;Element Forces - Frames&rdquo; table. Reading results through the CSiBridge API is a later phase.</li>
+        <li><b>Ported seismic provisions</b> &mdash; overstrength, column and shaft seismic shear, minimum transverse steel, detailing, the shaft demand factor and the p-y soil springs come from the Seismic Column app (pinned port) and keep its references, which are not yet verified against the printed codes (OPEN_VERIFICATION_ITEMS section E). Extreme rows set only the axial range for M-&phi; and the seismic V<sub>c</sub> (S2); the shaft flexural capacity is the M-&phi; expected M<sub>p</sub> (S3).</li>
+        <li><b>Seismic detailing checks not ported</b> &mdash; the Seismic Column app's &ldquo;Longitudinal bar spacing (max)&rdquo; (SDC) and &ldquo;Longitudinal bar diameter (bond)&rdquo; (SGS) checks are not run here; check them in the seismic app. (The maximum-axial checks &mdash; SDC &ldquo;Axial load ratio&rdquo;, SGS &ldquo;Maximum axial load&rdquo; &mdash; are ported, at P<sub>dead</sub>.)</li>
+        <li><b>Expected steel</b> &mdash; f<sub>ye</sub> / f<sub>ue</sub> / f<sub>yh</sub> default to the A706 Gr60 values (68 / 95 / 68 ksi) only when f<sub>y</sub> = 60 ksi; any other grade must enter them, and &lambda;<sub>mo</sub> = 1.2 (the A706 Gr60 value) must be checked.</li>
+      </ul>
+    </div>
+  </div>
 </div>
+
+<div class="tab-panel" id="tab-colshaft" data-title="Column on Shaft"></div>
 
 </div>
 
@@ -1540,6 +1559,7 @@ function saveProjectQuick(){
   saveCurrentSectionState();
   try{ readOptParamsFromDOM(); }catch(e){}
   const project={version:1,activeSection:activeSection,sections:sections,optParams:optParams,displayUnits:displayUnits};
+  project.columnShaft=(window.ColShaft? window.ColShaft.getState(): undefined);
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project_to_path){
     window.pywebview.api.save_project_to_path(json, currentFilePath).then(res=>{
@@ -1560,6 +1580,7 @@ function saveProject(){
     activeSection:activeSection,
     sections:sections,
     optParams:optParams,
+    columnShaft:(window.ColShaft? window.ColShaft.getState(): undefined),
     displayUnits:displayUnits
   };
   const json=JSON.stringify(project,null,2);
@@ -1642,6 +1663,7 @@ function applyProjectData(data){
     try{ localStorage.setItem('displayUnits', JSON.stringify(displayUnits)); }catch(e){}
   }
   loadSectionState(activeSection);
+  if(window.ColShaft) window.ColShaft.setState(data.columnShaft||null);
   updateSectionDropdown();
   updateFileDisplay(data._filepath||null);
   clearDirty();
@@ -8683,6 +8705,7 @@ document.addEventListener('keydown',(e)=>{
 // Initialise file display on load
 updateFileDisplay(null);
 </script>
+<script src="colshaft.js"></script>
 <!-- Optimization Preview Modal -->
 <div class="mr-overlay" id="optPreviewOverlay" onclick="if(event.target===this)closeOptPreview()">
   <div class="opt-preview-modal">
