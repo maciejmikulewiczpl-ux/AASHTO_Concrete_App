@@ -1137,6 +1137,7 @@ function writeOptParamsToDOM(){
 /* ---------- Default state for a brand-new section ---------- */
 function getDefaultSectionState(){
   return {
+    units: {force:'kip', length:'in'},
     inputs: {
       fc:5, fy:60, fy_trans:60, Es:29000, fpu:270, Ept:28500, ag:0.75, lam:1,
       phi_v:0.9, gamma_e:0.75, codeEdition:'CA', sectionClass:'CIP_PT', astm_spec:'A615_60',
@@ -1172,6 +1173,8 @@ function getDefaultSectionState(){
 function saveCurrentSectionState(){
   if(!activeSection) return;
   const state = {};
+  // Field values are stored in display units; record which ones so loadSectionState can convert.
+  state.units = {...displayUnits};
 
   // Inputs — read from DOM elements
   state.inputs = {
@@ -1292,6 +1295,12 @@ function loadSectionState(name){
   const state = sections[name];
   if(!state) return;
   _sectionSwitching = true;
+  // Fill the form in the state's own units, then convert to the current display units.
+  // Untagged (older) states are assumed to be in the current display units.
+  const curUnits = {...displayUnits};
+  const stateUnits = state.units || curUnits;
+  const unitsDiffer = stateUnits.force !== curUnits.force || stateUnits.length !== curUnits.length;
+  displayUnits = {...stateUnits};
 
   const inp = state.inputs;
 
@@ -1379,7 +1388,7 @@ function loadSectionState(name){
   document.getElementById('at_add_spacing_row').style.display = (inp.at_add_bar_N > 0) ? 'flex' : 'none';
 
   // Circular section (older saves have none of these keys → defaults)
-  setV('circ_D', inp.circ_D != null ? inp.circ_D : 36);
+  setV('circ_D', inp.circ_D != null ? inp.circ_D : fromEngine(36, 'length'));
   document.getElementById('circ_bar1').value = inp.circ_bar1 || 9;
   setV('circ_n1', inp.circ_n1 != null ? inp.circ_n1 : 12);
   document.getElementById('circ_bundle1').value = inp.circ_bundle1 || 1;
@@ -1387,7 +1396,7 @@ function loadSectionState(name){
   document.getElementById('circ_bar2').value = inp.circ_bar2 || 8;
   setV('circ_n2', inp.circ_n2 != null ? inp.circ_n2 : 8);
   document.getElementById('circ_bundle2').value = inp.circ_bundle2 || 1;
-  setV('circ_Dr2', inp.circ_Dr2 != null ? inp.circ_Dr2 : 20);
+  setV('circ_Dr2', inp.circ_Dr2 != null ? inp.circ_Dr2 : fromEngine(20, 'length'));
   document.getElementById('circ_trans_type').value = inp.circ_trans_type || 'hoop';
   document.getElementById('circ_hoop_closure').value = inp.circ_hoop_closure || 'lap';
   setV('circ_tie_legs', inp.circ_tie_legs != null ? inp.circ_tie_legs : 0);
@@ -1459,10 +1468,12 @@ function loadSectionState(name){
   syncApsToTab();
 
   _sectionSwitching = false;
+  displayUnits = curUnits;
 
   // Recalculate
   try{drawCrossSection();}catch(e){}
-  runAllCalculations();
+  if(unitsDiffer) applyUnits(stateUnits);
+  else runAllCalculations();
   setTimeout(()=>runPtCalc(),300);
 }
 
@@ -4069,7 +4080,7 @@ function applyAstmFy(){
       el.classList.remove('auto-calc');
       if(noteEl) noteEl.textContent = 'Override (manual)';
     } else {
-      el.value = spec.fy;
+      el.value = +fromEngine(spec.fy, 'stress').toFixed(4);
       el.readOnly = true;
       el.classList.add('auto-calc');
       if(noteEl) noteEl.textContent = spec.note;
