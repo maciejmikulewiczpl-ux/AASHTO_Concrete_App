@@ -1400,6 +1400,57 @@
     return h;
   }
 
+  // ── Instructions box (static help; no user text, so no escaping needed) ──
+  var INSTRUCTIONS_HTML = [
+    '<h4>1. Workflow</h4><ol>',
+    '<li>Paste the CSiBridge table <i>Element Forces &ndash; Frames</i> (Frame, Station, OutputCase, StepType, P, V2, V3, T, M2, M3) and click <b>Parse</b>. ',
+    'Units are read from the units row (else the unit dropdowns). Duplicate stations at sub-element joints are merged; malformed numbers stop the parse.</li>',
+    '<li>Check the load-case table: <b>Strength</b> rows are designed, <b>Dead</b> cases are summed into P<sub>dead</sub>, <b>Extreme</b> cases only set the seismic axial range, <b>Ignore</b> is skipped.</li>',
+    '<li>Per bent fill the inputs in <span style="color:#c0392b;font-weight:600">red</span> (column frames, D, D<sub>s</sub>, pile support); everything else has defaults under <i>Advanced</i>. Click <b>Design</b>.</li>',
+    '<li>Read the results grid / drill-down, optionally enter overrides (they are never changed, only checked), print the report.</li></ol>',
+    '<h4>2. Load effects</h4><ul>',
+    '<li>Circular section, so resultants: M<sub>u</sub> = &radic;(M2&sup2;+M3&sup2;), V<sub>u</sub> = &radic;(V2&sup2;+V3&sup2;), T<sub>u</sub> = |T|, P<sub>u</sub> = P (tension +, compression &minus;).</li>',
+    '<li><b>Concurrent</b> rows (StepType blank, &ldquo;Step n&rdquo;, or correspondence &ldquo;Max P&rdquo;/&ldquo;Min P&rdquo;&hellip;) are used as they are. ',
+    '<b>Envelope</b> rows (StepType &ldquo;Max&rdquo;/&ldquo;Min&rdquo;) are bounded conservatively: shear/torsion at the least compression, flexure at the worst P between P<sub>min</sub> and P<sub>max</sub>, ',
+    'magnification at the most compression; combining component maxima is conservative by up to &radic;2. <i>Member</i> mode collapses all stations into one row (fastest, most conservative).</li>',
+    '<li>Column base = the frame end with more compression (self-weight); H = frame station span unless entered &mdash; for a fixed top use the <b>clear</b> height.</li></ul>',
+    '<h4>3. Strength design &ndash; AASHTO LRFD 10th Ed., Ch. 5 (the app&rsquo;s circular engine)</h4><ul>',
+    '<li>Flexure + axial: strain-compatibility P&ndash;M of the circular section; both faces checked, the lower M<sub>r</sub> governs. &ge; 6 bars (&sect;5.6.4.2); &rho;<sub>l</sub> limits from the selected seismic code.</li>',
+    '<li>Shear: General Procedure &sect;5.7.3.4.2 (b<sub>v</sub> = D, d<sub>v</sub> = max(0.9d<sub>e</sub>, 0.72D)); torsion &sect;5.7.3.6. Longitudinal steel for V+T: Eq. 5.7.3.6.3-1 always where torsion must be considered; ',
+    'Eq. 5.7.3.5-1 only when <i>bars terminated</i> is ticked (&sect;5.7.3.5: &ldquo;evaluated &hellip; where longitudinal reinforcement is discontinuous&rdquo;).</li>',
+    '<li>Search: the lightest longitudinal cage (bar size, count, bundles) passing every row, then the lightest hoop/spiral (bar, pitch); longitudinal steel is stepped up if a shear-side check needs it.</li></ul>',
+    '<h4>4. Slenderness (optional; one axis, unbraced by default)</h4><ul>',
+    '<li>r = 0.25D (C5.6.4.3); &#8467;<sub>u</sub> = H + fixity depth (p-y equivalent depth or L<sub>eq</sub>). Neglected if K&#8467;<sub>u</sub>/r &lt; 22 (&sect;5.6.4.3); &ge; 100 &rarr; &ldquo;refined analysis required&rdquo; (&sect;5.6.4.1).</li>',
+    '<li>K default (Table C4.6.2.5-1 design values): cantilever top 2.1, fixed top with sway 1.2, braced 1.0; a buckling-analysis K overrides.</li>',
+    '<li>Art. 4.5.3.2.2b: &delta;<sub>s</sub> = 1/(1 &minus; &Sigma;P<sub>u</sub>/(&phi;<sub>K</sub>&Sigma;P<sub>e</sub>)), &delta;<sub>b</sub> = C<sub>m</sub>/(1 &minus; P<sub>u</sub>/(&phi;<sub>K</sub>P<sub>e</sub>)) &ge; 1.0, &phi;<sub>K</sub> = 0.75, ',
+    'P<sub>e</sub> = &pi;&sup2;EI/(K&#8467;<sub>u</sub>)&sup2;; EI = max[(E<sub>c</sub>I<sub>g</sub>/5 + E<sub>s</sub>I<sub>s</sub>)/(1+&beta;<sub>d</sub>), (E<sub>c</sub>I<sub>g</sub>/2.5)/(1+&beta;<sub>d</sub>)] (Eqs. 5.6.4.3-1/-2).</li>',
+    '<li>M<sub>c</sub> = max(&delta;<sub>b</sub>, &delta;<sub>s</sub>)&middot;M<sub>u</sub> (CSiBridge does not split gravity/sway moments, so this bounds &delta;<sub>b</sub>M<sub>2b</sub> + &delta;<sub>s</sub>M<sub>2s</sub>); C<sub>m</sub> = 1.0 unless braced; ',
+    '&beta;<sub>d</sub> = &gamma;<sub>p</sub>&middot;&Sigma;|M<sub>dead</sub>| / M<sub>u,max</sub> &le; 1. P<sub>u</sub> &ge; &phi;<sub>K</sub>P<sub>e</sub> &rarr; UNSTABLE. Bents sharing a <i>sway group</i> sum &Sigma;P<sub>u</sub>, &Sigma;P<sub>e</sub> (two-pass).</li></ul>',
+    '<h4>5. Seismic capacity design (Caltrans SDC 2.1 or AASHTO SGS 3rd Ed.)</h4><ul>',
+    '<li>Moment&ndash;curvature (fibre section, Mander confined concrete, expected f&prime;<sub>ce</sub> = 1.3f&prime;<sub>c</sub> (SDC: &ge; 5 ksi), A706 Gr60 f<sub>ye</sub>/f<sub>ue</sub>/f<sub>yh</sub> = 68/95/68 ksi; other grades must be entered) &rarr; bilinear M<sub>p</sub>.</li>',
+    '<li>M<sub>o</sub> = &lambda;<sub>mo</sub>&middot;max M<sub>p</sub> (&lambda;<sub>mo</sub> = 1.2) over P<sub>dead</sub> and the Extreme axial range; V<sub>o</sub> = M<sub>o</sub>/H (cantilever) or 2M<sub>o</sub>/H (fixed top).</li>',
+    '<li>Column: seismic shear &phi;V<sub>n</sub> &ge; V<sub>o</sub> (code V<sub>c</sub> model, &mu;<sub>D</sub> default = code limit, least compression), minimum confinement &rho;<sub>s</sub>, spacing and maximum-axial limits.</li>',
+    '<li>Shaft: M<sub>o</sub>, V<sub>o</sub> applied at the top of the shaft. Demand down the shaft from the equivalent cantilever M(z) = M<sub>o</sub> + V<sub>o</sub>z to L<sub>eq</sub>, ',
+    'or a nonlinear p-y beam on layered soil (Matlock / Reese-Welch clay, API sand; soil stiffness &times;2 and &times;0.5 enveloped; any unstable bound &rarr; NG). ',
+    'Checks: shaft M<sub>p</sub> &ge; demand factor &times; M<sub>max</sub> (SGS 1.25, SDC 1.0), shaft &phi;V<sub>n</sub> &ge; V<sub>max</sub>, shaft confinement and oversize D<sub>s</sub> &minus; D.</li>',
+    '<li>The shaft is also designed for the Strength rows (pasted shaft frames, or the column base forces taken down the shaft).</li></ul>',
+    '<h4>6. Final cage and status</h4><ul>',
+    '<li>Final = override, else the heavier of the LRFD and seismic requirements, re-checked as a whole. Status: NO SOLUTION &gt; UNSTABLE &gt; REFINED ANALYSIS REQUIRED &gt; NG &gt; OK.</li></ul>',
+    '<h4>7. Assumptions and limits</h4><ul>',
+    '<li>Circular column and circular oversized CIDH shaft only; non-prestressed; columns unbraced unless set otherwise; same restraint in both directions (single slenderness axis).</li>',
+    '<li>No displacement, ductility or balanced-stiffness checks (use the seismic app and enter the cage as an override); no service crack-control check; Extreme rows are not LRFD-checked.</li>',
+    '<li>P<sub>dead</sub> = sum of the Dead cases at the column base; check the case categories. &ldquo;Tonf&rdquo; = metric tonne-force.</li>',
+    '<li>The seismic provisions are ported from the seismic-column app; their code references are <b>not yet verified</b> against the printed codes (OPEN_VERIFICATION_ITEMS E1&ndash;E11), and several engineering choices await a decision (E13&ndash;E23). ',
+    'Verify critical results independently.</li></ul>'
+  ].join('');
+
+  function instructionsBox(open) {
+    return '<details id="cs-instructions"' + (open ? ' open' : '') +
+      ' style="margin-bottom:14px;border:1px solid #2e86c1;border-radius:6px;background:#f4f9fd;padding:6px 12px;">' +
+      '<summary style="cursor:pointer;font-weight:600;color:#1b4f72;">Instructions &ndash; how this tool works, equations and assumptions</summary>' +
+      '<div style="font-size:0.8rem;line-height:1.45;">' + INSTRUCTIONS_HTML + '</div></details>';
+  }
+
   var api = {
     CODES: CODES, CATEGORIES: CATEGORIES, PY_MODELS: PY_MODELS, DEFAULT_PARAMS: DEFAULT_PARAMS,
     STATUS_COLORS: STATUS_COLORS, STATUS_RANK: STATUS_RANK,
@@ -1426,7 +1477,8 @@
     derivedEnd: derivedEnd, singleAxis: singleAxis, pickLegacyAxis: pickLegacyAxis, isSingleSpec: isSingleSpec,
     requiredMissing: requiredMissing, canDesign: canDesign, requiredSummary: requiredSummary, pDeadRequired: pDeadRequired,
     hasDeadCases: hasDeadCases, slenderKText: slenderKText, pasteSig: pasteSig, materialsText: materialsText,
-    getMigrationNotes: function () { return migrationNotes.slice(); }
+    getMigrationNotes: function () { return migrationNotes.slice(); },
+    INSTRUCTIONS_HTML: INSTRUCTIONS_HTML, instructionsBox: instructionsBox
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -1954,7 +2006,9 @@
     }
   }
   function renderAll() {
-    panel.innerHTML = '<div style="padding:4px 0;"><div id="cs-migration">' + migrationHtml() + '</div><div id="cs-min-inputs"></div>' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
+    var instr = document.getElementById('cs-instructions');
+    var instrOpen = !!(instr && instr.open);
+    panel.innerHTML = '<div style="padding:4px 0;">' + instructionsBox(instrOpen) + '<div id="cs-migration">' + migrationHtml() + '</div><div id="cs-min-inputs"></div>' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
       renderRun() + '<div id="cs-results"></div>' + renderReportCard() + '</div>';
     renderResults();
     refreshRequired();

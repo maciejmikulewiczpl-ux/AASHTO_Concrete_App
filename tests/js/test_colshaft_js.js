@@ -1045,6 +1045,21 @@ test('P_dead: a parse of a different paste is stale (unknown); name and bents ar
     'Materials: column f′c 4 ksi, fy 60 ksi; shaft f′c 4 ksi, fy 60 ksi; cover 2 / 3 in (edit in Advanced)');
 });
 
+test('instructions box: closed by default, covers workflow, equations and assumptions', () => {
+  const box = CS.instructionsBox(false);
+  assert.ok(box.startsWith('<details id="cs-instructions"'));
+  assert.ok(!/<details[^>]* open/.test(box));
+  assert.ok(/<details[^>]* open/.test(CS.instructionsBox(true)));
+  const h = CS.INSTRUCTIONS_HTML.replace(/&sect;/g, '§');
+  ['1. Workflow', '2. Load effects', '3. Strength design', '4. Slenderness', '5. Seismic capacity design',
+   '6. Final cage and status', '7. Assumptions and limits'].forEach(s => assert.ok(h.indexOf(s) >= 0, s));
+  // only citations verified in the app / supplied by the user
+  ['§5.7.3.4.2', 'Eq. 5.7.3.6.3-1', 'Eq. 5.7.3.5-1', '§5.6.4.2', '§5.6.4.3', 'C5.6.4.3', '§5.6.4.1',
+   'Art. 4.5.3.2.2b', 'Table C4.6.2.5-1', 'Eqs. 5.6.4.3-1/-2'].forEach(s => assert.ok(h.indexOf(s) >= 0, s));
+  ['E1&ndash;E11', 'E13&ndash;E23', 'not yet verified'].forEach(s => assert.ok(h.indexOf(s) >= 0, s));
+  assert.ok(h.indexOf('</script') < 0);
+});
+
 // --dump-slender <path>: bent B1 alone with the slenderness screen on and an analysis K 2.1
 // (single spec, ruling U-1) for tests/test_colshaft_ui_static.py
 const ds = process.argv.indexOf('--dump-slender');
