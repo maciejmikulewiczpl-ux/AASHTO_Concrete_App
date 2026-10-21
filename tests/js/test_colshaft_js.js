@@ -722,10 +722,10 @@ test('braced K / sway group (ruling M2 / M9): defaults, legacy migration, payloa
   // unbraced axis: both K values reported, the hint names both
   const t = CS.kInfoText({ braced: false, K_source: 'default', end_condition: 'fixed-fixed' });
   assert.ok(/unbraced \(δs\) K = 1.2/.test(t) && /braced \(δb\) K = 1.0/.test(t), t);
-  // legacy state (no K_braced), ruling U-6: the braced axis 3 with an analysis K 0.8 keeps it as
-  // the braced K; axis 2 (unbraced, K 2.1) has the larger K·ℓu and is the one kept
+  // legacy state (no K_braced), rulings U-6 / U-6b: axis 2 is unbraced -> unbraced spec from axis 2;
+  // the braced axis 3's analysis K 0.8 is carried over as the braced K (δb) only
   const st = CS.normalizeState({ bents: [{ slender: { '2': { braced: false, K: 2.1 }, '3': { braced: true, K: 0.8 } } }] });
-  assert.deepStrictEqual(st.bents[0].slender, { K: 2.1, lu_ft: '', braced: false, K_braced: '', beta_d: '', gamma_p: '' });
+  assert.deepStrictEqual(st.bents[0].slender, { K: 2.1, lu_ft: '', braced: false, K_braced: 0.8, beta_d: '', gamma_p: '' });
   const st3 = CS.normalizeState({ bents: [{ slender: { '2': { braced: true, K: 0.8, lu_ft: 10 }, '3': { braced: true, K: 0.9, lu_ft: 10 } } }] });
   assert.deepStrictEqual(st3.bents[0].slender, { K: '', lu_ft: 10, braced: true, K_braced: 0.9, beta_d: '', gamma_p: '' });
   assert.strictEqual(CS.kInfo(CS.singleAxis(st3.bents[0])).K, 0.9);
@@ -985,6 +985,64 @@ test('U-1 report / drill-down: one slenderness and one magnification row for the
   assert.strictEqual((sec4.match(/<td>resultant \(axes 2 = 3\)<\/td>/g) || []).length, 2, sec4);
   assert.strictEqual((sec4.match(/<tr><td>/g) || []).length, 2, sec4);
   assert.ok(h.indexOf('one spec for the SRSS resultant') > 0);
+});
+
+// ── fix round 1 (2026-10-20 review) ──
+
+test('U-6b: either legacy axis unbraced -> unbraced spec; only a braced K is carried from a braced axis', () => {
+  const quiet = (f) => { const o = console.info; console.info = () => {}; try { return f(); } finally { console.info = o; } };
+  // repro 1: axis 2 braced ℓu 40 vs axis 3 unbraced default ℓu 18 -> unbraced, from axis 3
+  let st = quiet(() => CS.normalizeState({ bents: [{ slender: {
+    '2': { braced: true, K_source: 'default', lu_ft: 40 }, '3': { braced: false, K_source: 'default', lu_ft: 18 } } }] }));
+  assert.deepStrictEqual(st.bents[0].slender, { K: '', lu_ft: 18, braced: false, K_braced: '', beta_d: '', gamma_p: '' });
+  // repro 2: axis 2 braced with an analysis K 2.5 -> unbraced; 2.5 survives only as the braced K
+  st = quiet(() => CS.normalizeState({ bents: [{ slender: {
+    '2': { braced: true, K_source: 'analysis', K: 2.5 }, '3': { braced: false, K_source: 'default' } } }] }));
+  assert.deepStrictEqual(st.bents[0].slender, { K: '', lu_ft: '', braced: false, K_braced: 2.5, beta_d: '', gamma_p: '' });
+  assert.strictEqual(CS.kInfo(CS.singleAxis(st.bents[0])).K, 2.1);
+  // two unbraced axes: the larger unbraced K·ℓu; both braced -> stays braced
+  st = CS.normalizeState({ bents: [{ slender: { '2': { K: 1.5, lu_ft: 25 }, '3': { K: 2.0, lu_ft: 20 } } }] });
+  assert.deepStrictEqual([st.bents[0].slender.K, st.bents[0].slender.lu_ft, st.bents[0].slender.braced], [2.0, 20, false]);
+  st = CS.normalizeState({ bents: [{ slender: { '2': { braced: true }, '3': { braced: true, K_braced_source: 'analysis', K_braced: 0.9 } } }] });
+  assert.deepStrictEqual([st.bents[0].slender.braced, st.bents[0].slender.K_braced], [true, 0.9]);
+});
+
+test('migration notice: a K that changes in the conversion is listed once (dismissable in the tab)', () => {
+  const quiet = (f) => { const o = console.info; console.info = () => {}; try { return f(); } finally { console.info = o; } };
+  quiet(() => CS.normalizeState({ bents: [{ name: 'M', end_long: 'fixed-fixed', end_trans: 'fixed-fixed', slender: {
+    '2': { K_source: 'default', end_condition: 'fixed-free' }, '3': { K_source: 'default', end_condition: 'fixed-free' } } }] }));
+  const n = CS.getMigrationNotes();
+  assert.strictEqual(n.length, 1);
+  assert.ok(/Bent M/.test(n[0]) && /K changes from 2.1 to 1.2/.test(n[0]), n[0]);
+  // unchanged K -> no notice; a new-format state -> no notice
+  CS.normalizeState({ bents: [{ slender: { '2': { K: 2.1 }, '3': { K: 2.1 } } }] });
+  assert.deepStrictEqual(CS.getMigrationNotes(), []);
+  CS.normalizeState(JSON.parse(JSON.stringify(sampleState())));
+  assert.deepStrictEqual(CS.getMigrationNotes(), []);
+});
+
+test('P_dead: a parse of a different paste is stale (unknown); name and bents are ★ items; materials line', () => {
+  const s = sampleState();
+  s.parse = { cases: [{ name: 'S', count: 1, default_category: 'Strength', frames: ['101', '201'] }], frames: [], warnings: [],
+    paste_sig: CS.pasteSig(s.paste) };
+  s.categories = { S: 'Strength' };
+  const keys = (st) => CS.requiredMissing(st).map(m => (m.bent === null ? '' : m.bent + ':') + m.key);
+  assert.deepStrictEqual(keys(s), ['0:P_dead', '1:P_dead']);
+  s.paste += '\n';                                   // edited after the Parse -> unknown
+  assert.strictEqual(CS.hasDeadCases(s, s.bents[0]), null);
+  assert.deepStrictEqual(keys(s), []);
+  assert.notStrictEqual(CS.pasteSig('a'), CS.pasteSig('b'));
+  // empty name / no bents block Design and are listed
+  const t = sampleState();
+  t.bents[1].name = ' ';
+  assert.deepStrictEqual(keys(t), ['1:name']);
+  assert.ok(!CS.canDesign(t));
+  t.bents = [];
+  assert.deepStrictEqual(keys(t), ['bents']);
+  assert.ok(CS.validateState(t).indexOf('Add at least one bent.') >= 0);
+  assert.strictEqual(CS.validateState(t).filter(x => x === 'Add at least one bent.').length, 1);
+  assert.strictEqual(CS.materialsText(sampleState().bents[0]),
+    'Materials: column f′c 4 ksi, fy 60 ksi; shaft f′c 4 ksi, fy 60 ksi; cover 2 / 3 in (edit in Advanced)');
 });
 
 // --dump-slender <path>: bent B1 alone with the slenderness screen on and an analysis K 2.1

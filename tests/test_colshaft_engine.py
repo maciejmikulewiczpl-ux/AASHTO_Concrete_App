@@ -1459,3 +1459,25 @@ def test_single_spec_equals_legacy_identical_axes_run():
             assert g.get(k) == r.get(k), k
     assert got["slender_K"] == ref["slender_K"]
     assert got["magnification"]["axes"] == ref["magnification"]["axes"]
+
+
+def test_single_spec_default_K_equals_legacy_default_axes_run():
+    """Fix round 1 item 6: the DEFAULT-K path (blank K; cantilever -> Table C4.6.2.5-1 (e)
+    2.1 from the end conditions) equals the legacy two-axis default spec with identical
+    axes (K_source "default", end_condition "fixed-free")."""
+    single = {"K_source": "default", "K": None, "lu": None, "braced": False,
+              "K_braced_source": "default", "K_braced": None, "beta_d": None, "gamma_p": 1.25}
+    ax = {"braced": False, "K_source": "default", "end_condition": "fixed-free", "K": None,
+          "lu": None, "K_braced_source": "default", "K_braced": None}
+    legacy = {"2": dict(ax), "3": dict(ax), "beta_d": None, "gamma_p": 1.25}
+    on = {"slenderness_on": True}
+    got = ee.run_colshaft(payload([bent1(slender=single)], settings=on))["bents"][0]
+    ref = ee.run_colshaft(payload([bent1(slender=legacy)], settings=on))["bents"][0]
+    assert got["slender_input"] == "single" and ref["slender_input"] == "axes"
+    assert got["slender_K"]["2"]["K"] == 2.1 and got["slender_K"] == ref["slender_K"]
+    assert got["status"] == ref["status"]
+    assert got["final"] == ref["final"] and got["final_source"] == ref["final_source"]
+    for g, r in zip(got["lrfd"]["col"]["check_rows"], ref["lrfd"]["col"]["check_rows"]):
+        for k in ("Mu", "_delta2", "_delta3", "_klr2", "_klr3", "_slender_status", "ok"):
+            assert g.get(k) == r.get(k), k
+    assert got["magnification"]["axes"] == ref["magnification"]["axes"]

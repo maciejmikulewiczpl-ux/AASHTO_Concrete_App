@@ -215,6 +215,7 @@
     };
   }
   function normalizeState(obj) {
+    migrationNotes = [];
     var d = defaultState();
     if (!isObj(obj)) return d;
     var s = mergeDefaults(d, obj);
@@ -267,19 +268,28 @@
     if (K_SOURCES.indexOf(a.K_braced_source) < 0) a.K_braced_source = 'default';
     return a;
   }
-  // ruling U-6: a legacy two-axis spec -> the single spec of the axis with the larger
-  // effective K·ℓu (K as that axis's screen used it: the braced K on a braced axis, the
-  // unbraced K otherwise; ℓu = the axis override, else H if entered; when either ℓu is
-  // unknown, K alone).  Ties: the unbraced axis, then axis 2.  -> {axis, spec, notes}
+  // ruling U-6 / U-6b: a legacy two-axis spec -> ONE spec.  If EITHER legacy axis was
+  // unbraced the result is unbraced ("this all is to be unbraced"): the unbraced axis with
+  // the larger K·ℓu (unbraced K; ℓu = the axis override, else H if entered; when either ℓu
+  // is unknown, K alone; ties -> axis 2) gives K and ℓu, and only a braced K (K_braced, for
+  // δb) is carried over (the larger analysis K_braced of the axes).  Only when BOTH axes
+  // were braced does it stay braced (the axis with the larger braced K·ℓu).
+  // -> {axis, spec, notes, oldK (the K the picked axis's screen used)}
   function pickLegacyAxis(rawSlender, Hft, endNow) {
     var ax = { '2': legacyAxis(rawSlender['2']), '3': legacyAxis(rawSlender['3']) };
     var lu = function (a) { var x = num(a.lu_ft); return x !== null ? x : num(Hft); };
     var K = function (a) { var k = kInfo(a).K; return isNum(k) ? k : 0; };
-    var both = lu(ax['2']) !== null && lu(ax['3']) !== null;
-    var score = function (a) { return K(a) * (both ? lu(a) : 1); };
-    var s2 = score(ax['2']), s3 = score(ax['3']);
-    var pick = (s3 > s2 + 1e-9 || (Math.abs(s3 - s2) <= 1e-9 && ax['2'].braced && !ax['3'].braced)) ? '3' : '2';
+    var pool = ['2', '3'].filter(function (k) { return !ax[k].braced; });
+    var braced = !pool.length;
+    if (braced) pool = ['2', '3'];
+    var both = pool.every(function (k) { return lu(ax[k]) !== null; });
+    var score = function (k) { return K(ax[k]) * (both ? lu(ax[k]) : 1); };
+    var pick = pool[0];
+    pool.forEach(function (k) { if (score(k) > score(pick) + 1e-9) pick = k; });
     var a = ax[pick];
+    var kbs = ['2', '3'].map(function (k) { return ax[k]; }).filter(function (x) {
+      return x.K_braced_source === 'analysis' && num(x.K_braced) !== null;
+    }).map(function (x) { return num(x.K_braced); });
     var notes = [];
     ['2', '3'].forEach(function (k) {
       var x = ax[k];
@@ -288,10 +298,13 @@
           endNow + ')');
       }
     });
-    return { axis: pick, notes: notes, spec: {
-      K: a.K_source === 'analysis' && !a.kbFromK ? a.K : '', lu_ft: a.lu_ft, braced: a.braced,
-      K_braced: a.K_braced_source === 'analysis' ? a.K_braced : '' } };
+    if (!braced && (ax['2'].braced || ax['3'].braced)) notes.push('a braced legacy axis is now unbraced (one unbraced spec per bent)');
+    return { axis: pick, notes: notes, oldK: kInfo(a).K, spec: {
+      K: a.K_source === 'analysis' && !a.kbFromK ? a.K : '', lu_ft: a.lu_ft, braced: braced,
+      K_braced: kbs.length ? Math.max.apply(null, kbs) : '' } };
   }
+  // one-time notices of the last normalizeState (shown by the tab, ruling U-6 fix 2)
+  var migrationNotes = [];
   function colTopFromEnds(el, et) {
     if (el === 'fixed-free' && et === 'fixed-free') return 'cantilever';
     if (el === 'fixed-fixed' && et === 'fixed-fixed') return 'fixed';
@@ -314,6 +327,11 @@
     if (isObj(rs['2']) || isObj(rs['3'])) {
       var pk = pickLegacyAxis(rs, raw.H_ft, derivedEnd(q));
       q.slender = Object.assign(pk.spec, { beta_d: q.slender.beta_d, gamma_p: q.slender.gamma_p });
+      var newK = kInfo(singleAxis(q)).K;
+      if (isNum(pk.oldK) && isNum(newK) && Math.abs(newK - pk.oldK) > 1e-9) {
+        migrationNotes.push('Bent ' + (q.name || '') + ': the saved two-axis slenderness input was converted to one spec; K changes from ' +
+          pk.oldK + ' to ' + newK + ' (' + kInfo(singleAxis(q)).label + '). Check the bent before Design.');
+      }
       if (pk.notes.length) {
         try {
           console.info('Column on Shaft: bent ' + (q.name || '') + ': slenderness migrated to one spec (from axis ' + pk.axis + '); ' +
@@ -354,9 +372,22 @@
   }
   // the parse lists a Dead-category case on this bent's column frames (a case without the
   // per-case frame list counts as present) -> P_dead is not needed
+  // signature of the paste text a parse was made from (stale-parse detection)
+  function pasteSig(t) {
+    t = String(t || '');
+    var h = 5381;
+    for (var i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+    return t.length + ':' + h;
+  }
+  // Fix round 1 item 4: JS has no station data, so it cannot mirror the engine's check of the
+  // bottom frame's base station (colshaft_engine.seismic_axial); the conservative fallback:
+  // P_dead is asked for only when NO Dead case exists on ANY column frame (a Dead case on an
+  // upper frame only still gets the engine's explicit "enter P_dead" error at Design).  A
+  // parse made from a different paste text is stale -> unknown (null), not "no Dead".
   function hasDeadCases(state, b) {
     var p = state.parse;
     if (!p || !Array.isArray(p.cases)) return null;          // unknown before a parse
+    if (p.paste_sig !== undefined && p.paste_sig !== pasteSig(state.paste)) return null;   // stale
     var fr = splitFrames(b.col_frames);
     return p.cases.some(function (c) {
       var cat = (state.categories && state.categories[c.name]) || c.default_category;
@@ -458,9 +489,11 @@
     if (!String(state.paste || '').trim()) {
       out.push({ bent: null, key: 'paste', label: 'CSiBridge frame-forces paste', msg: 'Paste the CSiBridge "Element Forces - Frames" table first.' });
     }
+    if (!(state.bents || []).length) out.push({ bent: null, key: 'bents', label: 'at least one bent', msg: 'Add at least one bent.' });
     (state.bents || []).forEach(function (b, i) {
       var who = 'Bent ' + (b.name || '#' + (i + 1));
       var add = function (key, label, msg) { out.push({ bent: i, key: key, label: label, msg: who + ': ' + msg }); };
+      if (!String(b.name || '').trim()) out.push({ bent: i, key: 'name', label: 'name', msg: 'Bent #' + (i + 1) + ': enter a name.' });
       if (!splitFrames(b.col_frames).length) add('col_frames', 'column frames', 'enter the column frame(s).');
       if (!(num(b.col.D) > 0)) add('col.D', 'column D', 'column D must be > 0.');
       if (!(num(b.shaft.D) > 0)) add('shaft.D', 'shaft Ds', 'shaft D must be > 0.');
@@ -503,10 +536,8 @@
   function canDesign(state) { return requiredMissing(state).length === 0; }
   function validateState(state) {
     var errs = requiredMissing(state).map(function (m) { return m.msg; });
-    if (!state.bents.length) errs.push('Add at least one bent.');
     state.bents.forEach(function (b, i) {
       var who = 'Bent ' + (b.name || '#' + (i + 1));
-      if (!String(b.name || '').trim()) errs.push('Bent #' + (i + 1) + ': enter a name.');
       [['col', 'column'], ['shaft', 'shaft']].forEach(function (m) {
         ['fc', 'fy', 'cover'].forEach(function (k) {
           var x = num(b[m[0]][k]);
@@ -616,6 +647,12 @@
     if (k.error) return k.error;
     var t = (k.braced ? '' : 'unbraced (δs) ') + k.label + (k.braced ? '' : '; braced (δb) ' + k.K_braced_label);
     return t + (k.warning ? ' — ' + k.warning : '');
+  }
+  // read-only materials summary for the Basic block (values edited in Advanced)
+  function materialsText(b) {
+    var v = function (x) { var n = num(x); return n === null ? '—' : String(n); };
+    return 'Materials: column f′c ' + v(b.col.fc) + ' ksi, fy ' + v(b.col.fy) + ' ksi; shaft f′c ' + v(b.shaft.fc) + ' ksi, fy ' +
+      v(b.shaft.fy) + ' ksi; cover ' + v(b.col.cover) + ' / ' + v(b.shaft.cover) + ' in (edit in Advanced)';
   }
   // Basic-block K line of the single spec (ruling U-4 item 9)
   function slenderKText(b) {
@@ -1388,7 +1425,8 @@
     COL_TOP: COL_TOP, PILE_SUPPORTS: PILE_SUPPORTS, SINGLE_AXIS_LABEL: SINGLE_AXIS_LABEL, endConditions: endConditions,
     derivedEnd: derivedEnd, singleAxis: singleAxis, pickLegacyAxis: pickLegacyAxis, isSingleSpec: isSingleSpec,
     requiredMissing: requiredMissing, canDesign: canDesign, requiredSummary: requiredSummary, pDeadRequired: pDeadRequired,
-    hasDeadCases: hasDeadCases, slenderKText: slenderKText
+    hasDeadCases: hasDeadCases, slenderKText: slenderKText, pasteSig: pasteSig, materialsText: materialsText,
+    getMigrationNotes: function () { return migrationNotes.slice(); }
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -1406,6 +1444,7 @@
   var stale = false;          // inputs changed after the last run (minor 7b)
   var printFlag = false;      // one-shot: set by this tab's own print (minor 7h)
   var detailsOpen = {};       // <details> id -> open (kept across re-renders)
+  var shownNotes = [];        // one-time migration notices of the last load (dismissable)
 
   function markDirty() {
     try { if (typeof window.markDirty === 'function') window.markDirty(); } catch (e) { /* ignore */ }
@@ -1537,7 +1576,7 @@
     };
     var slOn = state.settings.slenderness_on;
     var basic = grid([
-      field('Name', inp(P + 'name', 'str', ' style="width:110px"')),
+      field('Name', inp(P + 'name', 'str', ' style="width:110px"'), '', R + 'name'),
       field('Column frames (comma list)', inp(P + 'col_frames', 'str', ' style="width:150px" list="cs-frame-list"'), '', R + 'col_frames'),
       field('Shaft frames (optional)', inp(P + 'shaft_frames', 'str', ' style="width:150px" list="cs-frame-list"')),
       field('Column D', inp(P + 'col.D', 'num', w), 'in', R + 'col.D'),
@@ -1554,6 +1593,7 @@
         field('P_dead (kip, compression &minus;)', inp(P + 'P_dead', 'num', w), '', R + 'P_dead', ' id="cs-pdead-basic-' + i + '"'),
         '<span class="circ-info" id="cs-pdead-hint-' + i + '">' + esc(pdeadHintText(b)) + '</span>'
       ]);
+    basic += '<div class="circ-info" id="cs-mat-' + i + '">' + esc(materialsText(b)) + '</div>';
     if (slOn) {
       basic += sub('Slenderness') + grid([
         '<span class="circ-info" id="cs-k-hint-' + i + '" style="max-width:420px;white-space:normal;">' + esc(slenderKText(b)) + '</span>',
@@ -1623,6 +1663,7 @@
       '<span id="cs-exp-msg-' + who + '-' + i + '" style="color:#c0392b;font-size:0.72rem;white-space:normal;">' +
       esc(expectedErrors(m).join('; ')) + '</span>';
   }
+  // read-only materials line in the Basic block (fix round 1 item 7)
   // P_dead hint under the Basic block: the engine's Dead-case sum after a run
   function pdeadHintText(b) {
     var h = deadHint(resultBentFor(b));
@@ -1913,10 +1954,16 @@
     }
   }
   function renderAll() {
-    panel.innerHTML = '<div style="padding:4px 0;"><div id="cs-min-inputs"></div>' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
+    panel.innerHTML = '<div style="padding:4px 0;"><div id="cs-migration">' + migrationHtml() + '</div><div id="cs-min-inputs"></div>' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
       renderRun() + '<div id="cs-results"></div>' + renderReportCard() + '</div>';
     renderResults();
     refreshRequired();
+  }
+  // fix round 1 item 2: one-time amber notice when a saved project's K changed in migration
+  function migrationHtml() {
+    if (!shownNotes.length) return '';
+    return notice('amber', '<b>Saved project converted to the simplified inputs:</b><ul style="margin:2px 0 0 18px;">' +
+      shownNotes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' + btn('Dismiss', 'dismiss-migration'));
   }
   function setRunStatus(html) { var el = document.getElementById('cs-run-status'); if (el) el.innerHTML = html; }
 
@@ -1936,6 +1983,7 @@
         if (s) s.innerHTML = notice('red', '<b>Parse failed:</b> ' + esc(r.error));
         return;
       }
+      r.paste_sig = pasteSig(state.paste);
       state.parse = r;
       state.categories = mergeCategories(state.categories, r.cases);
       markStale();
@@ -1993,6 +2041,7 @@
     if (act === 'drill') { drillIdx = i; renderResults(); return; }
     if (act === 'report') { showReport(); return; }
     if (act === 'print') { printReportCs(); return; }
+    if (act === 'dismiss-migration') { shownNotes = []; var mg = document.getElementById('cs-migration'); if (mg) mg.innerHTML = ''; return; }
     if (act === 'add-bent') state.bents.push(defaultBent(state.bents.length));
     else if (act === 'rm-bent') state.bents.splice(i, 1);
     else if (act === 'add-soil') state.soils.push(defaultSoil(state.soils.length));
@@ -2039,6 +2088,13 @@
       if (x !== el && x.type !== 'radio' && x.type !== 'checkbox') x.value = v === null || v === undefined ? '' : v;
     });
     if (path === 'settings.slenderness_on') { renderAll(); return; }
+    var mm = /^bents\.(\d+)\.(col|shaft)\.(fc|fy|cover)$/.exec(path);
+    if (mm) setText('cs-mat-' + mm[1], materialsText(state.bents[Number(mm[1])]));
+    var mt = /^bents\.(\d+)\.col_top$/.exec(path);
+    if (mt && v === 'different') {       // fix round 1 item 3: show the per-direction dropdowns
+      var dd = document.getElementById('cs-adv-' + mt[1]);
+      if (dd) { dd.open = true; detailsOpen[dd.id] = true; }
+    }
     var mk = /^bents\.(\d+)\.(slender\.|col_top|end_long|end_trans)/.exec(path);
     if (mk) setText('cs-k-hint-' + mk[1], slenderKText(state.bents[Number(mk[1])]));
     var me = /^bents\.(\d+)\.(col|shaft)\.(fy|fye|fue|fyh)$/.exec(path);
@@ -2089,7 +2145,7 @@
     setState: function (obj) {
       // never let a malformed columnShaft abort the main project load
       lastResult = null; lastPayload = null; reportShown = false; drillIdx = null; stale = false;
-      try { state = normalizeState(obj); renderAll(); } catch (e) {
+      try { state = normalizeState(obj); shownNotes = migrationNotes.slice(); renderAll(); } catch (e) {
         try { console.warn('Column on Shaft: invalid saved state, tab reset (' + e + ')'); } catch (e2) { /* ignore */ }
         try { state = defaultState(); renderAll(); } catch (e3) { /* ignore */ }
       }
