@@ -483,3 +483,55 @@ def test_neglected_axis_with_unstable_delta_note():
     assert t["_delta2"] == 1.0 and not t["_unstable"] and t["Mu"] == 100.0
     assert t["_neglect_note"] == t["_neglect_note2"] == cs.NEGLECT_NOTE
     assert cs.NEGLECT_NOTE == "neglected per §5.6.4.3 screen (δ would be unstable)"
+
+
+# ── single slenderness spec (user request 2026-10-20, rulings U-1 / U-2) ──
+
+SINGLE = {"K_source": "default", "K": None, "lu": None, "braced": False,
+          "K_braced_source": "default", "K_braced": None, "beta_d": 0.3, "gamma_p": 1.5}
+
+
+def test_single_end_condition_from_column_top():
+    """U-2: either direction fixed-free -> case (e) K = 2.1; both fixed-fixed -> (d) 1.2."""
+    d = cs.derived_end_condition
+    assert d({}) == "fixed-free"
+    assert d({"end_condition_long": "fixed-free", "end_condition_trans": "fixed-free"}) == "fixed-free"
+    assert d({"end_condition_long": "fixed-fixed", "end_condition_trans": "fixed-free"}) == "fixed-free"
+    assert d({"end_condition_long": "fixed-free", "end_condition_trans": "fixed-fixed"}) == "fixed-free"
+    assert d({"end_condition_long": "fixed-fixed", "end_condition_trans": "fixed-fixed"}) == "fixed-fixed"
+    with pytest.raises(ValueError, match="end condition"):
+        d({"end_condition_long": "pinned"})
+    for ends, K in ((("fixed-free", "fixed-free"), 2.1), (("fixed-fixed", "fixed-free"), 2.1),
+                    (("fixed-fixed", "fixed-fixed"), 1.2)):
+        bent = {"end_condition_long": ends[0], "end_condition_trans": ends[1], "slender": dict(SINGLE)}
+        sl = cs.axes_spec(bent)
+        for ax in ("2", "3"):
+            assert cs.resolve_K(sl[ax], ax)["K"] == K
+    # braced (advanced) -> 1.0 on both axes
+    sl = cs.axes_spec({"slender": dict(SINGLE, braced=True)})
+    assert cs.resolve_K(sl["2"])["K"] == 1.0 and cs.resolve_K(sl["3"])["K"] == 1.0
+
+
+def test_single_spec_maps_to_identical_axes():
+    """U-1: the single spec becomes two identical axes; beta_d / gamma_p stay bent-level;
+    lu_ft (ft) is accepted when lu (in) is absent; a single-spec end_condition is ignored."""
+    bent = {"end_condition_long": "fixed-fixed", "end_condition_trans": "fixed-fixed",
+            "slender": dict(SINGLE, K_source="analysis", K=1.7, lu=None, lu_ft=30.0,
+                            end_condition="fixed-free")}
+    sl = cs.axes_spec(bent)
+    assert sl["2"] == sl["3"] and sl["2"] is not sl["3"]
+    assert sl["2"] == {"braced": False, "K_source": "analysis", "K": 1.7, "end_condition": "fixed-fixed",
+                       "lu": 360.0, "K_braced_source": "default", "K_braced": None}
+    assert (sl["beta_d"], sl["gamma_p"]) == (0.3, 1.5)
+    assert cs.is_single_spec(bent["slender"]) and not cs.is_single_spec(sl)
+    assert cs.axes_spec(dict(bent, slender=dict(SINGLE, lu=240.0, lu_ft=99)))["2"]["lu"] == 240.0
+
+
+def test_legacy_two_axis_spec_passes_through():
+    """API compatibility: a legacy {"2": .., "3": ..} spec is returned unchanged (no
+    derived end condition), and a missing spec stays missing."""
+    legacy = {"2": {"braced": False, "K": 2.1, "lu": None, "end_condition": "fixed-fixed"},
+              "3": {"braced": True, "K": 0.9, "lu": 300.0}, "beta_d": None, "gamma_p": 1.25}
+    bent = {"end_condition_long": "fixed-free", "slender": legacy}
+    assert cs.axes_spec(bent) is legacy
+    assert cs.axes_spec({}) is None

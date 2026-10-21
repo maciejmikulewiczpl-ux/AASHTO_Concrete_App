@@ -330,3 +330,62 @@ def test_stale_banner_and_print_guard_wiring():
     bp = js[js.index("window.addEventListener('beforeprint'"):]
     assert "if (printFlag) { printFlag = false; return; }" in bp[:300]
     assert "classList.remove('cs-printing')" in bp[:400]
+
+
+# ── simplified inputs (user request 2026-10-20, rulings U-1 .. U-5) ──
+
+@needs_node
+def test_node_single_spec_payload_matches_legacy_two_axis_run(tmp_path, monkeypatch):
+    """U-1 end to end: the UI's single slenderness spec (B1, analysis K 2.1, ℓu auto) runs
+    through Api().run_colshaft to the same design as the legacy two-axis payload."""
+    out = tmp_path / "payload.json"
+    r = subprocess.run([NODE, NODE_TEST, "--dump-slender", str(out)], capture_output=True,
+                       text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    sl = payload["bents"][0]["slender"]
+    assert "2" not in sl and "3" not in sl and sl["K"] == 2.1 and sl["K_source"] == "analysis"
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        monkeypatch.setitem(sys.modules, "webview", types.ModuleType("webview"))
+    from api import Api
+    res = json.loads(Api().run_colshaft(json.dumps(payload)))
+    assert "error" not in res, res.get("error")
+    from tests import test_colshaft_engine as te
+    ref = te.run("slender")["bents"][0]
+    got = res["bents"][0]
+    assert got["slender_input"] == "single"
+    assert got["status"] == ref["status"] and got["final"] == ref["final"]
+    assert [x["Mu"] for x in got["lrfd"]["col"]["check_rows"]] == \
+        [x["Mu"] for x in ref["lrfd"]["col"]["check_rows"]]
+
+
+@needs_node
+def test_js_derived_end_condition_mirrors_python():
+    """U-2: the JS column-top -> default-K end condition equals
+    colshaft_slender.derived_end_condition for every combination."""
+    import colshaft_slender as csl
+    combos = [(a, b) for a in csl.END_CONDITIONS for b in csl.END_CONDITIONS]
+    code = ("const c=require(process.argv[1]);const k=JSON.parse(process.argv[2]);"
+            "console.log(JSON.stringify(k.map(x=>c.derivedEnd({col_top:'different',end_long:x[0],"
+            "end_trans:x[1]}))))")
+    js = json.loads(_js_eval(code, json.dumps(combos)))
+    assert js == [csl.derived_end_condition({"end_condition_long": a, "end_condition_trans": b})
+                  for a, b in combos]
+
+
+def test_required_field_css_is_scoped_to_the_tab():
+    """U-5: the red required-field styling is injected by colshaft.js and every selector
+    is scoped to #tab-colshaft (no global CSS; index.html untouched)."""
+    with open(JS, encoding="utf-8") as f:
+        js = f.read()
+    block = js[js.index("var REQ_CSS = ["):js.index("].join(' ');", js.index("var REQ_CSS = ["))]
+    sels = re.findall(r"'([^'{]*)\{", block)
+    assert sels
+    for sel in sels:
+        for part in sel.split(","):
+            assert part.strip().startswith("#tab-colshaft"), part
+    assert "cs-req-missing" not in _html()
+    # the Design button follows canDesign (the ★ set), not a separate rule
+    assert "bt.disabled = busy || !canDesign(state);" in js

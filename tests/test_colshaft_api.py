@@ -24,6 +24,9 @@ def test_api_parse_csi_summary():
     assert names["DEAD"]["default_category"] == "Dead"
     assert names["Str-I"]["default_category"] == "Strength"
     assert all(c["count"] > 0 for c in r["cases"])
+    # 2026-10-20: frames per case (the UI asks for P_dead only without Dead rows)
+    assert {"101", "201"} <= set(names["DEAD"]["frames"])
+    assert all(isinstance(c["frames"], list) for c in r["cases"])
     fr = {f["name"]: f for f in r["frames"]}
     assert {"101", "102", "201"} <= set(fr)
     assert fr["101"]["height_in"] == 240.0

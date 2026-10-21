@@ -249,6 +249,16 @@ The "Column on Shaft" tab (2026-10, branch `feature/column-on-shaft`) adds `seis
    value left blank; any other grade must enter fye / fue / fyh or the run raises. Do not add Gr80
    (or other) expected values from memory. Pinned by
    `tests/test_colshaft_engine.py::test_expected_steel_required_off_gr60`.
+8. **The single slenderness input maps onto IDENTICAL axes** (user request 2026-10-20, ruling U-1).
+   The UI sends one bent-level spec (no "2"/"3" keys); `colshaft_slender.axes_spec` copies it onto
+   axes "2" and "3" with the same K, ℓu, braced flag and braced K, and the unbraced default K from
+   `derived_end_condition` (either direction fixed-free → Table C4.6.2.5-1 case (e) 2.1; both
+   fixed-fixed → case (d) 1.2; ruling U-2). The per-axis magnification math stays as it is (equal δ
+   about both axes gives δ·Mu of the SRSS resultant) — do not collapse it into a separate "resultant"
+   code path, and keep accepting the legacy two-axis payload. Pinned by
+   `tests/test_colshaft_engine.py::test_single_spec_equals_legacy_identical_axes_run`,
+   `tests/test_colshaft_slender.py::test_single_end_condition_from_column_top` and
+   `test_legacy_two_axis_spec_passes_through`.
 
 ---
 
