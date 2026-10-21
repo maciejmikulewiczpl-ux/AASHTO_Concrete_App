@@ -98,6 +98,17 @@
   var BRACED_K_LT1_NOTE = 'braced K < 1.0 requires supporting analysis';
   // colshaft_lrfd.LONG_NA / LONG_NA_REASON (pinned equal by the pytest)
   var LONG_NA = 'n/a: bars continuous (§5.7.3.5)';
+  // user request 2026-10-20 (rulings U-2 / U-3): one "Column top" choice sets both seismic
+  // end conditions; "different" reveals the per-direction dropdowns (Advanced)
+  var COL_TOP = [
+    ['cantilever', 'Cantilever – free top (single-column bent)'],
+    ['fixed', 'Fixed top, sway (multi-column bent / integral)'],
+    ['different', 'Different per direction…']
+  ];
+  var COL_TOP_ENDS = { cantilever: ['fixed-free', 'fixed-free'], fixed: ['fixed-fixed', 'fixed-fixed'] };
+  // pile support (ruling U-4 item 7): the interface-only basis is an Advanced option
+  var PILE_SUPPORTS = ['cantilever', 'soil'];
+  var SINGLE_AXIS_LABEL = 'resultant (axes 2 = 3)';
   var BARS_TERMINATED_LABEL = 'Longitudinal bars terminated/discontinuous within the member (apply Eq. 5.7.3.5-1)';
 
   // ─── Small helpers ─────────────────────────────────────────────────
@@ -178,16 +189,12 @@
       col: { D: 48, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 2, trans_type: 'hoop', hoop_closure: 'lap',
         bars_terminated: false },
       shaft: { D: 72, fc: 4, fy: 60, fye: '', fue: '', fyh: '', cover: 3, trans_type: 'hoop', bars_terminated: false },
-      end_long: 'fixed-free', end_trans: 'fixed-free',
+      col_top: 'cantilever', end_long: 'fixed-free', end_trans: 'fixed-free',
       H_ft: '', base_end: 'auto', lambda_mo: 1.2, mu_d: '',
-      shaft_basis: 'auto', L_eq_ft: '', soil: '', L_embed_ft: '', P_dead: '',
-      slender: {
-        '2': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '',
-          K_braced_source: 'default', K_braced: '' },
-        '3': { braced: false, K_source: 'default', end_condition: 'fixed-free', K: '', lu_ft: '',
-          K_braced_source: 'default', K_braced: '' },
-        beta_d: '', gamma_p: ''
-      },
+      pile_support: 'cantilever', shaft_interface: false, L_eq_ft: '', soil: '', L_embed_ft: '', P_dead: '',
+      // ruling U-1 (2026-10-20): ONE slenderness spec per bent (circular section, SRSS
+      // resultant moments); a filled K / K_braced is a buckling-analysis value, blank = default
+      slender: { K: '', lu_ft: '', braced: false, K_braced: '', beta_d: '', gamma_p: '' },
       sway_group: '',
       override: emptyOverride()
     };
@@ -225,30 +232,7 @@
     if (['station', 'member'].indexOf(s.settings.envelope_mode) < 0) s.settings.envelope_mode = 'station';
     s.settings.slenderness_on = !!s.settings.slenderness_on;
     s.bents = Array.isArray(obj.bents) ? obj.bents.map(function (b, i) {
-      var q = mergeDefaults(defaultBent(i), b);
-      // 2026-10-19: a saved axis with a numeric K but no K_source was typed by the
-      // user -> buckling-analysis K (colshaft_slender.resolve_K does the same)
-      ['2', '3'].forEach(function (ax) {
-        var raw = isObj(b) && isObj(b.slender) && isObj(b.slender[ax]) ? b.slender[ax] : {};
-        var a = q.slender[ax];
-        var noSrc = raw.K_source === undefined || raw.K_source === null || raw.K_source === '';
-        if (noSrc && num(raw.K) !== null) a.K_source = 'analysis';
-        if (K_SOURCES.indexOf(a.K_source) < 0) a.K_source = 'default';
-        if (END_CONDITIONS.indexOf(a.end_condition) < 0) a.end_condition = 'fixed-free';
-        // ruling M2: a state without the braced K -> 1.0 default, except a legacy BRACED
-        // axis whose K was a buckling-analysis K keeps it (colshaft_slender.resolve_K_braced)
-        var noKb = raw.K_braced_source === undefined || raw.K_braced_source === null || raw.K_braced_source === '';
-        if (noKb) {
-          if (num(raw.K_braced) !== null) a.K_braced_source = 'analysis';
-          else if (raw.braced && (raw.K_source === 'analysis' || (noSrc && num(raw.K) !== null))) {
-            a.K_braced_source = 'analysis';
-            a.K_braced = raw.K;
-          }
-        }
-        if (K_SOURCES.indexOf(a.K_braced_source) < 0) a.K_braced_source = 'default';
-      });
-      ['col', 'shaft'].forEach(function (m) { q[m].bars_terminated = !!q[m].bars_terminated; });
-      return q;
+      return migrateBent(mergeDefaults(defaultBent(i), b), isObj(b) ? b : {});
     }) : d.bents;
     s.soils = Array.isArray(obj.soils) ? obj.soils.map(function (p, i) {
       var q = mergeDefaults(defaultSoil(i), p);
@@ -260,12 +244,128 @@
     return s;
   }
   function serializeState(state) { return clone(state); }
+  function emptyVal(v) { return v === undefined || v === null || v === ''; }
+  // one legacy slenderness axis as the 2026-10-19 state resolved it (K_source /
+  // K_braced_source rules of that version; colshaft_slender.resolve_K / resolve_K_braced)
+  function legacyAxis(raw) {
+    raw = isObj(raw) ? raw : {};
+    var a = { braced: !!raw.braced, K_source: raw.K_source, end_condition: raw.end_condition, K: emptyVal(raw.K) ? '' : raw.K,
+      lu_ft: emptyVal(raw.lu_ft) ? '' : raw.lu_ft, K_braced_source: raw.K_braced_source,
+      K_braced: emptyVal(raw.K_braced) ? '' : raw.K_braced };
+    var noSrc = emptyVal(raw.K_source);
+    if (noSrc && num(raw.K) !== null) a.K_source = 'analysis';
+    if (K_SOURCES.indexOf(a.K_source) < 0) a.K_source = 'default';
+    if (END_CONDITIONS.indexOf(a.end_condition) < 0) a.end_condition = 'fixed-free';
+    if (emptyVal(raw.K_braced_source)) {
+      if (num(raw.K_braced) !== null) a.K_braced_source = 'analysis';
+      else if (raw.braced && (raw.K_source === 'analysis' || (noSrc && num(raw.K) !== null))) {
+        a.K_braced_source = 'analysis';       // ruling M2: legacy braced axis keeps its analysis K
+        a.K_braced = raw.K;
+        a.kbFromK = true;                     // ... as the braced K only
+      }
+    }
+    if (K_SOURCES.indexOf(a.K_braced_source) < 0) a.K_braced_source = 'default';
+    return a;
+  }
+  // ruling U-6: a legacy two-axis spec -> the single spec of the axis with the larger
+  // effective K·ℓu (K as that axis's screen used it: the braced K on a braced axis, the
+  // unbraced K otherwise; ℓu = the axis override, else H if entered; when either ℓu is
+  // unknown, K alone).  Ties: the unbraced axis, then axis 2.  -> {axis, spec, notes}
+  function pickLegacyAxis(rawSlender, Hft, endNow) {
+    var ax = { '2': legacyAxis(rawSlender['2']), '3': legacyAxis(rawSlender['3']) };
+    var lu = function (a) { var x = num(a.lu_ft); return x !== null ? x : num(Hft); };
+    var K = function (a) { var k = kInfo(a).K; return isNum(k) ? k : 0; };
+    var both = lu(ax['2']) !== null && lu(ax['3']) !== null;
+    var score = function (a) { return K(a) * (both ? lu(a) : 1); };
+    var s2 = score(ax['2']), s3 = score(ax['3']);
+    var pick = (s3 > s2 + 1e-9 || (Math.abs(s3 - s2) <= 1e-9 && ax['2'].braced && !ax['3'].braced)) ? '3' : '2';
+    var a = ax[pick];
+    var notes = [];
+    ['2', '3'].forEach(function (k) {
+      var x = ax[k];
+      if (!x.braced && x.K_source === 'default' && x.end_condition !== endNow) {
+        notes.push('axis ' + k + ' default K used end condition ' + x.end_condition + '; the default K now follows the Column top (' +
+          endNow + ')');
+      }
+    });
+    return { axis: pick, notes: notes, spec: {
+      K: a.K_source === 'analysis' && !a.kbFromK ? a.K : '', lu_ft: a.lu_ft, braced: a.braced,
+      K_braced: a.K_braced_source === 'analysis' ? a.K_braced : '' } };
+  }
+  function colTopFromEnds(el, et) {
+    if (el === 'fixed-free' && et === 'fixed-free') return 'cantilever';
+    if (el === 'fixed-fixed' && et === 'fixed-fixed') return 'fixed';
+    return 'different';
+  }
+  // a saved bent merged onto the defaults -> the 2026-10-20 state (rulings U-3, U-4, U-6)
+  function migrateBent(q, raw) {
+    if (END_CONDITIONS.indexOf(q.end_long) < 0) q.end_long = 'fixed-free';
+    if (END_CONDITIONS.indexOf(q.end_trans) < 0) q.end_trans = 'fixed-free';
+    if (!COL_TOP.some(function (c) { return c[0] === raw.col_top; })) q.col_top = colTopFromEnds(q.end_long, q.end_trans);
+    // legacy shaft_basis (auto | soil | cantilever | interface) -> pile support + interface option
+    if (PILE_SUPPORTS.indexOf(raw.pile_support) < 0) {
+      var sb = raw.shaft_basis;
+      q.pile_support = sb === 'soil' ? 'soil' : sb === 'cantilever' ? 'cantilever' : (raw.soil ? 'soil' : 'cantilever');
+      if (sb === 'interface') q.shaft_interface = true;
+    }
+    q.shaft_interface = !!q.shaft_interface;
+    delete q.shaft_basis;
+    var rs = isObj(raw.slender) ? raw.slender : {};
+    if (isObj(rs['2']) || isObj(rs['3'])) {
+      var pk = pickLegacyAxis(rs, raw.H_ft, derivedEnd(q));
+      q.slender = Object.assign(pk.spec, { beta_d: q.slender.beta_d, gamma_p: q.slender.gamma_p });
+      if (pk.notes.length) {
+        try {
+          console.info('Column on Shaft: bent ' + (q.name || '') + ': slenderness migrated to one spec (from axis ' + pk.axis + '); ' +
+            pk.notes.join('; '));
+        } catch (e) { /* ignore */ }
+      }
+    }
+    ['2', '3', 'K_source', 'K_braced_source', 'end_condition'].forEach(function (k) { delete q.slender[k]; });
+    ['K', 'K_braced', 'lu_ft', 'beta_d', 'gamma_p'].forEach(function (k) { if (emptyVal(q.slender[k])) q.slender[k] = ''; });
+    q.slender.braced = !!q.slender.braced;
+    ['col', 'shaft'].forEach(function (m) { q[m].bars_terminated = !!q[m].bars_terminated; });
+    return q;
+  }
 
   // ─── Derived values ────────────────────────────────────────────────
   function shaftBasis(b) {
-    if (b.shaft_basis && b.shaft_basis !== 'auto') return b.shaft_basis;
-    return b.soil ? 'soil' : 'cantilever';
+    if (b.shaft_interface) return 'interface';
+    return b.pile_support === 'soil' ? 'soil' : 'cantilever';
   }
+  // seismic end conditions [long, trans] from the Column-top choice (ruling U-3)
+  function endConditions(b) {
+    var e = COL_TOP_ENDS[b.col_top];
+    if (e) return e.slice();
+    return [b.end_long === 'fixed-fixed' ? 'fixed-fixed' : 'fixed-free', b.end_trans === 'fixed-fixed' ? 'fixed-fixed' : 'fixed-free'];
+  }
+  // ruling U-2 (mirror of colshaft_slender.derived_end_condition): either direction
+  // fixed-free -> fixed-free (K 2.1); both fixed-fixed -> fixed-fixed (K 1.2)
+  function derivedEnd(b) {
+    var e = endConditions(b);
+    return e[0] === 'fixed-fixed' && e[1] === 'fixed-fixed' ? 'fixed-fixed' : 'fixed-free';
+  }
+  // the bent's single slenderness state as one engine axis (kInfo input): a filled K /
+  // K_braced is a buckling-analysis value, blank = the default
+  function singleAxis(b) {
+    var sl = (b && b.slender) || {};
+    return { braced: !!sl.braced, K_source: emptyVal(sl.K) ? 'default' : 'analysis', K: sl.K, end_condition: derivedEnd(b),
+      K_braced_source: emptyVal(sl.K_braced) ? 'default' : 'analysis', K_braced: sl.K_braced };
+  }
+  // the parse lists a Dead-category case on this bent's column frames (a case without the
+  // per-case frame list counts as present) -> P_dead is not needed
+  function hasDeadCases(state, b) {
+    var p = state.parse;
+    if (!p || !Array.isArray(p.cases)) return null;          // unknown before a parse
+    var fr = splitFrames(b.col_frames);
+    return p.cases.some(function (c) {
+      var cat = (state.categories && state.categories[c.name]) || c.default_category;
+      if (cat !== 'Dead') return false;
+      if (!Array.isArray(c.frames) || !fr.length) return true;
+      return c.frames.some(function (f) { return fr.indexOf(String(f)) >= 0; });
+    });
+  }
+  function pDeadRequired(state, b) { return hasDeadCases(state, b) === false; }
   function findSoil(state, name) {
     for (var i = 0; i < state.soils.length; i++) if (state.soils[i].name === name) return state.soils[i];
     return null;
@@ -347,53 +447,99 @@
     } else out.push('unknown p-y model');
     return out;
   }
+  // Ruling U-5 (2026-10-20): the minimum (★) inputs that are empty or invalid.
+  // -> [{bent: index | null, key: state path below the bent (or 'paste'), label (short,
+  // checklist), msg (validateState text)}].  The ★ set: paste; per bent column frames,
+  // column D, shaft Ds, the pile-support input(s) (L_eq | soil profile + embedded length),
+  // P_dead when the parse has no Dead case on the column frames, fye / fue / fyh when
+  // fy ≠ 60 (column and shaft).
+  function requiredMissing(state) {
+    var out = [];
+    if (!String(state.paste || '').trim()) {
+      out.push({ bent: null, key: 'paste', label: 'CSiBridge frame-forces paste', msg: 'Paste the CSiBridge "Element Forces - Frames" table first.' });
+    }
+    (state.bents || []).forEach(function (b, i) {
+      var who = 'Bent ' + (b.name || '#' + (i + 1));
+      var add = function (key, label, msg) { out.push({ bent: i, key: key, label: label, msg: who + ': ' + msg }); };
+      if (!splitFrames(b.col_frames).length) add('col_frames', 'column frames', 'enter the column frame(s).');
+      if (!(num(b.col.D) > 0)) add('col.D', 'column D', 'column D must be > 0.');
+      if (!(num(b.shaft.D) > 0)) add('shaft.D', 'shaft Ds', 'shaft D must be > 0.');
+      var basis = shaftBasis(b);
+      var Leq = num(b.L_eq_ft);
+      if (basis === 'cantilever' && (Leq === null || Leq < 0)) {
+        add('L_eq_ft', 'L_eq', 'enter the pile equivalent cantilever length L_eq (ft); it is required ' +
+          'for the equivalent-cantilever pile support.');
+      }
+      if (basis === 'soil') {
+        if (!b.soil) add('soil', 'soil profile', 'the soil (p-y) pile support needs a soil profile.');
+        else if (!findSoil(state, b.soil)) add('soil', 'soil profile', 'soil profile "' + b.soil + '" does not exist.');
+        if (!(num(b.L_embed_ft) > 0)) add('L_embed_ft', 'embedded length', 'enter the shaft embedded length (ft) for the soil basis.');
+      }
+      if (pDeadRequired(state, b) && num(b.P_dead) === null) {
+        add('P_dead', 'P_dead', 'enter P_dead (kip, compression −): the parsed paste has no Dead-category case on the column frames.');
+      }
+      [['col', 'column'], ['shaft', 'shaft']].forEach(function (m) {
+        var fy = num(b[m[0]].fy);
+        if (fy === null || fy === 60) return;
+        ['fye', 'fue', 'fyh'].forEach(function (k) {
+          if (num(b[m[0]][k]) === null) add(m[0] + '.' + k, m[1] + ' ' + k, m[1] + ' ' + k + ' must be entered for fy ≠ 60 ksi (the A706 Gr60 defaults do not apply)');
+        });
+      });
+    });
+    return out;
+  }
+  // "Minimum inputs" checklist text: '' when complete, else "Paste: …; Bent 1: column frames, L_eq"
+  function requiredSummary(state, missing) {
+    missing = missing || requiredMissing(state);
+    var groups = [], by = {};
+    missing.forEach(function (m) {
+      var g = m.bent === null ? 'Input' : (String(state.bents[m.bent].name || '').trim() || 'Bent #' + (m.bent + 1));
+      if (!by[g]) { by[g] = []; groups.push(g); }
+      if (by[g].indexOf(m.label) < 0) by[g].push(m.label);
+    });
+    return groups.map(function (g) { return g + ': ' + by[g].join(', '); }).join('; ');
+  }
+  // the Design button is enabled only when no minimum input is missing (ruling U-5)
+  function canDesign(state) { return requiredMissing(state).length === 0; }
   function validateState(state) {
-    var errs = [];
-    if (!String(state.paste || '').trim()) errs.push('Paste the CSiBridge "Element Forces - Frames" table first.');
+    var errs = requiredMissing(state).map(function (m) { return m.msg; });
     if (!state.bents.length) errs.push('Add at least one bent.');
     state.bents.forEach(function (b, i) {
       var who = 'Bent ' + (b.name || '#' + (i + 1));
       if (!String(b.name || '').trim()) errs.push('Bent #' + (i + 1) + ': enter a name.');
-      if (!splitFrames(b.col_frames).length) errs.push(who + ': enter the column frame(s).');
       [['col', 'column'], ['shaft', 'shaft']].forEach(function (m) {
-        ['D', 'fc', 'fy', 'cover'].forEach(function (k) {
+        ['fc', 'fy', 'cover'].forEach(function (k) {
           var x = num(b[m[0]][k]);
           if (x === null || !(x > 0)) errs.push(who + ': ' + m[1] + ' ' + k + ' must be > 0.');
         });
-        expectedErrors(b[m[0]]).forEach(function (e) { errs.push(who + ': ' + m[1] + ' ' + e); });
+        // entered expected strengths must be > 0 (blank for fy ≠ 60 is a required-field item)
+        ['fye', 'fue', 'fyh'].forEach(function (k) {
+          var v = num(b[m[0]][k]);
+          if (v !== null && !(v > 0)) errs.push(who + ': ' + m[1] + ' ' + k + ' must be > 0');
+        });
       });
-      var basis = shaftBasis(b);
-      var Leq = num(b.L_eq_ft);
-      if (basis === 'cantilever' && (Leq === null || Leq < 0)) {
-        errs.push(who + ': enter the pile equivalent cantilever length L_eq (ft); it is required ' +
-          'when there is no soil profile.');
-      }
-      if (basis === 'soil') {
+      if (shaftBasis(b) === 'soil') {
         var p = b.soil ? findSoil(state, b.soil) : null;
-        if (!b.soil) errs.push(who + ': shaft basis "soil" needs a soil profile.');
-        else if (!p) errs.push(who + ': soil profile "' + b.soil + '" does not exist.');
-        else {
+        if (p) {
           if (!p.layers.length) errs.push(who + ': soil profile "' + p.name + '" has no strata.');
           p.layers.forEach(function (l, j) {
             var le = layerErrors(l);
             if (le.length) errs.push('Soil profile "' + p.name + '" layer ' + (j + 1) + ': ' + le.join('; ') + '.');
           });
-          if (!(num(b.L_embed_ft) > 0)) errs.push(who + ': enter the shaft embedded length (ft) for the soil basis.');
         }
       }
       if (num(b.H_ft) !== null && !(num(b.H_ft) > 0)) errs.push(who + ': H must be > 0 (or blank for auto).');
       if (state.settings.slenderness_on) {
-        // K is required only for a buckling-analysis K; unbraced K < 1.0 is a warning
-        // (kInfo), not an error (user decision 2026-10-19)
-        ['2', '3'].forEach(function (ax) {
-          var a = b.slender[ax];
-          if (a.K_source === 'analysis' && !(num(a.K) > 0)) {
-            errs.push(who + ': slenderness axis ' + ax + ': enter K > 0 from the buckling analysis (or use the default K).');
-          }
-          if (a.K_braced_source === 'analysis' && !(num(a.K_braced) > 0)) {
-            errs.push(who + ': slenderness axis ' + ax + ': enter the braced K > 0 from the buckling analysis (or use the default 1.0).');
-          }
-        });
+        // a filled K is a buckling-analysis K (> 0); unbraced K < 1.0 is a warning (kInfo),
+        // not an error (user decision 2026-10-19)
+        var sl = b.slender || {};
+        if (!emptyVal(sl.K) && !(num(sl.K) > 0)) {
+          errs.push(who + ': slenderness: enter K > 0 from the buckling analysis (or leave it blank for the default K).');
+        }
+        if (!emptyVal(sl.K_braced) && !(num(sl.K_braced) > 0)) {
+          errs.push(who + ': slenderness: enter the braced K > 0 from the buckling analysis (or leave it blank for 1.0).');
+        }
+        if (!emptyVal(sl.lu_ft) && !(num(sl.lu_ft) > 0)) errs.push(who + ': slenderness: ℓu must be > 0 (or blank for H + Df).');
       }
       overrideErrors(b).forEach(function (e) { errs.push(who + ': override ' + e + '.'); });
     });
@@ -471,6 +617,17 @@
     var t = (k.braced ? '' : 'unbraced (δs) ') + k.label + (k.braced ? '' : '; braced (δb) ' + k.K_braced_label);
     return t + (k.warning ? ' — ' + k.warning : '');
   }
+  // Basic-block K line of the single spec (ruling U-4 item 9)
+  function slenderKText(b) {
+    var a = singleAxis(b);
+    var k = kInfo(a);
+    if (k.error) return k.error;
+    var t;
+    if (k.braced) t = 'K: braced ' + k.K + (k.source === 'analysis' ? ' (buckling analysis)' : ' (C5.6.4.3; Advanced)');
+    else if (k.source === 'default') t = 'K: default ' + k.K + ' (Table C4.6.2.5-1 ' + TABLE_CASE[k.end_condition] + ', from column top)';
+    else t = 'K = ' + k.K + ' (buckling analysis)';
+    return t + (k.warning && k.source === 'analysis' ? ' — ' + k.warning : '');
+  }
   // per-member note for the longitudinal V(+T) check (engine lrfd[part].long_check)
   function longCheckText(lc) {
     if (!isObj(lc)) return '';
@@ -495,35 +652,30 @@
       shaft_frames: splitFrames(b.shaft_frames),
       column: memberPayload(b.col, true),
       shaft: memberPayload(b.shaft, false),
-      end_condition_long: b.end_long === 'fixed-fixed' ? 'fixed-fixed' : 'fixed-free',
-      end_condition_trans: b.end_trans === 'fixed-fixed' ? 'fixed-fixed' : 'fixed-free',
+      end_condition_long: endConditions(b)[0],
+      end_condition_trans: endConditions(b)[1],
       base_end: ['min', 'max'].indexOf(b.base_end) >= 0 ? b.base_end : 'auto',
       H_in: num(b.H_ft) === null ? null : num(b.H_ft) * 12.0
     };
     if (num(b.lambda_mo) !== null) p.lambda_mo = num(b.lambda_mo);
     if (num(b.mu_d) !== null) p.mu_d = num(b.mu_d);
-    if (b.shaft_basis && b.shaft_basis !== 'auto') p.shaft_basis = b.shaft_basis;
-    if (num(b.L_eq_ft) !== null) p.L_eq_in = num(b.L_eq_ft) * 12.0;
-    var soil = b.soil ? findSoil(state, b.soil) : null;
+    var basis = shaftBasis(b);
+    p.shaft_basis = basis;
+    if (basis === 'cantilever' && num(b.L_eq_ft) !== null) p.L_eq_in = num(b.L_eq_ft) * 12.0;
+    // the soil profile is sent with the soil (p-y) pile support only (ruling U-4 item 7)
+    var soil = b.soil && b.pile_support === 'soil' ? findSoil(state, b.soil) : null;
     if (soil) {
       p.soil = soilPayload(soil);
       p.soil_bounds = [num(soil.bound_upper) === null ? 2.0 : num(soil.bound_upper),
         num(soil.bound_lower) === null ? 0.5 : num(soil.bound_lower)];
     }
-    if (num(b.L_embed_ft) !== null) p.L_embed_in = num(b.L_embed_ft) * 12.0;
+    if (soil && num(b.L_embed_ft) !== null) p.L_embed_in = num(b.L_embed_ft) * 12.0;
     if (num(b.P_dead) !== null) p.P_dead = num(b.P_dead);
-    var sl = {};
-    ['2', '3'].forEach(function (ax) {
-      var a = b.slender[ax];
-      var k = kInfo(a);
-      sl[ax] = { braced: !!a.braced, K_source: K_SOURCES.indexOf(a.K_source) >= 0 ? a.K_source : (num(a.K) !== null ? 'analysis' : 'default'),
-        end_condition: k.end_condition, K: num(a.K),
-        lu: num(a.lu_ft) === null ? null : num(a.lu_ft) * 12.0,
-        K_braced_source: k.K_braced_source, K_braced: num(a.K_braced) };
-    });
-    sl.beta_d = num(b.slender.beta_d);
-    sl.gamma_p = num(b.slender.gamma_p);
-    p.slender = sl;
+    // ruling U-1: ONE slenderness spec (colshaft_slender.axes_spec maps it onto identical
+    // axes; the unbraced default K follows the end conditions above, ruling U-2)
+    var a = singleAxis(b), sl = b.slender || {};
+    p.slender = { K_source: a.K_source, K: num(sl.K), lu: num(sl.lu_ft) === null ? null : num(sl.lu_ft) * 12.0,
+      braced: !!sl.braced, K_braced_source: a.K_braced_source, K_braced: num(sl.K_braced), beta_d: num(sl.beta_d), gamma_p: num(sl.gamma_p) };
     var sg = String(b.sway_group === undefined || b.sway_group === null ? '' : b.sway_group).trim();
     if (sg) p.sway_group = sg;
     var ov = {};
@@ -848,23 +1000,49 @@
   var K_SOURCE_TEXT = { 'default': 'Table C4.6.2.5-1 default', 'analysis': 'buckling analysis' };
   // per axis: K used, its source, end condition, Kℓu/r, limit, status (report + drill-down).
   // K from the engine (result bent.slender_K), else as the payload implies (kInfo).
+  // ruling U-1: the payload / result used the single (resultant) slenderness spec
+  function isSingleSpec(sl) { return isObj(sl) && !isObj(sl['2']) && !isObj(sl['3']); }
+  function singleInput(b, pb) {
+    if (b && b.slender_input) return b.slender_input === 'single';
+    return !!(pb && isSingleSpec(pb.slender));
+  }
+  // the single payload spec as one engine axis (end condition per ruling U-2)
+  function payloadAxis(pb) {
+    var sl = pb.slender || {};
+    var ff = pb.end_condition_long === 'fixed-fixed' && pb.end_condition_trans === 'fixed-fixed';
+    return { braced: !!sl.braced, K_source: sl.K_source, K: sl.K, end_condition: ff ? 'fixed-fixed' : 'fixed-free',
+      K_braced_source: sl.K_braced_source, K_braced: sl.K_braced };
+  }
   function slenderKRows(b, pb) {
     var L = (b && b.lrfd) || {};
     var axs = slenderAxes(L.col && L.col.check_rows);
     var byAx = {};
     axs.forEach(function (a) { byAx[a.axis] = a; });
+    var single = singleInput(b, pb);
     var out = [];
     ['2', '3'].forEach(function (ax) {
       var eng = b && isObj(b.slender_K) ? b.slender_K[ax] : null;
-      var k = isObj(eng) ? eng : (pb && isObj(pb.slender) ? kInfo(pb.slender[ax]) : null);
+      var k = isObj(eng) ? eng : (pb && isObj(pb.slender) ? kInfo(single ? payloadAxis(pb) : pb.slender[ax]) : null);
       var a = byAx[ax];
       if (!a && !k) return;
       var src = k ? (k.source === 'default' && k.braced ? 'braced default (C5.6.4.3)' : (K_SOURCE_TEXT[k.source] || k.source)) : '—';
       out.push({ axis: ax, K: k && isNum(k.K) ? String(k.K) : '—', source: src,
         end_condition: k && !(k.source === 'default' && k.braced) ? k.end_condition : (k ? 'braced' : '—'),
         klr: a ? fmt(a.klr, 1) : '—', limit: a ? fmt(a.limit, 1) : '—', status: a ? a.status : '—',
-        label: k ? k.label : '' });
+        label: k ? k.label : '', _a: a || null });
     });
+    if (single && out.length) {
+      // one row for the resultant: the worse axis (status, then Kℓu/r − limit)
+      var key = function (r) {
+        return r._a ? [SLENDER_RANK[r._a.status] || 0, r._a.klr - r._a.limit] : [-1, -Infinity];
+      };
+      var g = out.reduce(function (best, r) {
+        var kb = key(best), kr = key(r);
+        return (kr[0] > kb[0] || (kr[0] === kb[0] && kr[1] > kb[1])) ? r : best;
+      });
+      out = [Object.assign({}, g, { axis: SINGLE_AXIS_LABEL })];
+    }
+    out.forEach(function (r) { delete r._a; });
     return out;
   }
   // ruling M12: per axis K_braced, K_unbraced, EI, Pe_b, Pe_s (ΣPe_s), Cm, δb, δs and the
@@ -873,10 +1051,21 @@
   function magRows(b) {
     var m = b && isObj(b.magnification) ? b.magnification : null;
     if (!m || !isObj(m.axes)) return [];
-    return ['2', '3'].map(function (ax) {
+    var axes = ['2', '3'];
+    if (b.slender_input === 'single') {
+      // ruling U-1: one row for the resultant -> the governing axis (unstable first, then
+      // the larger applied δ); with identical axes both rows are normally equal
+      var gk = function (ax) {
+        var a = m.axes[ax] || {};
+        return [a.unstable ? 1 : 0, isNum(a.delta) ? a.delta : (a.unstable ? Infinity : 0)];
+      };
+      var k2 = gk('2'), k3 = gk('3');
+      axes = [(k3[0] > k2[0] || (k3[0] === k2[0] && k3[1] > k2[1])) ? '3' : '2'];
+    }
+    return axes.map(function (ax) {
       var a = m.axes[ax] || {};
       var pes = isNum(a.Pe_s) ? fmt(a.Pe_s, 0) + (isNum(a.sPe_s) && Math.abs(a.sPe_s - a.Pe_s) > 1e-6 ? ' (Σ ' + fmt(a.sPe_s, 0) + ')' : '') : '—';
-      return { axis: ax, K_braced: fmtD(a.K_braced, 2), K_unbraced: a.braced ? 'braced' : fmtD(a.K_unbraced, 2),
+      return { axis: axes.length === 1 && b.slender_input === 'single' ? SINGLE_AXIS_LABEL : ax, K_braced: fmtD(a.K_braced, 2), K_unbraced: a.braced ? 'braced' : fmtD(a.K_unbraced, 2),
         EI: isNum(m.EI) ? m.EI.toExponential(3) : '—', Pe_b: fmtD(a.Pe_b, 0), Pe_s: a.braced ? '—' : pes,
         Cm: fmtD(a.Cm, 3),
         db: !isNum(a.db) ? (a.unstable ? 'unstable' : a.neglect_note ? 'n/a' : '—') : fmtD(a.db, 3),
@@ -989,6 +1178,9 @@
       i1.push(['Column clear height H', fmt((b.H_in || 0) / 12.0, 2) + ' ft' + (pb.H_in === null || pb.H_in === undefined ? ' (auto, from the column frame stations)' : ' (entered)')]);
       i1.push(['End conditions', 'longitudinal ' + (pb.end_condition_long || 'fixed-free') + ', transverse ' + (pb.end_condition_trans || 'fixed-free') +
         (S ? ' (governing: ' + S.end_condition + ')' : '')]);
+      if (isSingleSpec(pb.slender) && result.settings && result.settings.slenderness_on) {
+        i1.push(['Slenderness input', 'one spec for the SRSS resultant (applied identically about both axes; unbraced default K from the column-top condition)']);
+      }
       i1.push(['Base end', pb.base_end || 'auto']);
       i1.push(['Column', memberStr(pb.column)]);
       i1.push(['Shaft', memberStr(pb.shaft)]);
@@ -1054,7 +1246,7 @@
       })) : rptNote('No screened rows.');
       axs.forEach(function (a) { if (a.label) h4 += rptNote('Axis ' + a.axis + ': ' + a.label + '.'); });
       var mr = magRows(b);
-      if (mr.length) h4 += '<h4>Moment magnification (final cage, governing row per axis)</h4>' + rptTable(MAG_HDR, mr.map(magCells)) +
+      if (mr.length) h4 += '<h4>Moment magnification (final cage, governing row' + (b.slender_input === 'single' ? '' : ' per axis') + ')</h4>' + rptTable(MAG_HDR, mr.map(magCells)) +
         rptNote(magNote(b));
       h4 += rptEq(MAG_EQ) +
         rptNote('r = 0.25·D; ℓu default = H + Df (Df = ' + (isNum(b.Df_for_lu) ? fmt(b.Df_for_lu / 12.0, 2) + ' ft' : '—') +
@@ -1192,7 +1384,11 @@
     K_SOURCES: K_SOURCES, END_CONDITIONS: END_CONDITIONS, TABLE_K: TABLE_K, TABLE_CASE: TABLE_CASE, UNSTABLE_REASON: UNSTABLE_REASON, DEFAULT_K_WARNING: DEFAULT_K_WARNING,
     UNBRACED_K_LT1_WARNING: UNBRACED_K_LT1_WARNING, BRACED_K_LT1_NOTE: BRACED_K_LT1_NOTE, LONG_NA: LONG_NA,
     BARS_TERMINATED_LABEL: BARS_TERMINATED_LABEL, kInfo: kInfo, kInfoText: kInfoText, longCheckText: longCheckText,
-    slenderKRows: slenderKRows, kbInfo: kbInfo, magRows: magRows, magNote: magNote, MAG_EQ: MAG_EQ
+    slenderKRows: slenderKRows, kbInfo: kbInfo, magRows: magRows, magNote: magNote, MAG_EQ: MAG_EQ,
+    COL_TOP: COL_TOP, PILE_SUPPORTS: PILE_SUPPORTS, SINGLE_AXIS_LABEL: SINGLE_AXIS_LABEL, endConditions: endConditions,
+    derivedEnd: derivedEnd, singleAxis: singleAxis, pickLegacyAxis: pickLegacyAxis, isSingleSpec: isSingleSpec,
+    requiredMissing: requiredMissing, canDesign: canDesign, requiredSummary: requiredSummary, pDeadRequired: pDeadRequired,
+    hasDeadCases: hasDeadCases, slenderKText: slenderKText
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
@@ -1209,6 +1405,7 @@
   var busy = false;
   var stale = false;          // inputs changed after the last run (minor 7b)
   var printFlag = false;      // one-shot: set by this tab's own print (minor 7h)
+  var detailsOpen = {};       // <details> id -> open (kept across re-renders)
 
   function markDirty() {
     try { if (typeof window.markDirty === 'function') window.markDirty(); } catch (e) { /* ignore */ }
@@ -1229,9 +1426,14 @@
       return '<option value="' + esc(val) + '"' + (String(v) === String(val) ? ' selected' : '') + '>' + esc(lab) + '</option>';
     }).join('') + '</select>';
   }
-  function field(label, html, unit) {
-    return '<label style="display:flex;flex-direction:column;gap:2px;font-size:0.76rem;color:#2c3e50;">' +
-      '<span>' + label + (unit ? ' <span style="color:#7f8c8d">(' + unit + ')</span>' : '') + '</span>' + html + '</label>';
+  // req: the required-field key ("b<i>:<path>" or "paste", ruling U-5); attrs: extra
+  // attributes on the wrapper (id, style)
+  function field(label, html, unit, req, attrs) {
+    return '<label' + (req ? ' data-req="' + req + '"' : '') + (attrs || '') +
+      ' style="display:flex;flex-direction:column;gap:2px;font-size:0.76rem;color:#2c3e50;">' +
+      '<span>' + label + (req ? '<span class="cs-req-star"> *</span>' : '') +
+      (unit ? ' <span style="color:#7f8c8d">(' + unit + ')</span>' : '') + '</span>' + html +
+      (req ? '<span class="cs-req-hint">required</span>' : '') + '</label>';
   }
   function grid(items) {
     return '<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:flex-end;margin:6px 0;">' + items.join('') + '</div>';
@@ -1241,7 +1443,8 @@
       '</div><div class="card-body">' + body + '</div></div>';
   }
   function notice(kind, html) {
-    var c = { amber: ['#fef5e7', '#e67e22', '#7e5109'], red: ['#fdedec', '#c0392b', '#922b21'], blue: ['#ebf5fb', '#2980b9', '#1a5276'] }[kind];
+    var c = { amber: ['#fef5e7', '#e67e22', '#7e5109'], red: ['#fdedec', '#c0392b', '#922b21'], blue: ['#ebf5fb', '#2980b9', '#1a5276'],
+      green: ['#eafaf1', '#27ae60', '#1e8449'] }[kind];
     return '<div style="background:' + c[0] + ';border-left:4px solid ' + c[1] + ';color:' + c[2] +
       ';padding:7px 10px;margin:6px 0;font-size:0.82rem;border-radius:3px;">' + html + '</div>';
   }
@@ -1255,8 +1458,9 @@
     var u = state.units;
     var html = '<div class="circ-info">Paste the CSiBridge "Element Forces - Frames" table (Frame, Station, OutputCase, P, V2, V3, T, M2, M3). ' +
       'This tab works in kip, in, ft, ksi and kip-ft; the app\'s global display-unit toggle does not apply here.</div>' +
+      '<div data-req="paste"><span style="font-size:0.76rem;">Frame forces table<span class="cs-req-star"> *</span></span>' +
       '<textarea id="cs-paste" data-cs="paste" data-t="raw" spellcheck="false" style="width:100%;height:140px;font-family:Consolas,monospace;font-size:0.75rem;">' +
-      esc(state.paste) + '</textarea>' +
+      esc(state.paste) + '</textarea><span class="cs-req-hint">required</span></div>' +
       grid([
         field('Force units (if no units row)', sel('units.force', UNIT_OPTIONS.force, ' id="cs-u-force"')),
         field('Moment units', sel('units.moment', UNIT_OPTIONS.moment, ' id="cs-u-moment"')),
@@ -1306,81 +1510,164 @@
       field('Seismic code', sel('code', CODES.map(function (c) { return [c.key, c.label]; }), ' id="cs-code"')),
       field('Envelope mode', sel('settings.envelope_mode', [['station', 'station (default)'], ['member', 'member (fastest, most conservative)']], ' id="cs-env-mode"')),
       field('Slenderness screen', inp('settings.slenderness_on', 'bool', ' id="cs-slender-on"'))
-    ]) + '<div class="circ-info">Slenderness: K&#8467;u/r screen (&sect;5.6.4.3) and moment magnification (Art. 4.5.3.2.2b): Mc = max(&delta;b, &delta;s)&middot;M2 per axis, EI per &sect;5.6.4.3, &phi;K = 0.75.</div>' +
-      '<div style="font-weight:600;font-size:0.8rem;margin-top:8px;">Cage search</div>' +
-      grid(PARAM_LABELS.map(function (p) { return field(p[1], inp('params.' + p[0], 'num', ' style="width:80px"'), p[2]); }));
+    ]) + '<div class="circ-info">Slenderness: K&#8467;u/r screen (&sect;5.6.4.3) and moment magnification (Art. 4.5.3.2.2b) of the SRSS ' +
+      'resultant moment, unbraced by default (one K and &#8467;u per bent, applied identically about both axes of the circular column): ' +
+      'Mc = max(&delta;b, &delta;s)&middot;M2, EI per &sect;5.6.4.3, &phi;K = 0.75.</div>' +
+      details('cs-adv-settings', 'Advanced: cage search range (defaults shown)',
+        grid(PARAM_LABELS.map(function (p) { return field(p[1], inp('params.' + p[0], 'num', ' style="width:80px"'), p[2]); })));
     return card('3. Settings', 'blue', h, 'cs-card-settings');
   }
+  // collapsed <details>; the open state survives re-renders (detailsOpen, 'toggle' listener)
+  function details(id, summary, body) {
+    return '<details id="' + id + '" data-details="' + id + '"' + (detailsOpen[id] ? ' open' : '') + ' style="margin:6px 0;">' +
+      '<summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:#1a5276;">' + summary + '</summary>' + body + '</details>';
+  }
+  function sub(t) { return '<div style="font-weight:600;font-size:0.78rem;margin-top:6px;">' + t + '</div>'; }
+  // Ruling U-4: Basic block (always visible, minimum inputs marked ★ / red when missing)
+  // and a collapsed Advanced block per bent (defaults shown).
   function bentHtml(b, i) {
     var P = 'bents.' + i + '.';
+    var R = 'b' + i + ':';
     var w = ' style="width:80px"';
     var aH = autoHeightFt(state, b);
     var soilOpts = [['', '(none)']].concat(state.soils.map(function (s) { return [s.name, s.name]; }));
-    var h = '<div style="border:1px solid #dce1e8;border-radius:6px;padding:8px 10px;margin-bottom:10px;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;"><b>Bent ' + (i + 1) + '</b>' +
-      btn('Remove bent', 'rm-bent', ' data-i="' + i + '"') + '</div>' +
+    var radio = function (val, label) {
+      return '<label style="font-size:0.78rem;margin-right:12px;white-space:nowrap;"><input type="radio" name="cs-pile-' + i +
+        '" data-cs="' + P + 'pile_support" data-t="str" value="' + val + '"' + (b.pile_support === val ? ' checked' : '') + '> ' + label + '</label>';
+    };
+    var slOn = state.settings.slenderness_on;
+    var basic = grid([
+      field('Name', inp(P + 'name', 'str', ' style="width:110px"')),
+      field('Column frames (comma list)', inp(P + 'col_frames', 'str', ' style="width:150px" list="cs-frame-list"'), '', R + 'col_frames'),
+      field('Shaft frames (optional)', inp(P + 'shaft_frames', 'str', ' style="width:150px" list="cs-frame-list"')),
+      field('Column D', inp(P + 'col.D', 'num', w), 'in', R + 'col.D'),
+      field('Shaft Ds', inp(P + 'shaft.D', 'num', w), 'in', R + 'shaft.D'),
+      field('Column top', sel(P + 'col_top', COL_TOP, ' id="cs-coltop-' + i + '"'))
+    ]) +
+      '<div style="margin:4px 0 2px;font-size:0.78rem;"><b>Pile support:</b> ' + radio('cantilever', 'Equivalent cantilever length') +
+      radio('soil', 'Soil profile (p-y)') + '<span class="circ-info" id="cs-iface-note-' + i + '"' +
+      (b.shaft_interface ? '' : ' style="display:none"') + '>Advanced: interface only (no pile model below the column base).</span></div>' +
       grid([
-        field('Name', inp(P + 'name', 'str', ' style="width:110px"')),
-        field('Column frames (comma list)', inp(P + 'col_frames', 'str', ' style="width:150px" list="cs-frame-list"')),
-        field('Shaft frames (optional)', inp(P + 'shaft_frames', 'str', ' style="width:150px" list="cs-frame-list"')),
-        field('H', inp(P + 'H_ft', 'num', w) + '<span class="circ-info" id="cs-autoH-' + i + '">' + autoHText(aH) + '</span>', 'ft'),
-        field('Base end', sel(P + 'base_end', ['auto', 'min', 'max'])),
-        field('End cond. long', sel(P + 'end_long', ['fixed-free', 'fixed-fixed'])),
-        field('End cond. trans', sel(P + 'end_trans', ['fixed-free', 'fixed-fixed']))
-      ]) +
-      '<div style="font-weight:600;font-size:0.78rem;">Column</div>' + grid([
-        field('D', inp(P + 'col.D', 'num', w), 'in'), field("f'c", inp(P + 'col.fc', 'num', w), 'ksi'),
-        field('fy', inp(P + 'col.fy', 'num', w), 'ksi'), expectedFields(P + 'col.', i, 'col'),
-        field('Cover', inp(P + 'col.cover', 'num', w), 'in'),
-        field('Transverse', sel(P + 'col.trans_type', ['hoop', 'spiral'])),
-        field('Hoop closure', sel(P + 'col.hoop_closure', [['lap', 'Lap splice'], ['hooked', 'Welded / mechanical / hooked']])),
+        field('<b>Pile equivalent cantilever length L_eq</b>', inp(P + 'L_eq_ft', 'num', w), 'ft', R + 'L_eq_ft', ' id="cs-leq-' + i + '"'),
+        field('Soil profile', sel(P + 'soil', soilOpts), '', R + 'soil', ' id="cs-soilsel-' + i + '"'),
+        field('Embedded length', inp(P + 'L_embed_ft', 'num', w), 'ft', R + 'L_embed_ft', ' id="cs-embed-' + i + '"'),
+        field('P_dead (kip, compression &minus;)', inp(P + 'P_dead', 'num', w), '', R + 'P_dead', ' id="cs-pdead-basic-' + i + '"'),
+        '<span class="circ-info" id="cs-pdead-hint-' + i + '">' + esc(pdeadHintText(b)) + '</span>'
+      ]);
+    if (slOn) {
+      basic += sub('Slenderness') + grid([
+        '<span class="circ-info" id="cs-k-hint-' + i + '" style="max-width:420px;white-space:normal;">' + esc(slenderKText(b)) + '</span>',
+        field('Override K from buckling analysis (blank = default)', inp(P + 'slender.K', 'num', w)),
+        '<span class="circ-info">&#8467;u: auto = H + fixity depth</span>',
+        field('Override &#8467;u (blank = auto)', inp(P + 'slender.lu_ft', 'num', w), 'ft')
+      ]);
+    }
+    var ovw = ' style="width:56px"';
+    var O = P + 'override.';
+    var adv = sub('Column') + grid([
+      field("f'c", inp(P + 'col.fc', 'num', w), 'ksi'), field('fy', inp(P + 'col.fy', 'num', w), 'ksi'),
+      expectedFields(P + 'col.', i, 'col'),
+      field('Cover', inp(P + 'col.cover', 'num', w), 'in'),
+      field('Transverse', sel(P + 'col.trans_type', ['hoop', 'spiral'])),
+      field('Hoop closure', sel(P + 'col.hoop_closure', [['lap', 'Lap splice'], ['hooked', 'Welded / mechanical / hooked']])),
+      field(esc(BARS_TERMINATED_LABEL), inp(P + 'col.bars_terminated', 'bool', ' id="cs-col-barsterm-' + i + '"'))
+    ]) + sub('Shaft') + grid([
+      field("f'c", inp(P + 'shaft.fc', 'num', w), 'ksi'), field('fy', inp(P + 'shaft.fy', 'num', w), 'ksi'),
+      expectedFields(P + 'shaft.', i, 'shaft'),
+      field('Cover', inp(P + 'shaft.cover', 'num', w), 'in'),
+      field('Transverse', sel(P + 'shaft.trans_type', ['hoop', 'spiral'])),
+      field(esc(BARS_TERMINATED_LABEL), inp(P + 'shaft.bars_terminated', 'bool', ' id="cs-shaft-barsterm-' + i + '"')),
+      field('Interface only (shaft basis: no pile model)', inp(P + 'shaft_interface', 'bool', ' id="cs-iface-' + i + '"'))
+    ]) + '<div class="circ-info">Unticked (default): the longitudinal V+T check is enforced only on rows where torsion is considered ' +
+      '(Eq. 5.7.3.6.3-1); elsewhere it is reported as ' + esc(LONG_NA) + '.</div>' +
+      sub('Seismic') + grid([
         field('&lambda;mo', inp(P + 'lambda_mo', 'num', w)),
         field('&mu;D (blank = code default)', inp(P + 'mu_d', 'num', w)),
-        field('P_dead (used only if no Dead rows; kip, compression &minus;)', inp(P + 'P_dead', 'num', w) +
-          '<span class="circ-info" id="cs-pdead-hint-' + i + '">' + esc(deadHint(resultBentFor(b))) + '</span>'),
-        field(esc(BARS_TERMINATED_LABEL), inp(P + 'col.bars_terminated', 'bool', ' id="cs-col-barsterm-' + i + '"'))
+        field('Base end', sel(P + 'base_end', ['auto', 'min', 'max'])),
+        field('H (blank = auto)', inp(P + 'H_ft', 'num', w) + '<span class="circ-info" id="cs-autoH-' + i + '">' + autoHText(aH) + '</span>', 'ft'),
+        field('End cond. long', sel(P + 'end_long', ['fixed-free', 'fixed-fixed']), '', '', ' id="cs-endlong-' + i + '"'),
+        field('End cond. trans', sel(P + 'end_trans', ['fixed-free', 'fixed-fixed']), '', '', ' id="cs-endtrans-' + i + '"'),
+        field('P_dead fallback (used only if no Dead rows; kip, compression &minus;)', inp(P + 'P_dead', 'num', w), '', '',
+          ' id="cs-pdead-adv-' + i + '"')
       ]) +
-      '<div style="font-weight:600;font-size:0.78rem;">Shaft</div>' + grid([
-        field('Ds', inp(P + 'shaft.D', 'num', w), 'in'), field("f'c", inp(P + 'shaft.fc', 'num', w), 'ksi'),
-        field('fy', inp(P + 'shaft.fy', 'num', w), 'ksi'), expectedFields(P + 'shaft.', i, 'shaft'),
-        field('Cover', inp(P + 'shaft.cover', 'num', w), 'in'),
-        field('Transverse', sel(P + 'shaft.trans_type', ['hoop', 'spiral'])),
-        field('Shaft basis', sel(P + 'shaft_basis', [['auto', 'auto'], ['soil', 'soil (p-y)'], ['cantilever', 'cantilever (L_eq)'], ['interface', 'interface only']])),
-        field('<b>Pile equivalent cantilever length L_eq</b>', inp(P + 'L_eq_ft', 'num', w), 'ft'),
-        field('Soil profile', sel(P + 'soil', soilOpts)),
-        field('Embedded length', inp(P + 'L_embed_ft', 'num', w), 'ft'),
-        field(esc(BARS_TERMINATED_LABEL), inp(P + 'shaft.bars_terminated', 'bool', ' id="cs-shaft-barsterm-' + i + '"'))
-      ]) + '<div class="circ-info">L_eq is required when the bent has no soil profile (shaft basis auto/cantilever). ' +
-      'Unticked (default): the longitudinal V+T check is enforced only on rows where torsion is considered (Eq. 5.7.3.6.3-1); ' +
-      'elsewhere it is reported as ' + esc(LONG_NA) + '.</div>' +
-      '<div style="font-weight:600;font-size:0.78rem;">Slenderness (used only when the screen is on)</div>' +
-      ['2', '3'].map(function (ax) {
-        var A = P + 'slender.' + ax + '.';
-        return grid([
-          field('Axis ' + ax + ' braced', inp(A + 'braced', 'bool')),
-          field('Unbraced K source (axis ' + ax + ', &delta;s)', sel(A + 'K_source', [['default', 'default (Table C4.6.2.5-1)'], ['analysis', 'buckling analysis']])),
-          field('End condition (axis ' + ax + ', unbraced default K)', sel(A + 'end_condition', [['fixed-free', 'fixed-free, case (e) (K = 2.1)'], ['fixed-fixed', 'fixed-fixed, sway, case (d) (K = 1.2)']])),
-          field('Unbraced K (axis ' + ax + ', buckling analysis)', inp(A + 'K', 'num', w)),
-          field('Braced K source (axis ' + ax + ', &delta;b)', sel(A + 'K_braced_source', [['default', 'default 1.0 (C5.6.4.3)'], ['analysis', 'buckling analysis']])),
-          field('Braced K (axis ' + ax + ', buckling analysis)', inp(A + 'K_braced', 'num', w)),
-          field('&#8467;u axis ' + ax + ' (blank = H + Df)', inp(A + 'lu_ft', 'num', w), 'ft'),
-          '<span class="circ-info" id="cs-k-hint-' + i + '-' + ax + '" style="max-width:420px;white-space:normal;">' + esc(kInfoText(b.slender[ax])) + '</span>'
-        ]);
-      }).join('') + grid([
+      sub('Slenderness (used only when the screen is on)') + grid([
+        field('Braced against sidesway', inp(P + 'slender.braced', 'bool', ' id="cs-braced-' + i + '"')),
+        field('Braced K (&delta;b; blank = 1.0, C5.6.4.3)', inp(P + 'slender.K_braced', 'num', w)),
         field('&beta;d (blank = auto)', inp(P + 'slender.beta_d', 'num', w)),
         field('&gamma;p (load factor applied to Dead-case moments for &beta;d; blank = 1.25; use the largest permanent-load factor in your Strength combinations, e.g. 1.5 for DW)', inp(P + 'slender.gamma_p', 'num', w)),
         field('Sway group (blank = this bent alone)', inp(P + 'sway_group', 'str', w))
-      ]) + '</div>';
-    return h;
+      ]) +
+      sub('Overrides (used as entered, never "improved"; blank = designed; pitch s in inches)') +
+      '<table class="data-table" id="cs-overrides-' + i + '"><thead><tr><th>Column longitudinal</th><th>Column transverse</th>' +
+      '<th>Shaft longitudinal</th><th>Shaft transverse</th><th></th></tr></thead><tbody><tr>' +
+      '<td>#' + inp(O + 'col_long.bar', 'num', ovw) + ' n ' + inp(O + 'col_long.n', 'num', ovw) + ' bundle ' + inp(O + 'col_long.bundle', 'num', ovw) + '</td>' +
+      '<td>#' + inp(O + 'col_trans.bar', 'num', ovw) + ' s ' + inp(O + 'col_trans.s', 'num', ovw) + ' ties ' + inp(O + 'col_trans.ties', 'num', ovw) + '</td>' +
+      '<td>#' + inp(O + 'shaft_long.bar', 'num', ovw) + ' n ' + inp(O + 'shaft_long.n', 'num', ovw) + ' bundle ' + inp(O + 'shaft_long.bundle', 'num', ovw) + '</td>' +
+      '<td>#' + inp(O + 'shaft_trans.bar', 'num', ovw) + ' s ' + inp(O + 'shaft_trans.s', 'num', ovw) + ' ties ' + inp(O + 'shaft_trans.ties', 'num', ovw) + '</td>' +
+      '<td>' + btn('Clear override', 'clear-ov', ' data-i="' + i + '"') + '<div id="cs-ov-msg-' + i +
+      '" style="color:#c0392b;font-size:0.74rem;white-space:normal;">' + esc(overrideErrors(b).join('; ')) + '</div></td></tr></tbody></table>';
+    return '<div style="border:1px solid #dce1e8;border-radius:6px;padding:8px 10px;margin-bottom:10px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;"><b>Bent ' + (i + 1) + '</b>' +
+      btn('Remove bent', 'rm-bent', ' data-i="' + i + '"') + '</div>' + basic +
+      details('cs-adv-' + i, 'Advanced (defaults shown)', adv) + '</div>';
   }
-  // ruling F-1: expected steel fye / fue / fyh (blank = A706 Gr60 68/95/68, fy = 60 only)
+  // ruling F-1: expected steel fye / fue / fyh (blank = A706 Gr60 68/95/68, fy = 60 only;
+  // required (★) for fy ≠ 60, ruling U-5)
   function expectedFields(P, i, who) {
     var w = ' style="width:56px"';
     var m = getPath(state, P.slice(0, -1));
-    return field('fye / fue / fyh <span style="color:#7f8c8d">' + esc(EXPECTED_HINT) + '</span>',
-      '<span style="display:flex;gap:4px;">' + inp(P + 'fye', 'num', w) + inp(P + 'fue', 'num', w) + inp(P + 'fyh', 'num', w) + '</span>' +
+    var R = 'b' + i + ':' + who + '.';
+    return field('fye', inp(P + 'fye', 'num', w), 'ksi', R + 'fye') + field('fue', inp(P + 'fue', 'num', w), 'ksi', R + 'fue') +
+      field('fyh', inp(P + 'fyh', 'num', w), 'ksi', R + 'fyh') +
+      '<span class="circ-info">' + esc(EXPECTED_HINT) + '</span>' +
       '<span id="cs-exp-msg-' + who + '-' + i + '" style="color:#c0392b;font-size:0.72rem;white-space:normal;">' +
-      esc(expectedErrors(m).join('; ')) + '</span>', 'ksi');
+      esc(expectedErrors(m).join('; ')) + '</span>';
+  }
+  // P_dead hint under the Basic block: the engine's Dead-case sum after a run
+  function pdeadHintText(b) {
+    var h = deadHint(resultBentFor(b));
+    return h ? 'P_dead ' + h : '';
+  }
+  // show / hide the inputs that depend on other choices (pile support, interface, column
+  // top, P_dead needed) without a re-render (keeps the focus)
+  function applyVisibility(i) {
+    var b = state.bents[i];
+    if (!b) return;
+    var show = function (id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    var basis = shaftBasis(b);
+    show('cs-leq-' + i, basis === 'cantilever');
+    show('cs-soilsel-' + i, basis === 'soil');
+    show('cs-embed-' + i, basis === 'soil');
+    show('cs-iface-note-' + i, basis === 'interface');
+    show('cs-endlong-' + i, b.col_top === 'different');
+    show('cs-endtrans-' + i, b.col_top === 'different');
+    var need = pDeadRequired(state, b);
+    show('cs-pdead-basic-' + i, need);
+    show('cs-pdead-adv-' + i, !need);
+  }
+  // ruling U-5: red required fields, the "Minimum inputs" line and the Design button
+  function refreshRequired() {
+    var miss = requiredMissing(state);
+    var keys = {};
+    miss.forEach(function (m) { keys[(m.bent === null ? '' : 'b' + m.bent + ':') + m.key] = true; });
+    Array.prototype.forEach.call(panel.querySelectorAll('[data-req]'), function (el) {
+      var on = !!keys[el.getAttribute('data-req')];
+      el.classList.toggle('cs-req-missing', on);
+      var d = on && el.closest ? el.closest('details') : null;
+      if (d && !d.open) { d.open = true; detailsOpen[d.id] = true; }
+    });
+    var line = document.getElementById('cs-min-inputs');
+    if (line) {
+      line.innerHTML = miss.length ? notice('red', '<b>Minimum inputs missing:</b> ' + esc(requiredSummary(state, miss)) +
+        ' — fields marked <b>*</b> in red. Design is disabled until they are entered.') :
+        notice('green', 'Minimum inputs entered: Design is enabled.');
+    }
+    var bt = document.getElementById('cs-design');
+    if (bt) {
+      bt.disabled = busy || !canDesign(state);
+      bt.title = miss.length ? 'Enter the minimum inputs first: ' + requiredSummary(state, miss) : '';
+    }
+    state.bents.forEach(function (b, i) { applyVisibility(i); });
   }
   function renderBents() {
     var fl = state.parse && state.parse.frames ? state.parse.frames : [];
@@ -1419,23 +1706,6 @@
     var h = '<button type="button" class="calc-btn" id="cs-design" data-act="design"' + (busy ? ' disabled' : '') + '>' +
       (busy ? 'Running…' : 'Design') + '</button><div id="cs-stale">' + staleHtml() + '</div><div id="cs-run-status"></div>';
     return card('6. Design', 'green', h, 'cs-card-run');
-  }
-  function renderOverrides() {
-    var w = ' style="width:56px"';
-    var rows = state.bents.map(function (b, i) {
-      var P = 'bents.' + i + '.override.';
-      return '<tr><td id="cs-ov-name-' + i + '">' + esc(b.name) + '</td>' +
-        '<td>#' + inp(P + 'col_long.bar', 'num', w) + ' n ' + inp(P + 'col_long.n', 'num', w) + ' bundle ' + inp(P + 'col_long.bundle', 'num', w) + '</td>' +
-        '<td>#' + inp(P + 'col_trans.bar', 'num', w) + ' s ' + inp(P + 'col_trans.s', 'num', w) + ' ties ' + inp(P + 'col_trans.ties', 'num', w) + '</td>' +
-        '<td>#' + inp(P + 'shaft_long.bar', 'num', w) + ' n ' + inp(P + 'shaft_long.n', 'num', w) + ' bundle ' + inp(P + 'shaft_long.bundle', 'num', w) + '</td>' +
-        '<td>#' + inp(P + 'shaft_trans.bar', 'num', w) + ' s ' + inp(P + 'shaft_trans.s', 'num', w) + ' ties ' + inp(P + 'shaft_trans.ties', 'num', w) + '</td>' +
-        '<td>' + btn('Clear override', 'clear-ov', ' data-i="' + i + '"') + '<div id="cs-ov-msg-' + i +
-        '" style="color:#c0392b;font-size:0.74rem;white-space:normal;">' + esc(overrideErrors(b).join('; ')) + '</div></td></tr>';
-    }).join('');
-    var h = '<div class="circ-info">An override is used as entered (never "improved"); every check is re-run on it at the next Design. ' +
-      'Blank = designed. Pitch s in inches.</div><table class="data-table" id="cs-overrides"><thead><tr><th>Bent</th><th>Column longitudinal</th>' +
-      '<th>Column transverse</th><th>Shaft longitudinal</th><th>Shaft transverse</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
-    return card('9. Overrides', 'orange', h, 'cs-card-overrides');
   }
   function renderResults() {
     var el = document.getElementById('cs-results');
@@ -1494,13 +1764,13 @@
     if (sh && sh.long_check) h += '<div class="circ-info" id="cs-shaft-longchk">' + esc(longCheckText(sh.long_check)) + '</div>';
     if (lastResult.settings && lastResult.settings.slenderness_on) {
       var sk = slenderKRows(b, null);
-      if (sk.length) h += '<div style="font-weight:600;margin-top:8px;">Slenderness screen per axis</div><table class="data-table" id="cs-slender-axes"><thead><tr>' +
+      if (sk.length) h += '<div style="font-weight:600;margin-top:8px;">Slenderness screen' + (b.slender_input === 'single' ? '' : ' per axis') + '</div><table class="data-table" id="cs-slender-axes"><thead><tr>' +
         ['Axis', 'K used', 'K source', 'End condition', 'K&#8467;u/r', 'Limit', 'Status'].map(function (x) { return '<th>' + x + '</th>'; }).join('') +
         '</tr></thead><tbody>' + sk.map(function (a) {
           return '<tr>' + [a.axis, a.K, a.source, a.end_condition, a.klr, a.limit, a.status].map(function (x) { return '<td>' + esc(x) + '</td>'; }).join('') + '</tr>';
         }).join('') + '</tbody></table>' + sk.map(function (a) { return a.label ? '<div class="circ-info">Axis ' + esc(a.axis) + ': ' + esc(a.label) + '.</div>' : ''; }).join('');
       var mg = magRows(b);
-      if (mg.length) h += '<div style="font-weight:600;margin-top:8px;">Moment magnification per axis (governing row)</div>' +
+      if (mg.length) h += '<div style="font-weight:600;margin-top:8px;">Moment magnification' + (b.slender_input === 'single' ? '' : ' per axis') + ' (governing row)</div>' +
         '<div style="overflow-x:auto;"><table class="data-table" id="cs-mag-axes"><thead><tr>' +
         MAG_HDR.map(function (x) { return '<th>' + esc(x) + '</th>'; }).join('') + '</tr></thead><tbody>' + mg.map(function (r) {
           return '<tr>' + magCells(r).map(function (x) { return '<td>' + esc(x) + '</td>'; }).join('') + '</tr>';
@@ -1544,7 +1814,7 @@
   }
   function setText(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; }
   function updateHints() {
-    state.bents.forEach(function (b, i) { setText('cs-pdead-hint-' + i, deadHint(resultBentFor(b))); });
+    state.bents.forEach(function (b, i) { setText('cs-pdead-hint-' + i, pdeadHintText(b)); });
   }
   function renderSoilSelects() {
     state.bents.forEach(function (b, i) {
@@ -1581,11 +1851,20 @@
     '#cs-report .cs-rpt-box,#cs-report .rpt-eq,#cs-report .rpt-table th{-webkit-print-color-adjust:exact;print-color-adjust:exact;}',
     '}'
   ].join(' ');
+  // ruling U-5: required-field highlighting, scoped to this tab
+  var REQ_CSS = [
+    '#tab-colshaft [data-req].cs-req-missing input,#tab-colshaft [data-req].cs-req-missing select,' +
+      '#tab-colshaft [data-req].cs-req-missing textarea{border:2px solid #c0392b !important;}',
+    '#tab-colshaft [data-req].cs-req-missing>span:first-child{color:#c0392b;font-weight:700;}',
+    '#tab-colshaft .cs-req-star,#tab-colshaft .cs-req-hint{display:none;color:#c0392b;}',
+    '#tab-colshaft .cs-req-missing .cs-req-star{display:inline;}',
+    '#tab-colshaft .cs-req-missing .cs-req-hint{display:block;font-size:0.7rem;}'
+  ].join(' ');
   function injectPrintCss() {
     if (document.getElementById('cs-print-style')) return;
     var st = document.createElement('style');
     st.id = 'cs-print-style';
-    st.textContent = PRINT_CSS;
+    st.textContent = PRINT_CSS + ' ' + REQ_CSS;
     (document.head || document.documentElement).appendChild(st);
   }
   function today() {
@@ -1634,9 +1913,10 @@
     }
   }
   function renderAll() {
-    panel.innerHTML = '<div style="padding:4px 0;">' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
-      renderRun() + '<div id="cs-results"></div>' + renderReportCard() + renderOverrides() + '</div>';
+    panel.innerHTML = '<div style="padding:4px 0;"><div id="cs-min-inputs"></div>' + renderPaste() + renderCases() + renderSettings() + renderBents() + renderSoils() +
+      renderRun() + '<div id="cs-results"></div>' + renderReportCard() + '</div>';
     renderResults();
+    refreshRequired();
   }
   function setRunStatus(html) { var el = document.getElementById('cs-run-status'); if (el) el.innerHTML = html; }
 
@@ -1685,7 +1965,8 @@
     var done = function (res) {
       busy = false;
       var bt = document.getElementById('cs-design');
-      if (bt) { bt.disabled = false; bt.textContent = 'Design'; }
+      if (bt) bt.textContent = 'Design';
+      refreshRequired();
       var r;
       try { r = JSON.parse(res); } catch (e) { setRunStatus(notice('red', '<b>Error:</b> ' + esc(e.message))); return; }
       if (r.error) { setRunStatus(notice('red', '<b>Error:</b> ' + esc(r.error))); return; }
@@ -1729,7 +2010,7 @@
     var el = ev.target;
     if (!panel.contains(el)) return;
     var cat = el.getAttribute('data-cat');
-    if (cat !== null) { state.categories[cat] = el.value; markDirty(); markStale(); return; }
+    if (cat !== null) { state.categories[cat] = el.value; markDirty(); markStale(); refreshRequired(); return; }
     var path = el.getAttribute('data-cs');
     if (!path) return;
     var t = el.getAttribute('data-t');
@@ -1749,16 +2030,33 @@
     var mb = /^bents\.(\d+)\.(col_frames|name|override\..*)$/.exec(path);
     if (mb) {
       var bi = Number(mb[1]), bb = state.bents[bi];
-      if (mb[2] === 'name') { setText('cs-ov-name-' + bi, bb.name); setText('cs-pdead-hint-' + bi, deadHint(resultBentFor(bb))); }
+      if (mb[2] === 'name') setText('cs-pdead-hint-' + bi, pdeadHintText(bb));
       else if (mb[2] === 'col_frames') setText('cs-autoH-' + bi, autoHText(autoHeightFt(state, bb)));
       else setText('cs-ov-msg-' + bi, overrideErrors(bb).join('; '));
     }
-    var mk = /^bents\.(\d+)\.slender\.([23])\./.exec(path);
-    if (mk) setText('cs-k-hint-' + mk[1] + '-' + mk[2], kInfoText(state.bents[Number(mk[1])].slender[mk[2]]));
+    // keep the other inputs bound to the same path (P_dead Basic / Advanced) in step
+    Array.prototype.forEach.call(panel.querySelectorAll('[data-cs="' + path + '"]'), function (x) {
+      if (x !== el && x.type !== 'radio' && x.type !== 'checkbox') x.value = v === null || v === undefined ? '' : v;
+    });
+    if (path === 'settings.slenderness_on') { renderAll(); return; }
+    var mk = /^bents\.(\d+)\.(slender\.|col_top|end_long|end_trans)/.exec(path);
+    if (mk) setText('cs-k-hint-' + mk[1], slenderKText(state.bents[Number(mk[1])]));
     var me = /^bents\.(\d+)\.(col|shaft)\.(fy|fye|fue|fyh)$/.exec(path);
     if (me) setText('cs-exp-msg-' + me[2] + '-' + me[1], expectedErrors(state.bents[Number(me[1])][me[2]]).join('; '));
     var ml = /^soils\.(\d+)\.layers\.(\d+)\./.exec(path);
     if (ml) setText('cs-layer-msg-' + ml[1] + '-' + ml[2], layerErrors(state.soils[Number(ml[1])].layers[Number(ml[2])]).join('; '));
+    refreshRequired();
+  }
+  // ruling U-5: required fields turn normal while typing (state updated on input for the
+  // paste and the bent fields; soil names keep the change-time rename logic)
+  function onInput(el) {
+    var path = el.getAttribute('data-cs');
+    var t = el.getAttribute('data-t');
+    if (!/^(paste$|bents\.)/.test(path) || t === 'bool' || el.type === 'radio' || el.tagName === 'SELECT') return;
+    var v = t === 'num' ? (el.value === '' ? '' : num(el.value)) : el.value;
+    if (t === 'num' && v === null) v = '';
+    setPath(state, path, v);
+    refreshRequired();
   }
   panel.addEventListener('click', onClick);
   // keep this tab's edits away from the app's document-level change/input
@@ -1766,13 +2064,18 @@
   panel.addEventListener('change', function (ev) { onChange(ev); ev.stopPropagation(); });
   panel.addEventListener('input', function (ev) {
     var el = ev.target;
-    if (el && el.getAttribute && el.getAttribute('data-cs')) markStale(el.getAttribute('data-cs'));
+    if (el && el.getAttribute && el.getAttribute('data-cs')) { markStale(el.getAttribute('data-cs')); onInput(el); }
     ev.stopPropagation();
   });
   // ruling F-2: keep this tab's keys away from the app's document-level keydown
   // handler (Delete / Backspace would clear a multi-cell demand selection)
   panel.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
   panel.addEventListener('keyup', function (ev) { ev.stopPropagation(); });
+  // 'toggle' does not bubble: capture it to remember which <details> are open
+  panel.addEventListener('toggle', function (ev) {
+    var d = ev.target;
+    if (d && d.getAttribute && d.getAttribute('data-details')) detailsOpen[d.id] = d.open;
+  }, true);
   // minor 7h: a print not started by this tab never keeps a stale cs-printing class
   window.addEventListener('beforeprint', function () {
     if (printFlag) { printFlag = false; return; }
