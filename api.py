@@ -117,8 +117,10 @@ class Api:
             pr = csi_import.parse_csi_frame_forces(data.get("paste") or "", data.get("units"))
             cats = {}
             counts = {}
+            case_frames = {}    # 2026-10-20: frames per case (UI: P_dead required?)
             for r in pr.rows:
                 counts[r.case] = counts.get(r.case, 0) + 1
+                case_frames.setdefault(r.case, set()).add(r.frame)
             for c in pr.cases:
                 cats[c] = colshaft_demands.default_case_category(c)
             frames = []
@@ -130,7 +132,8 @@ class Api:
                     "base_end_guess": colshaft_demands.detect_base_end(pr.rows, [f], None, cats),
                 })
             return json.dumps({
-                "cases": [{"name": c, "count": counts.get(c, 0), "default_category": cats[c]}
+                "cases": [{"name": c, "count": counts.get(c, 0), "default_category": cats[c],
+                           "frames": sorted(case_frames.get(c, ()))}
                           for c in pr.cases],
                 "frames": frames,
                 "units": pr.units,

@@ -234,6 +234,57 @@ def resolve_K(spec: dict, axis: str = "") -> dict:
     return out
 
 
+AXES = ("2", "3")
+AXIS_KEYS = ("braced", "K_source", "K", "lu", "K_braced_source", "K_braced")
+
+
+def is_single_spec(sl) -> bool:
+    """True for the single (resultant) slenderness spec of 2026-10-20 (no axis keys)."""
+    return isinstance(sl, dict) and not any(ax in sl for ax in AXES)
+
+
+def derived_end_condition(bent: dict) -> str:
+    """Unbraced default-K end condition of the single spec (user ruling U-2,
+    2026-10-20), from the bent's seismic end conditions: "fixed-fixed" only when
+    BOTH directions are fixed-fixed (Table C4.6.2.5-1 case (d) K = 1.2), else
+    "fixed-free" (case (e) K = 2.1; the more flexible direction governs)."""
+    ends = [bent.get("end_condition_long") or "fixed-free",
+            bent.get("end_condition_trans") or "fixed-free"]
+    for e in ends:
+        if e not in END_CONDITIONS:
+            raise ValueError(f"end condition must be one of {END_CONDITIONS}, got {e!r}")
+    return "fixed-fixed" if all(e == "fixed-fixed" for e in ends) else "fixed-free"
+
+
+def axes_spec(bent: dict):
+    """bent["slender"] in the per-axis form the magnifier uses.
+
+    User ruling U-1 (2026-10-20): circular column, same restraint about both
+    principal axes -> the single spec {K_source, K, lu (in) | lu_ft, braced,
+    K_braced_source, K_braced, beta_d, gamma_p} is mapped onto IDENTICAL axes "2"
+    and "3" (Art. 4.5.3.2.2b: each axis magnified by its own delta; equal deltas give
+    hypot(d*M2, d*M3) = d*Mu, so the per-axis math is unchanged).  The axis
+    end_condition is derived_end_condition(bent) (U-2; a single-spec end_condition is
+    ignored).  A legacy two-axis spec {"2": .., "3": ..} (API compatibility) or a
+    missing spec is returned unchanged."""
+    sl = bent.get("slender")
+    if not sl or not is_single_spec(sl):
+        return sl
+    lu = sl.get("lu")
+    if _empty(lu) and not _empty(sl.get("lu_ft")):
+        if not _is_num(sl["lu_ft"]):
+            raise ValueError(f"slenderness lu_ft must be a number (got {sl['lu_ft']!r})")
+        lu = float(sl["lu_ft"]) * 12.0
+    ax = {k: sl.get(k) for k in AXIS_KEYS}
+    ax["braced"] = bool(sl.get("braced"))
+    ax["lu"] = None if _empty(lu) else lu
+    ax["end_condition"] = derived_end_condition(bent)
+    out = {a: dict(ax) for a in AXES}
+    out["beta_d"] = sl.get("beta_d")
+    out["gamma_p"] = sl.get("gamma_p")
+    return out
+
+
 def derive(cage_inputs):
     """Derived copy of raw circular inputs (circ_engine.derive_circular)."""
     I = dict(cage_inputs)

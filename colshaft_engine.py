@@ -638,6 +638,7 @@ def run_bent(bent, pr, cats, prov, params, settings, mode, sway=None, design_Df=
     out["H_auto"] = H_auto
     out["expected_steel"] = exp_steel
     if slender_on:      # K per axis as used (user decision 2026-10-19)
+        out["slender_input"] = bent.get("_slender_input") or "axes"      # ruling U-1
         out["slender_K"] = {ax: {k: v for k, v in csl.resolve_K(bent["slender"][ax], ax).items()
                                  if k != "warnings"} for ax in ("2", "3")}
         if tf_final is not None:
@@ -899,7 +900,12 @@ def run_colshaft(payload: dict) -> dict:
     pr = ci.parse_csi_frame_forces(payload.get("paste") or "", payload.get("units"))
     cats = validate_categories(payload.get("categories"), pr.cases)
     gw = list(pr.warnings)
-    specs = list(payload.get("bents") or [])
+    # user ruling U-1 (2026-10-20): a single (resultant) slenderness spec is mapped onto
+    # identical axes "2" / "3"; a legacy two-axis spec passes through unchanged
+    specs = [dict(b, slender=csl.axes_spec(b),
+                  _slender_input="single" if csl.is_single_spec(b.get("slender")) else "axes")
+             if isinstance(b, dict) and b.get("slender") else b
+             for b in (payload.get("bents") or [])]
     bents = [run_bent(bent, pr, cats, prov, params, settings, mode) for bent in specs]
     if settings.get("slenderness_on"):
         sway_pass2(specs, bents, lambda bent, sw: run_bent(bent, pr, cats, prov, params,
