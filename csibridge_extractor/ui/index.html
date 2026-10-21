@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CSiBridge Results Extractor</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1d2330; --mute:#667085; --line:#d7dce3; --acc:#1f5fbf; --bad:#b42318; --ok:#067647; --warn:#b54708; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 16px 32px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:10px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); margin:0 0 8px; }
+  button { font:inherit; padding:5px 14px; border:1px solid var(--line); border-radius:4px; background:#fff; cursor:pointer; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=text], textarea, select { font:inherit; width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:4px; background:#fff; color:inherit; }
+  textarea { height:60px; resize:vertical; }
+  .row { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+  .col { flex:1 1 280px; min-width:0; }
+  label { display:block; font-size:12px; color:var(--mute); margin-bottom:2px; }
+  .mute { color:var(--mute); }
+  .bad { color:var(--bad); } .ok { color:var(--ok); } .warn { color:var(--warn); }
+  #cases { max-height:200px; overflow:auto; border:1px solid var(--line); border-radius:4px; padding:4px 8px; margin-top:6px; }
+  #cases .case { display:flex; align-items:center; gap:6px; padding:1px 0; }
+  #cases .case.off { color:#9aa1ad; }
+  #groups { height:84px; }
+  table.t { border-collapse:collapse; }
+  table.t td, table.t th { padding:3px 12px 3px 0; text-align:left; font-weight:normal; }
+  .bar { height:14px; background:#e4e7ec; border-radius:7px; overflow:hidden; }
+  .bar > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .bar.busy > div { width:40% !important; animation:slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0%{margin-left:-40%} 100%{margin-left:100%} }
+  #log { height:200px; overflow:auto; background:#10151f; color:#d6dbe6; font:12px/1.4 Consolas, monospace; padding:6px 8px; border-radius:4px; white-space:pre-wrap; }
+  #log .w { color:#f5b455; } #log .e { color:#ff8a80; } #log .n { color:#8fb8ff; }
+</style>
+</head>
+<body>
+<main>
+
+<section id="s-conn">
+  <h2>1. Connection</h2>
+  <div class="row" style="align-items:center">
+    <button id="btn-connect" class="primary">Connect</button>
+    <span id="conn-status" class="mute">Not connected.</span>
+  </div>
+  <div id="conn-notes" class="mute" style="margin-top:4px"></div>
+</section>
+
+<section id="s-targets">
+  <h2>2. Targets</h2>
+  <div class="row">
+    <div class="col"><label for="frames">Frames (labels, ranges like 1201-1210)</label><textarea id="frames" spellcheck="false"></textarea></div>
+    <div class="col"><label for="joints">Joints</label><textarea id="joints" spellcheck="false"></textarea></div>
+    <div class="col"><label for="groups">Groups (Ctrl/Shift-click for several)</label><select id="groups" multiple></select></div>
+  </div>
+  <div id="resolved" class="mute" style="margin-top:6px">Resolved: connect to see counts.</div>
+</section>
+
+<section id="s-cases">
+  <h2>3. Cases and combinations</h2>
+  <div class="row" style="align-items:center">
+    <input type="text" id="case-filter" placeholder="Filter by name..." style="max-width:260px">
+    <button id="btn-case-all">Tick shown</button>
+    <button id="btn-case-none">Untick shown</button>
+    <span id="case-count" class="mute"></span>
+  </div>
+  <div id="cases"><span class="mute">Connect to list the model's cases.</span></div>
+</section>
+
+<section id="s-tables">
+  <h2>4. Tables</h2>
+  <table class="t">
+    <tr><th></th><th>Envelope</th><th>Correspondence</th><th>Both</th></tr>
+    <tr><td>Frame forces</td>
+      <td><label><input type="radio" name="frame" value="envelope" checked> </label></td>
+      <td><label><input type="radio" name="frame" value="correspondence"> </label></td>
+      <td><label><input type="radio" name="frame" value="both"> </label></td>
+      <td><label><input type="radio" name="frame" value="off"> off</label></td></tr>
+    <tr><td>Joint reactions</td>
+      <td><label><input type="radio" name="joint" value="envelope"> </label></td>
+      <td><label><input type="radio" name="joint" value="correspondence"> </label></td>
+      <td><label><input type="radio" name="joint" value="both"> </label></td>
+      <td><label><input type="radio" name="joint" value="off" checked> off</label></td></tr>
+  </table>
+</section>
+
+<section id="s-output">
+  <h2>5. Output</h2>
+  <div class="row">
+    <div class="col"><label for="out-dir">Folder (empty = next to the model file)</label>
+      <div class="row" style="flex-wrap:nowrap"><input type="text" id="out-dir"><button id="btn-folder">Browse...</button></div></div>
+    <div class="col"><label for="out-pattern">File name pattern ({model}, {stamp})</label><input type="text" id="out-pattern" value="{model}_results_{stamp}.xlsx"></div>
+  </div>
+  <div style="margin-top:6px"><span class="mute">Will write: </span><span id="out-preview" class="mute">-</span></div>
+  <label style="margin-top:6px"><input type="checkbox" id="open-done" checked> Open the workbook when done</label>
+</section>
+
+<section id="s-jobs">
+  <h2>6. Job</h2>
+  <div class="row" style="align-items:center">
+    <button id="btn-save">Save job...</button>
+    <button id="btn-load">Load job...</button>
+    <span style="flex:1"></span>
+    <button id="btn-run" class="primary">Run</button>
+    <button id="btn-cancel" disabled>Cancel</button>
+  </div>
+</section>
+
+<section id="s-progress">
+  <h2>7. Progress</h2>
+  <div class="bar" id="bar"><div></div></div>
+  <div id="prog-text" class="mute" style="margin:4px 0">Idle.</div>
+  <div id="log"></div>
+</section>
+
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { cases: [], ticked: {}, connected: false, polling: null, startedAt: 0, resolveTimer: null };
+
+  // Escape model-derived text before it goes into HTML.
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function call(name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    if (!window.pywebview || !window.pywebview.api) return Promise.resolve({ error: "Python bridge not ready" });
+    return window.pywebview.api[name].apply(null, args).then(function (r) {
+      try { return JSON.parse(r); } catch (e) { return { error: "bad reply: " + r }; }
+    }, function (e) { return { error: String(e) }; });
+  }
+
+  function logLine(text, cls) {
+    var box = $("log"), d = document.createElement("div");
+    if (cls) d.className = cls;
+    d.textContent = text;
+    box.appendChild(d);
+    box.scrollTop = box.scrollHeight;
+  }
+  function classOf(t) {
+    if (/^(FAILED|ABORTED)/.test(t) || /INCOMPLETE/.test(t)) return "e";
+    if (/^WARNING/.test(t)) return "w";
+    if (/^note/.test(t)) return "n";
+    return "";
+  }
+
+  function modes(name) {
+    var v = document.querySelector('input[name="' + name + '"]:checked').value;
+    if (v === "off") return { enabled: false, modes: ["envelope"] };
+    return { enabled: true, modes: v === "both" ? ["envelope", "correspondence"] : [v] };
+  }
+  function setModes(name, spec) {
+    var v = "off";
+    if (spec && spec.enabled) {
+      var m = spec.modes || [];
+      v = m.length > 1 ? "both" : (m[0] || "envelope");
+    }
+    document.querySelector('input[name="' + name + '"][value="' + v + '"]').checked = true;
+  }
+  function selectedGroups() {
+    return Array.prototype.filter.call($("groups").options, function (o) { return o.selected; })
+      .map(function (o) { return o.value; });
+  }
+  function getJob() {
+    var cases = state.cases.filter(function (c) { return state.ticked[c.name]; }).map(function (c) { return c.name; });
+    return {
+      version: 1,
+      frames: $("frames").value, joints: $("joints").value, groups: selectedGroups(),
+      cases: cases,
+      tables: { frame: modes("frame"), joint: modes("joint") },
+      output_dir: $("out-dir").value.trim() || null,
+      name_pattern: $("out-pattern").value || "{model}_results_{stamp}.xlsx",
+      open_when_done: $("open-done").checked
+    };
+  }
+  function setJob(j) {
+    $("frames").value = j.frames || ""; $("joints").value = j.joints || "";
+    var g = j.groups || [];
+    Array.prototype.forEach.call($("groups").options, function (o) { o.selected = g.indexOf(o.value) >= 0; });
+    state.ticked = {};
+    (j.cases || []).forEach(function (c) { state.ticked[c] = true; });
+    setModes("frame", (j.tables || {}).frame); setModes("joint", (j.tables || {}).joint);
+    $("out-dir").value = j.output_dir || "";
+    $("out-pattern").value = j.name_pattern || "{model}_results_{stamp}.xlsx";
+    $("open-done").checked = j.open_when_done !== false;
+    renderCases(); scheduleResolve();
+  }
+
+  // ---- cases ----
+  function renderCases() {
+    var f = $("case-filter").value.toLowerCase(), box = $("cases"), html = "", shown = 0;
+    state.cases.forEach(function (c, i) {
+      if (f && c.name.toLowerCase().indexOf(f) < 0) return;
+      shown++;
+      var off = !c.has_results;
+      html += '<label class="case' + (off ? " off" : "") + '"><input type="checkbox" data-i="' + i + '"' +
+        (off ? " disabled" : "") + (state.ticked[c.name] && !off ? " checked" : "") + "> " + esc(c.name) +
+        ' <span class="mute">(' + esc(c.kind) + ", " + esc(c.type) + ")</span>" +
+        (off ? ' <em>no results</em>' : "") + "</label>";
+    });
+    box.innerHTML = html || '<span class="mute">' + (state.cases.length ? "No case matches the filter." : "Connect to list the model's cases.") + "</span>";
+    var n = Object.keys(state.ticked).filter(function (k) { return state.ticked[k]; }).length;
+    $("case-count").textContent = state.cases.length ? n + " ticked, " + shown + " shown of " + state.cases.length : "";
+  }
+  $("cases").addEventListener("change", function (e) {
+    var i = e.target.getAttribute("data-i");
+    if (i === null) return;
+    state.ticked[state.cases[+i].name] = e.target.checked;
+    renderCases();
+  });
+  function tickShown(v) {
+    var f = $("case-filter").value.toLowerCase();
+    state.cases.forEach(function (c) {
+      if (c.has_results && (!f || c.name.toLowerCase().indexOf(f) >= 0)) state.ticked[c.name] = v;
+    });
+    renderCases();
+  }
+  $("btn-case-all").onclick = function () { tickShown(true); };
+  $("btn-case-none").onclick = function () { tickShown(false); };
+  $("case-filter").addEventListener("input", renderCases);
+
+  // ---- resolve + output preview ----
+  function scheduleResolve() {
+    clearTimeout(state.resolveTimer);
+    state.resolveTimer = setTimeout(refreshResolve, 250);
+  }
+  function refreshResolve() {
+    var job = JSON.stringify(getJob());
+    call("preview_output", job).then(function (r) { $("out-preview").textContent = r.error ? r.error : r.path; });
+    if (!state.connected) return;
+    call("resolve", job).then(function (r) {
+      var el = $("resolved");
+      if (r.error) { el.className = "bad"; el.textContent = r.error; return; }
+      var parts = [r.counts.frames + " frames", r.counts.joints + " joints"], bad = [];
+      [["missing_frames", "frames not in model"], ["missing_joints", "joints not in model"],
+       ["missing_groups", "groups not in model"], ["empty_ranges", "ranges matching nothing"],
+       ["ambiguous_tokens", "ambiguous tokens"]].forEach(function (p) {
+        if (r[p[0]] && r[p[0]].length) bad.push(esc(p[1]) + ": " + r[p[0]].map(esc).join(", "));
+      });
+      el.className = bad.length ? "warn" : "mute";
+      el.innerHTML = "Resolved: " + parts.join(", ") + (bad.length ? "<br>" + bad.join("<br>") : "");
+    });
+  }
+  ["frames", "joints", "out-dir", "out-pattern"].forEach(function (id) { $(id).addEventListener("input", scheduleResolve); });
+  $("groups").addEventListener("change", scheduleResolve);
+
+  // ---- connect ----
+  $("btn-connect").onclick = function () {
+    $("conn-status").className = "mute"; $("conn-status").textContent = "Connecting...";
+    call("connect").then(function (r) {
+      if (r.error) {
+        state.connected = false;
+        $("conn-status").className = "bad"; $("conn-status").textContent = r.error; return;
+      }
+      state.connected = true;
+      var m = r.model_info, u = m.units || {};
+      $("conn-status").className = m.analysed ? "ok" : "warn";
+      $("conn-status").textContent = "Connected: " + (m.file || "(unsaved model)") + " | CSiBridge " + m.version +
+        " | " + (u.force || "?") + ", " + (u.length || "?") + " | " + (m.analysed ? "analysed" : "NOT analysed") +
+        " | " + r.n_frames + " frames, " + r.n_joints + " joints";
+      $("conn-notes").textContent = (r.notes || []).join(" ");
+      state.cases = r.cases;
+      var prev = {};
+      selectedGroups().forEach(function (g) { prev[g] = true; });
+      $("groups").innerHTML = r.groups.map(function (g) {
+        return '<option value="' + esc(g) + '"' + (prev[g] ? " selected" : "") + ">" + esc(g) + "</option>";
+      }).join("");
+      var known = {};
+      r.cases.forEach(function (c) { known[c.name] = c; });
+      Object.keys(state.ticked).forEach(function (k) { if (!known[k] || !known[k].has_results) delete state.ticked[k]; });
+      renderCases(); refreshResolve();
+    });
+  };
+  $("btn-folder").onclick = function () {
+    call("pick_folder").then(function (r) {
+      if (r.error) { logLine(r.error, "e"); return; }
+      if (r.path) { $("out-dir").value = r.path; scheduleResolve(); }
+    });
+  };
+
+  // ---- jobs ----
+  $("btn-save").onclick = function () {
+    call("save_job", JSON.stringify(getJob())).then(function (r) {
+      if (r.error) logLine("Save failed: " + r.error, "e");
+      else if (r.saved) logLine("Job saved: " + r.path);
+    });
+  };
+  $("btn-load").onclick = function () {
+    call("load_job").then(function (r) {
+      if (r.error) { logLine("Load failed: " + r.error, "e"); return; }
+      if (r.cancelled) return;
+      setJob(r.job);
+      logLine("Job loaded: " + r.path);
+      (r.warnings || []).forEach(function (w) { logLine("WARNING: job file: " + w, "w"); });
+    });
+  };
+
+  // ---- run ----
+  function setRunning(on) {
+    $("btn-run").disabled = on; $("btn-cancel").disabled = !on;
+    $("bar").className = "bar" + (on ? " busy" : "");
+  }
+  $("btn-run").onclick = function () {
+    $("log").textContent = "";
+    call("run", JSON.stringify(getJob())).then(function (r) {
+      if (r.error) { logLine(r.error, "e"); $("prog-text").textContent = "Not started."; return; }
+      state.startedAt = Date.now(); setRunning(true);
+      logLine("Run started.");
+      state.polling = setInterval(poll, 500);
+    });
+  };
+  $("btn-cancel").onclick = function () {
+    $("btn-cancel").disabled = true; logLine("Cancel requested...", "w"); call("cancel");
+  };
+  function poll() {
+    call("poll").then(function (p) {
+      if (p.error && !p.done) { logLine(p.error, "e"); }
+      var secs = ((Date.now() - state.startedAt) / 1000).toFixed(0);
+      if (p.progress) {
+        $("prog-text").textContent = p.progress.table + "/" + p.progress.mode + ": " + p.progress.rows + " rows, " + secs + " s";
+      } else { $("prog-text").textContent = "Working... " + secs + " s"; }
+      (p.log || []).forEach(function (t) { logLine(t, classOf(t)); });
+      if (!p.done) return;
+      clearInterval(state.polling); setRunning(false);
+      var res = p.result;
+      if (res) {
+        var tot = 0; Object.keys(res.rows).forEach(function (k) { tot += res.rows[k]; });
+        $("prog-text").textContent = (res.complete ? "Complete" : "INCOMPLETE") + ": " + tot + " rows in " +
+          res.seconds.toFixed(1) + " s" + (res.warnings.length ? ", " + res.warnings.length + " warning(s)" : "");
+        if ($("open-done").checked && res.path) call("open_file", res.path).then(function (r) { if (r.error) logLine(r.error, "w"); });
+      } else {
+        $("prog-text").textContent = "FAILED: " + (p.error || "unknown error");
+      }
+    });
+  }
+  setRunning(false);
+  renderCases();
+  window.addEventListener("pywebviewready", refreshResolve);
+})();
+</script>
+</body>
+</html>
