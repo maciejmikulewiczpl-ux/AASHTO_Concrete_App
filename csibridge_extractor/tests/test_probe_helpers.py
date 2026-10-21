@@ -130,3 +130,30 @@ def test_run_without_csibridge_writes_json_and_console(tmp_path, monkeypatch):
     assert list((tmp_path / "o").glob("probe_result_*.json"))
     assert (tmp_path / "o" / "console.txt").is_file()
     assert any("no --case" in w for w in res["warnings"])
+
+
+class _FakeNet:
+    def __init__(self):
+        self.calls = []
+
+    def iface_type(self, obj, label):
+        return None
+
+    def param_info(self, obj, label, name):
+        return None
+
+    def call_rc(self, obj, label, name, *args):
+        self.calls.append(name)
+        return {"__ret__": 0, "Value": 1, "Selected": True}
+
+
+def test_direct_route_fetches_nothing_without_case(tmp_path):
+    net = _FakeNet()
+    result = {"routes": {}, "restored": {}}
+    args = probe.parse_args(["--frames", "1227", "--joints", "15"])
+    probe.probe_direct(net, {"Results": object(), "Results.Setup": object()}, args,
+                       {"DC"}, {"Str-I1"}, str(tmp_path), result)
+    assert "FrameForce" not in net.calls and "JointReact" not in net.calls
+    assert not any(n.startswith("Set") or n.startswith("Deselect") for n in net.calls)
+    assert any("no --case" in s for s in result["routes"]["direct"]["skipped"])
+    assert result["routes"]["direct"]["fetches"] == []

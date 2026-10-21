@@ -1094,7 +1094,8 @@ def probe_direct(net, objs, args, case_names, combo_names, out_dir, result, save
 
     try:
         if not args.case:
-            route["skipped"].append("no --case given: output selection not changed (results use the current selection)")
+            route["skipped"].append("no --case given: output selection not changed, route B not run (nothing fetched)")
+            return
         elif not sel_complete:
             route["skipped"].append("selected-for-output snapshot incomplete: selection not changed, route B not run")
             return
