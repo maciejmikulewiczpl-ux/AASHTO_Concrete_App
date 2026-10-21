@@ -85,3 +85,48 @@ def test_summarise_survives_failed_attach():
     text = probe.summarise({"attach": {"success": False, "errors": ["no dll"]}, "routes": {}})
     assert "no dll" in text
     assert "NEXT" in text
+
+
+def test_selection_args_count_only_if_first_param_is_int():
+    with_count = [{"name": "NumberSelected", "type": "Int32", "byref": True},
+                  {"name": "List", "type": "String[]", "byref": True}]
+    no_count = [{"name": "List", "type": "String[]", "byref": True}]
+    assert probe.selection_args(with_count, ["A", "B"]) == [2, ["A", "B"]]
+    assert probe.selection_args(no_count, ["A"]) == [["A"]]
+    assert probe.selection_args(None, ["A"]) is None
+
+
+def test_over_cap():
+    assert probe.over_cap(1.0, 10, 10) is None
+    assert "seconds" in probe.over_cap(61.0, 10, 10)
+    assert "rows" in probe.over_cap(1.0, 200001, None)
+    assert "NumberRecords" in probe.over_cap(1.0, 5, 250000)
+
+
+def test_tee_writes_console_copy(tmp_path):
+    import io
+    buf = io.StringIO()
+    p = tmp_path / "console.txt"
+    t = probe.Tee(buf, str(p))
+    t.write("hello\n")
+    t.flush()
+    t.close()
+    assert buf.getvalue() == "hello\n"
+    assert p.read_text(encoding="utf-8") == "hello\n"
+
+
+def test_run_with_bad_args_still_writes_json(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    res = probe.run(["--no-such-option"])
+    assert res.get("fatal")
+    assert (tmp_path / "probe_out").is_dir()
+    assert list((tmp_path / "probe_out").glob("probe_result_*.json"))
+
+
+def test_run_without_csibridge_writes_json_and_console(tmp_path, monkeypatch):
+    # attach fails here (no pythonnet / CSiBridge); JSON and console copy must still be written
+    monkeypatch.setattr(probe, "attach", lambda args, result, net=None: (probe.Net(result), None, None))
+    res = probe.run(["--frames", "1", "--out", str(tmp_path / "o")])
+    assert list((tmp_path / "o").glob("probe_result_*.json"))
+    assert (tmp_path / "o" / "console.txt").is_file()
+    assert any("no --case" in w for w in res["warnings"])

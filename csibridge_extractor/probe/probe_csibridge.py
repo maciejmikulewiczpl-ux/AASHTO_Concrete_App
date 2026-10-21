@@ -12,7 +12,7 @@ runs the analysis; every option / selection it changes is snapshotted first and 
 `finally` block. It always writes the JSON, even if attaching fails.
 
 Usage (see README.md):
-  .venv\\Scripts\\python.exe csibridge_extractor\\probe\\probe_csibridge.py --frames 1227 --joints 5 --case Str-I1 --out probe_out
+  .venv\\Scripts\\python.exe csibridge_extractor\\probe\\probe_csibridge.py --group PROBE --frames 1227 --joints 5 --case Str-I1 --out probe_out
 """
 import argparse
 import csv
@@ -45,7 +45,9 @@ IFACE_NAMES = {
     "PointObj": "cPointObj",
     "Analyze": "cAnalyze",
 }
-CSV_ROWS = 50
+CSV_ROWS = 2000          # filtered rows written to each sample CSV
+MAX_SECONDS = 60.0       # huge-fetch guard: skip remaining modes of a table above this
+MAX_ROWS = 200000        # ... or above this many rows / NumberRecords
 CALL_LOG_CAP = 3000
 
 
@@ -130,6 +132,8 @@ def summarise(result):
                 ("  ERROR: %s" % f["error"]) if f.get("error") else ""))
         for e in route.get("errors") or []:
             L.append("  error: %s" % e)
+        for e in route.get("skipped") or []:
+            L.append("  skipped: %s" % e)
     rest = result.get("restored")
     if rest is not None:
         L.append("Restored: %s" % (rest.get("all_ok") if isinstance(rest, dict) else rest))
@@ -141,6 +145,70 @@ def summarise(result):
         L.append("JSON: %s" % result["json_path"])
     L.append("NEXT: send me the JSON + CSV folder (the whole output folder), plus the CSiBridge table exports.")
     return "\n".join(L)
+
+
+def selection_args(param_info, names):
+    """Arguments for Set...SelectedForDisplay: (count, list) if the first parameter is an int, else (list,).
+
+    Returns None when the parameter list is unknown (reflection failed): the caller must not guess.
+    """
+    if not param_info:
+        return None
+    names = list(names)
+    if param_info[0].get("type", "").startswith("Int"):
+        return [len(names), names]
+    return [names]
+
+
+def over_cap(seconds, rows, number_records):
+    """Reason string if a fetch is too big to repeat for other modes, else None."""
+    if seconds is not None and seconds > MAX_SECONDS:
+        return "fetch took %.1f s > %.0f seconds" % (seconds, MAX_SECONDS)
+    if rows is not None and rows > MAX_ROWS:
+        return "%d rows > %d" % (rows, MAX_ROWS)
+    try:
+        if number_records is not None and int(number_records) > MAX_ROWS:
+            return "NumberRecords %s > %d" % (number_records, MAX_ROWS)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+class Tee:
+    """Write console output to the real stream and to a file (console.txt)."""
+
+    def __init__(self, stream, path):
+        self.stream = stream
+        self.fh = open(path, "a", encoding="utf-8")
+
+    def write(self, s):
+        try:
+            self.stream.write(s)
+        except Exception:
+            pass
+        try:
+            self.fh.write(s)
+            self.fh.flush()
+        except Exception:
+            pass
+        return len(s)
+
+    def flush(self):
+        for f in (self.stream, self.fh):
+            try:
+                f.flush()
+            except Exception:
+                pass
+
+    def close(self):
+        try:
+            self.fh.close()
+        except Exception:
+            pass
+
+
+def say(msg):
+    print(msg, flush=True)
 
 
 def _jsonable(v, depth=0):
@@ -289,12 +357,46 @@ class Net:
             return System.Enum.ToObject(t, v)
         return v
 
+    @staticmethod
+    def _box_into(objarr, i, v, t):
+        """Store v into objarr[i] boxed as the exact .NET type t (via a 1-element typed array + Array.Copy)."""
+        import System
+        if t.IsByRef:
+            t = t.GetElementType()
+        if v is None:
+            return
+        if t.IsArray or t.FullName == "System.String":
+            objarr[i] = v
+            return
+        if t.IsEnum:
+            try:
+                if not isinstance(v, bool) and isinstance(v, int):
+                    v = System.Enum.ToObject(t, v)
+            except Exception:
+                pass
+        try:
+            tmp = System.Array.CreateInstance(t, 1)
+            tmp[0] = v
+            System.Array.Copy(tmp, 0, objarr, i, 1)
+        except Exception:
+            objarr[i] = v
+
     def _build(self, mi, args):
         ps = list(mi.GetParameters())
         if len(args) > len(ps):
             raise TypeError("too many args for %s" % mi.Name)
         full = [self._convert(a, p.ParameterType) for a, p in zip(args, ps)]
-        full += [self._placeholder(p.ParameterType) for p in ps[len(args):]]
+        for p in ps[len(args):]:
+            if getattr(p, "IsOptional", False):
+                try:
+                    import System
+                    dv = p.DefaultValue
+                    if dv is not None and not isinstance(dv, type(System.DBNull.Value)) and                             str(type(dv).__name__) != "Missing":
+                        full.append(dv)
+                        continue
+                except Exception:
+                    pass
+            full.append(self._placeholder(p.ParameterType))
         return ps, full
 
     def call(self, obj, label, name, *args):
@@ -346,7 +448,9 @@ class Net:
                 # 2) reflection invoke
                 try:
                     import System
-                    arr = System.Array[System.Object](full)
+                    arr = System.Array.CreateInstance(System.Object, len(full))
+                    for i, (v, p) in enumerate(zip(full, ps)):
+                        self._box_into(arr, i, v, p.ParameterType)
                     raw = mi.Invoke(obj, arr)
                     res = {"__ret__": raw}
                     for i, p in enumerate(ps):
@@ -626,12 +730,23 @@ def _safe(s):
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(s))[:60]
 
 
+
+
+def _restore_rec(result, key):
+    return result["restored"].setdefault(key, {"changed": [], "attempted": [], "restored": [], "errors": []})
+
+
+def _data_outs(r):
+    """Out values of a call that are arrays/lists (not the return code, not counts)."""
+    return [v for k, v in r.items() if k != "__ret__" and not isinstance(v, (bool, int, float, str))]
+
+
 # --------------------------------------------------------------------------------------------
 # Route (a): database tables
 # --------------------------------------------------------------------------------------------
-def probe_database_tables(net, objs, args, case_names, combo_names, out_dir, result):
-    route = result["routes"]["database_tables"] = {"fetches": [], "errors": [], "tables_found": {}}
-    restored = result["restored"].setdefault("database_tables", {"changed": [], "restored": [], "errors": []})
+def probe_database_tables(net, objs, args, case_names, combo_names, out_dir, result, save=None):
+    route = result["routes"]["database_tables"] = {"fetches": [], "errors": [], "skipped": [], "tables_found": {}}
+    restored = _restore_rec(result, "database_tables")
     dt = objs.get("DatabaseTables")
     if dt is None:
         route["errors"].append("SapModel.DatabaseTables not available")
@@ -642,6 +757,7 @@ def probe_database_tables(net, objs, args, case_names, combo_names, out_dir, res
         route["errors"].append("%s: %s" % (msg, _err(e)))
 
     # Available tables
+    say("Route A (database tables): listing available tables ...")
     keys = []
     try:
         r = net.call_rc(dt, L, "GetAvailableTables")
@@ -661,20 +777,17 @@ def probe_database_tables(net, objs, args, case_names, combo_names, out_dir, res
     rel = [(k, n) for k, n in keys if "frame" in (k + n).lower() or "reaction" in (k + n).lower()]
     route["tables_matching_frame_or_reaction"] = [{"key": k, "name": n} for k, n in rel]
 
-    def pick(pred_exact, words):
+    def pick(exact, words):
         for k, n in rel:
-            if k.lower() in pred_exact or n.lower() in pred_exact:
+            if k.lower() in exact or n.lower() in exact:
                 return k
         for k, n in rel:
-            s = (k + " " + n).lower()
-            if all(w in s for w in words):
+            if all(w in (k + " " + n).lower() for w in words):
                 return k
         return None
 
-    targets = {
-        "frame": pick({"element forces - frames"}, ["element", "forces", "frame"]),
-        "joint": pick({"joint reactions"}, ["joint", "reaction"]),
-    }
+    targets = {"frame": pick({"element forces - frames"}, ["element", "forces", "frame"]),
+               "joint": pick({"joint reactions"}, ["joint", "reaction"])}
     route["tables_found"] = targets
     for tbl, key in targets.items():
         if key is None:
@@ -690,164 +803,236 @@ def probe_database_tables(net, objs, args, case_names, combo_names, out_dir, res
         except Exception as e:
             rec("GetAllFieldsInTable(%s)" % key, e)
 
-    # Snapshot display selections and output options
-    snap = {}
-    for getter in ("GetLoadCasesSelectedForDisplay", "GetLoadCombinationsSelectedForDisplay",
-                   "GetLoadPatternsSelectedForDisplay"):
+    # Snapshot display selection (raw values kept for restoring)
+    sel_raw, sel_snap_ok = {}, {}
+    getters = {"cases": ("GetLoadCasesSelectedForDisplay", "SetLoadCasesSelectedForDisplay"),
+               "combos": ("GetLoadCombinationsSelectedForDisplay", "SetLoadCombinationsSelectedForDisplay")}
+    setter_params = {}
+    for kind, (getter, setter) in getters.items():
+        try:
+            setter_params[kind] = net.param_info(dt, L, setter)
+            route.setdefault("selection_setter_params", {})[setter] = setter_params[kind]
+        except Exception as e:
+            rec("param_info %s" % setter, e)
         try:
             r = net.call_rc(dt, L, getter)
-            lst = [v for k, v in r.items() if k != "__ret__" and not isinstance(v, (int, float))]
-            snap[getter] = [str(x) for x in _list(lst[0])] if lst else []
+            outs = _data_outs(r)
+            sel_raw[kind] = [str(x) for x in _list(outs[0])] if outs else []
+            sel_snap_ok[kind] = True
         except Exception as e:
             rec(getter, e)
-    opt_get = opt_set = None
+    route["original_display_selection"] = dict(sel_raw)
+
+    def read_selection():
+        out = {}
+        for kind, (getter, _setter) in getters.items():
+            outs = _data_outs(net.call_rc(dt, L, getter))
+            out[kind] = [str(x) for x in _list(outs[0])] if outs else []
+        return out
+
+    # Snapshot output options (raw values for restoring, _pyval only for JSON)
+    opt_raw, opt_set = None, None
     try:
-        opt_get = net.param_info(dt, L, "GetTableOutputOptionsForDisplay")
+        route["output_option_params_get"] = net.param_info(dt, L, "GetTableOutputOptionsForDisplay")
         opt_set = net.param_info(dt, L, "SetTableOutputOptionsForDisplay")
-        route["output_option_params_get"] = opt_get
         route["output_option_params_set"] = opt_set
         r = net.call_rc(dt, L, "GetTableOutputOptionsForDisplay")
-        snap["options"] = {k: _pyval(v) for k, v in r.items() if k != "__ret__"}
-        route["original_output_options"] = snap["options"]
+        opt_raw = {k: v for k, v in r.items() if k != "__ret__"}
+        route["original_output_options"] = {k: _pyval(v) for k, v in opt_raw.items()}
     except Exception as e:
         rec("GetTableOutputOptionsForDisplay", e)
-    route["original_display_selection"] = {k: v for k, v in snap.items() if k != "options"}
 
     def set_options(over):
-        if not opt_set or "options" not in snap:
-            raise RuntimeError("output options not readable; cannot set")
+        if not opt_set or opt_raw is None:
+            raise RuntimeError("output options snapshot/parameters unavailable; not changing them")
+        lower = {k.lower(): v for k, v in opt_raw.items()}
+        raw_list = list(opt_raw.values())
         vals = []
-        lower = {k.lower(): v for k, v in snap["options"].items()}
         for i, p in enumerate(opt_set):
             nm = p["name"]
             if nm in over:
                 vals.append(over[nm])
             elif nm.lower() in lower:
                 vals.append(lower[nm.lower()])
+            elif i < len(raw_list):
+                vals.append(raw_list[i])
             else:
-                vals.append(list(snap["options"].values())[i])
+                raise RuntimeError("no snapshot value for option parameter %s" % nm)
         return net.call_rc(dt, L, "SetTableOutputOptionsForDisplay", *vals)
 
-    combo_param = None
-    for p in opt_set or []:
-        if "combo" in p["name"].lower():
-            combo_param = p
-            break
+    combo_param = next((p for p in (opt_set or []) if "combo" in p["name"].lower()), None)
     route["combo_option_param"] = combo_param
     modes = [("default", None)]
-    if combo_param:
+    if combo_param and opt_raw is not None:
         modes += [("combo_%s" % k, v) for k, v in _option_values(combo_param)]
+    elif combo_param is None:
+        route["skipped"].append("no output-option parameter named like 'combo' found: only the default mode fetched")
+    else:
+        route["skipped"].append("output options snapshot failed: options not changed, only the default mode fetched")
     route["modes_tried"] = [m for m, _ in modes]
 
     sel_cases = [c for c in args.case if c in case_names]
     sel_combos = [c for c in args.case if c in combo_names]
+    selection_ok = False
     try:
-        # Select only the requested cases/combos for display
-        try:
-            restored["changed"].append("display selection")
-            net.call_rc(dt, L, "SetLoadCasesSelectedForDisplay", len(sel_cases), sel_cases)
-        except Exception as e:
-            rec("SetLoadCasesSelectedForDisplay", e)
-        try:
-            net.call_rc(dt, L, "SetLoadCombinationsSelectedForDisplay", len(sel_combos), sel_combos)
-        except Exception as e:
-            rec("SetLoadCombinationsSelectedForDisplay", e)
-
-        group = args.group or "All"
-        for tbl, key in targets.items():
-            if key is None:
-                continue
-            labels = set(args.frames if tbl == "frame" else args.joints)
-            if not labels and not args.group:
-                continue
-            for mode, val in modes:
-                f = {"table": tbl, "table_key": key, "mode": mode, "group": group, "rows": None,
-                     "rows_total_unfiltered": None, "seconds": None, "step_types": [], "error": None}
-                try:
-                    if val is not None:
-                        if "output options" not in restored["changed"]:
-                            restored["changed"].append("output options")
-                        set_options({combo_param["name"]: val})
-                    t0 = time.perf_counter()
-                    try:
-                        try:
-                            r = net.call_rc(dt, L, "GetTableForDisplayArray", key, [], group)
-                        except Exception as e0:
-                            if args.group:
-                                raise
-                            f["group_all_error"] = _err(e0)
-                            f["group"] = ""  # retry with a blank group name
-                            r = net.call_rc(dt, L, "GetTableForDisplayArray", key, [], "")
-                        f["call"] = "GetTableForDisplayArray"
-                        fields = [str(x) for x in _list(r.get("FieldsKeysIncluded"))]
-                        data = [_pyval(x) for x in _list(r.get("TableData"))]
-                        f["number_records"] = _pyval(r.get("NumberRecords"))
-                        f["table_version"] = _pyval(r.get("TableVersion"))
-                        w = len(fields) or 1
-                        rows = [data[i:i + w] for i in range(0, len(data), w)]
-                    except Exception as e:
-                        f["array_error"] = _err(e)
-                        r = net.call_rc(dt, L, "GetTableForDisplayCSVString", key, [], group)
-                        f["call"] = "GetTableForDisplayCSVString"
-                        txt = [v for k, v in r.items() if isinstance(v, str) and "\n" in v]
-                        lines = list(csv.reader((txt[0] if txt else "").splitlines()))
-                        fields, rows = (lines[0], lines[1:]) if lines else ([], [])
-                    f["seconds"] = round(time.perf_counter() - t0, 3)
-                    f["fields"] = fields
-                    f["rows_total_unfiltered"] = len(rows)
-                    obj_col = None
-                    for cand in (("Frame",) if tbl == "frame" else ("Joint",)):
-                        if cand in fields:
-                            obj_col = fields.index(cand)
-                    if labels and obj_col is not None:
-                        rows = [rw for rw in rows if str(rw[obj_col]) in labels]
-                    elif labels:
-                        f["filter_note"] = "object column not found; rows not filtered"
-                    f["rows"] = len(rows)
-                    if "StepType" in fields:
-                        si = fields.index("StepType")
-                        f["step_types"] = sorted({str(rw[si]) for rw in rows if si < len(rw)})
-                    if "OutputCase" in fields:
-                        ci = fields.index("OutputCase")
-                        f["output_cases"] = sorted({str(rw[ci]) for rw in rows if ci < len(rw)})
-                    fn = os.path.join(out_dir, "probe_rows_dbtables_%s_%s.csv" % (tbl, _safe(mode)))
-                    rows_to_csv(fn, fields, rows[:CSV_ROWS])
-                    f["csv"] = os.path.basename(fn)
-                except Exception as e:
-                    f["error"] = _err(e)
-                route["fetches"].append(f)
-    finally:
-        # Restore display selection and output options
-        for getter, setter in (("GetLoadCasesSelectedForDisplay", "SetLoadCasesSelectedForDisplay"),
-                               ("GetLoadCombinationsSelectedForDisplay", "SetLoadCombinationsSelectedForDisplay")):
-            if getter in snap:
-                try:
-                    net.call_rc(dt, L, setter, len(snap[getter]), snap[getter])
-                    restored["restored"].append(setter)
-                except Exception as e:
-                    restored["errors"].append("%s: %s" % (setter, _err(e)))
+        # ---- select only the requested cases/combos for display (only with a complete snapshot)
+        if not args.case:
+            route["skipped"].append("no --case given: display selection not changed, no table fetched")
+        elif not (sel_snap_ok.get("cases") and sel_snap_ok.get("combos")):
+            route["skipped"].append("display-selection snapshot failed: selection not changed, no table fetched")
+        else:
+            a_cases = selection_args(setter_params.get("cases"), sel_cases)
+            a_combos = selection_args(setter_params.get("combos"), sel_combos)
+            if a_cases is None or a_combos is None:
+                route["skipped"].append("selection setter parameters unknown: selection not changed, no table fetched")
             else:
-                restored["errors"].append("%s: no snapshot (getter failed), not restored" % setter)
-        if "output options" in restored["changed"]:
+                ok = True
+                for kind, a in (("cases", a_cases), ("combos", a_combos)):
+                    setter = getters[kind][1]
+                    restored["attempted"].append(setter)
+                    try:
+                        net.call_rc(dt, L, setter, *a)
+                        restored["changed"].append(setter)
+                    except Exception as e:
+                        ok = False
+                        rec(setter, e)
+                selection_ok = ok
+                try:
+                    route["selection_after_set"] = read_selection()
+                except Exception as e:
+                    rec("re-read selection", e)
+                if not ok:
+                    route["skipped"].append("display selection could not be set: no table fetched "
+                                            "(never fetch an unfiltered table)")
+        if save:
+            save("route A setup")
+
+        # ---- fetches
+        if selection_ok:
+            for tbl, key in targets.items():
+                if key is None:
+                    route["skipped"].append("%s table key not found" % tbl)
+                    continue
+                labels = set(args.frames if tbl == "frame" else args.joints)
+                if args.group:
+                    group = args.group
+                elif labels:
+                    group = "All"  # fetched for the selected case(s) only, then filtered client-side
+                else:
+                    route["skipped"].append("%s table: no --group and no --%s given" %
+                                            (tbl, "frames" if tbl == "frame" else "joints"))
+                    continue
+                cap_reason = None
+                for mode, val in modes:
+                    f = {"table": tbl, "table_key": key, "mode": mode, "group": group, "rows": None,
+                         "rows_total_unfiltered": None, "seconds": None, "step_types": [], "error": None}
+                    if cap_reason:
+                        f["error"] = "skipped (size guard): %s" % cap_reason
+                        route["fetches"].append(f)
+                        continue
+                    say("Route A: fetching %s table (%s), mode %s, group %s ... this can take a few minutes"
+                        % (tbl, key, mode, group))
+                    try:
+                        if val is not None:
+                            if "SetTableOutputOptionsForDisplay" not in restored["attempted"]:
+                                restored["attempted"].append("SetTableOutputOptionsForDisplay")
+                            set_options({combo_param["name"]: val})
+                            if "SetTableOutputOptionsForDisplay" not in restored["changed"]:
+                                restored["changed"].append("SetTableOutputOptionsForDisplay")
+                        t0 = time.perf_counter()
+                        try:
+                            try:
+                                r = net.call_rc(dt, L, "GetTableForDisplayArray", key, [], group)
+                            except Exception as e0:
+                                if args.group:
+                                    raise
+                                f["group_all_error"] = _err(e0)
+                                f["group"] = ""  # retry with a blank group name
+                                r = net.call_rc(dt, L, "GetTableForDisplayArray", key, [], "")
+                            f["call"] = "GetTableForDisplayArray"
+                            fields = [str(x) for x in _list(r.get("FieldsKeysIncluded"))]
+                            data = [_pyval(x) for x in _list(r.get("TableData"))]
+                            f["number_records"] = _pyval(r.get("NumberRecords"))
+                            f["table_version"] = _pyval(r.get("TableVersion"))
+                            w = len(fields) or 1
+                            rows = [data[i:i + w] for i in range(0, len(data), w)]
+                        except Exception as e:
+                            f["array_error"] = _err(e)
+                            r = net.call_rc(dt, L, "GetTableForDisplayCSVString", key, [], group)
+                            f["call"] = "GetTableForDisplayCSVString"
+                            txt = [v for v in r.values() if isinstance(v, str) and "\n" in v]
+                            lines = list(csv.reader((txt[0] if txt else "").splitlines()))
+                            fields, rows = (lines[0], lines[1:]) if lines else ([], [])
+                        f["seconds"] = round(time.perf_counter() - t0, 3)
+                        f["fields"] = fields
+                        f["rows_total_unfiltered"] = len(rows)
+                        obj_col = "Frame" if tbl == "frame" else "Joint"
+                        if labels and obj_col in fields:
+                            ci = fields.index(obj_col)
+                            rows = [rw for rw in rows if ci < len(rw) and str(rw[ci]) in labels]
+                        elif labels:
+                            f["filter_note"] = "object column not found; rows not filtered"
+                        f["rows"] = len(rows)
+                        if "StepType" in fields:
+                            si = fields.index("StepType")
+                            f["step_types"] = sorted({str(rw[si]) for rw in rows if si < len(rw)})
+                        if "OutputCase" in fields:
+                            ci = fields.index("OutputCase")
+                            f["output_cases"] = sorted({str(rw[ci]) for rw in rows if ci < len(rw)})
+                        fn = os.path.join(out_dir, "probe_rows_dbtables_%s_%s.csv" % (tbl, _safe(mode)))
+                        rows_to_csv(fn, fields, rows[:CSV_ROWS])
+                        f["csv"] = os.path.basename(fn)
+                        cap_reason = over_cap(f["seconds"], f["rows_total_unfiltered"], f.get("number_records"))
+                        if cap_reason:
+                            f["size_guard"] = cap_reason
+                            route["skipped"].append("%s table: remaining modes skipped (%s)" % (tbl, cap_reason))
+                    except Exception as e:
+                        f["error"] = _err(e)
+                    route["fetches"].append(f)
+                    say("  -> rows=%s seconds=%s %s" % (f["rows"], f["seconds"], f["error"] or ""))
+                    if save:
+                        save("route A fetch")
+    finally:
+        say("Route A: restoring display selection and output options ...")
+        for kind, (getter, setter) in getters.items():
+            if setter not in restored["attempted"]:
+                continue
+            try:
+                net.call_rc(dt, L, setter, *selection_args(setter_params.get(kind), sel_raw.get(kind, [])))
+                restored["restored"].append(setter)
+            except Exception as e:
+                if setter in restored["changed"]:
+                    restored["errors"].append("%s: %s" % (setter, _err(e)))
+                else:
+                    restored.setdefault("notes", []).append("%s (never changed) restore failed: %s"
+                                                            % (setter, _err(e)))
+        if "SetTableOutputOptionsForDisplay" in restored["attempted"]:
             try:
                 set_options({})
                 restored["restored"].append("SetTableOutputOptionsForDisplay")
             except Exception as e:
                 restored["errors"].append("SetTableOutputOptionsForDisplay: %s" % _err(e))
-        try:
-            r = net.call_rc(dt, L, "GetTableOutputOptionsForDisplay")
-            after = {k: _pyval(v) for k, v in r.items() if k != "__ret__"}
-            restored["options_after_restore_equal"] = (after == snap.get("options"))
-        except Exception as e:
-            restored["errors"].append("verify options: %s" % _err(e))
+            try:
+                r = net.call_rc(dt, L, "GetTableOutputOptionsForDisplay")
+                after = {k: _pyval(v) for k, v in r.items() if k != "__ret__"}
+                restored["options_after_restore_equal"] = (after == route.get("original_output_options"))
+            except Exception as e:
+                restored["errors"].append("verify options: %s" % _err(e))
+        if any(s.endswith("SelectedForDisplay") for s in restored["attempted"]):
+            try:
+                after = read_selection()
+                restored["selection_after_restore_equal"] = all(
+                    sorted(after.get(k, [])) == sorted(sel_raw.get(k, [])) for k in getters)
+            except Exception as e:
+                restored["errors"].append("verify selection: %s" % _err(e))
 
 
 # --------------------------------------------------------------------------------------------
 # Route (b): direct result calls
 # --------------------------------------------------------------------------------------------
-def probe_direct(net, objs, args, case_names, combo_names, out_dir, result):
-    route = result["routes"]["direct"] = {"fetches": [], "errors": []}
-    restored = result["restored"].setdefault("direct", {"changed": [], "restored": [], "errors": []})
+def probe_direct(net, objs, args, case_names, combo_names, out_dir, result, save=None):
+    route = result["routes"]["direct"] = {"fetches": [], "errors": [], "skipped": []}
+    restored = _restore_rec(result, "direct")
     res, setup = objs.get("Results"), objs.get("Results.Setup")
     if res is None or setup is None:
         route["errors"].append("SapModel.Results / Results.Setup not available")
@@ -857,25 +1042,26 @@ def probe_direct(net, objs, args, case_names, combo_names, out_dir, result):
     def rec(msg, e):
         route["errors"].append("%s: %s" % (msg, _err(e)))
 
-    # Snapshot every GetOption* value and the per-case/combo selection state
-    snap_opts = {}
+    say("Route B (direct results): reading current output options and selection ...")
+    opt_raw = {}
     t = net.iface_type(setup, S)
     getters = sorted({m.Name for m in t.GetMethods() if m.Name.startswith("GetOption")}) if t is not None else \
         ["GetOptionMultiValuedCombo", "GetOptionMultiStepStatic", "GetOptionNLStatic"]
     for g in getters:
         try:
             r = net.call_rc(setup, S, g)
-            snap_opts[g] = {k: _pyval(v) for k, v in r.items() if k != "__ret__"}
+            opt_raw[g] = [v for k, v in r.items() if k != "__ret__"]
         except Exception as e:
             rec(g, e)
-    route["original_options"] = snap_opts
-    route["multivalued_combo_param"] = None
+    route["original_options"] = {k: [_pyval(x) for x in v] for k, v in opt_raw.items()}
     try:
         route["multivalued_combo_param"] = net.param_info(setup, S, "SetOptionMultiValuedCombo")
     except Exception as e:
+        route["multivalued_combo_param"] = None
         rec("param_info SetOptionMultiValuedCombo", e)
 
-    sel_snap = {"case": {}, "combo": {}}
+    # Snapshot selected-for-output state of every case/combo (no early break)
+    sel_snap, snap_errors = {"case": {}, "combo": {}}, 0
     for kind, names, getter in (("case", case_names, "GetCaseSelectedForOutput"),
                                 ("combo", combo_names, "GetComboSelectedForOutput")):
         for n in sorted(names):
@@ -883,51 +1069,80 @@ def probe_direct(net, objs, args, case_names, combo_names, out_dir, result):
                 r = net.call_rc(setup, S, getter, n)
                 v = [x for k, x in r.items() if k != "__ret__"]
                 sel_snap[kind][n] = bool(v[0]) if v else None
+                if not v:
+                    snap_errors += 1
             except Exception as e:
-                rec("%s(%s)" % (getter, n), e)
-                break
+                snap_errors += 1
+                if snap_errors <= 20:
+                    rec("%s(%s)" % (getter, n), e)
+    sel_complete = snap_errors == 0
+    route["selection_snapshot_complete"] = sel_complete
     route["original_selected_for_output"] = {k: sorted(n for n, s in v.items() if s) for k, v in sel_snap.items()}
 
+    orig_mv = opt_raw.get("GetOptionMultiValuedCombo")
     pinfo = (route["multivalued_combo_param"] or [None])[0]
-    modes = [("default", None)] + [("combo_%s" % k, v) for k, v in _option_values(pinfo)]
+    modes = [("default", None)]
+    if orig_mv:
+        modes += [("combo_%s" % k, v) for k, v in _option_values(pinfo)]
+    else:
+        route["skipped"].append("GetOptionMultiValuedCombo snapshot failed: option not changed, default mode only")
     route["modes_tried"] = [m for m, _ in modes]
 
-    targets = []
-    if args.group:
-        targets.append(("group", args.group, 2))  # eItemTypeElm.GroupElm = 2 (candidate)
-    targets += [("object", f, 0) for f in args.frames]  # ObjectElm = 0 (candidate)
+    ftargets = ([("group", args.group, 2)] if args.group else []) + [("object", f, 0) for f in args.frames]
     jtargets = ([("group", args.group, 2)] if args.group else []) + [("object", j, 0) for j in args.joints]
+    route["item_type_note"] = "eItemTypeElm candidates: 0=ObjectElm, 2=GroupElm (unverified)"
 
     try:
-        restored["changed"].append("selected for output")
-        try:
-            net.call_rc(setup, S, "DeselectAllCasesAndCombosForOutput")
-        except Exception as e:
-            rec("DeselectAllCasesAndCombosForOutput", e)
-        for c in args.case:
+        if not args.case:
+            route["skipped"].append("no --case given: output selection not changed (results use the current selection)")
+        elif not sel_complete:
+            route["skipped"].append("selected-for-output snapshot incomplete: selection not changed, route B not run")
+            return
+        else:
+            restored["attempted"].append("selected for output")
             try:
-                if c in combo_names:
-                    net.call_rc(setup, S, "SetComboSelectedForOutput", c, True)
-                else:
-                    net.call_rc(setup, S, "SetCaseSelectedForOutput", c, True)
+                net.call_rc(setup, S, "DeselectAllCasesAndCombosForOutput")
+                restored["changed"].append("selected for output")
             except Exception as e:
-                rec("select %s" % c, e)
-
-        for mode, val in modes:
-            if val is not None:
+                rec("DeselectAllCasesAndCombosForOutput", e)
+                route["skipped"].append("could not deselect cases for output: route B not run")
+                return
+            for c in args.case:
                 try:
-                    if "GetOptionMultiValuedCombo" not in restored["changed"]:
-                        restored["changed"].append("GetOptionMultiValuedCombo")
-                    net.call_rc(setup, S, "SetOptionMultiValuedCombo", val)
+                    if c in combo_names:
+                        net.call_rc(setup, S, "SetComboSelectedForOutput", c, True)
+                    else:
+                        net.call_rc(setup, S, "SetCaseSelectedForOutput", c, True)
                 except Exception as e:
-                    route["fetches"].append({"table": "-", "mode": mode, "rows": None, "seconds": 0,
-                                             "error": "SetOptionMultiValuedCombo(%r): %s" % (val, _err(e))})
-                    continue
-            for tbl, method, tlist in (("frame", "FrameForce", targets), ("joint", "JointReact", jtargets)):
-                if not tlist:
-                    continue
+                    rec("select %s" % c, e)
+        if save:
+            save("route B setup")
+
+        for tbl, method, tlist in (("frame", "FrameForce", ftargets), ("joint", "JointReact", jtargets)):
+            if not tlist:
+                route["skipped"].append("%s: no targets" % tbl)
+                continue
+            cap_reason = None
+            for mode, val in modes:
                 f = {"table": tbl, "mode": mode, "call": method, "rows": 0, "seconds": None, "step_types": [],
                      "error": None, "per_target": []}
+                if cap_reason:
+                    f["error"] = "skipped (size guard): %s" % cap_reason
+                    route["fetches"].append(f)
+                    continue
+                if val is not None:
+                    try:
+                        if "SetOptionMultiValuedCombo" not in restored["attempted"]:
+                            restored["attempted"].append("SetOptionMultiValuedCombo")
+                        net.call_rc(setup, S, "SetOptionMultiValuedCombo", val)
+                        if "SetOptionMultiValuedCombo" not in restored["changed"]:
+                            restored["changed"].append("SetOptionMultiValuedCombo")
+                    except Exception as e:
+                        f["error"] = "SetOptionMultiValuedCombo(%r): %s" % (val, _err(e))
+                        route["fetches"].append(f)
+                        continue
+                say("Route B: %s for %d target(s), mode %s ... this can take a few minutes"
+                    % (method, len(tlist), mode))
                 header, allrows = None, []
                 t0 = time.perf_counter()
                 for kind, name, item in tlist:
@@ -938,20 +1153,17 @@ def probe_direct(net, objs, args, case_names, combo_names, out_dir, result):
                         cols = [k for k, v in r.items()
                                 if k not in ("__ret__", "NumberResults") and not isinstance(v, (str, int, float))]
                         arrs = [_list(r[k]) for k in cols]
-                        n = _pyval(r.get("NumberResults"))
                         rows = [[_pyval(a[i]) if i < len(a) else None for a in arrs]
                                 for i in range(max((len(a) for a in arrs), default=0))]
                         header = header or cols
                         allrows += rows
-                        pt.update(rows=len(rows), number_results=n)
+                        pt.update(rows=len(rows), number_results=_pyval(r.get("NumberResults")))
                     except Exception as e:
                         pt["error"] = _err(e)
                         f["error"] = f["error"] or pt["error"]
                     pt["seconds"] = round(time.perf_counter() - t1, 3)
-                    f["per_target"].append(pt)
-                    if len(f["per_target"]) == 200:
-                        f["per_target"].append({"note": "truncated"})
-                f["per_target"] = f["per_target"][:201]
+                    if len(f["per_target"]) < 200:
+                        f["per_target"].append(pt)
                 f["seconds"] = round(time.perf_counter() - t0, 3)
                 f["rows"] = len(allrows)
                 f["fields"] = header
@@ -965,89 +1177,151 @@ def probe_direct(net, objs, args, case_names, combo_names, out_dir, result):
                     fn = os.path.join(out_dir, "probe_rows_direct_%s_%s.csv" % (tbl, _safe(mode)))
                     rows_to_csv(fn, header, allrows[:CSV_ROWS])
                     f["csv"] = os.path.basename(fn)
+                cap_reason = over_cap(f["seconds"], f["rows"], None)
+                if cap_reason:
+                    f["size_guard"] = cap_reason
+                    route["skipped"].append("%s: remaining modes skipped (%s)" % (tbl, cap_reason))
                 route["fetches"].append(f)
+                say("  -> rows=%s seconds=%s %s" % (f["rows"], f["seconds"], f["error"] or ""))
+                if save:
+                    save("route B fetch")
     finally:
-        # Restore options
-        orig = snap_opts.get("GetOptionMultiValuedCombo")
-        if "GetOptionMultiValuedCombo" in restored["changed"]:
-            if orig:
-                try:
-                    net.call_rc(setup, S, "SetOptionMultiValuedCombo", list(orig.values())[0])
-                    restored["restored"].append("SetOptionMultiValuedCombo")
-                except Exception as e:
-                    restored["errors"].append("SetOptionMultiValuedCombo: %s" % _err(e))
-            else:
-                restored["errors"].append("SetOptionMultiValuedCombo: no snapshot, not restored")
-        # Restore selection
-        try:
-            net.call_rc(setup, S, "DeselectAllCasesAndCombosForOutput")
-            for kind, setter in (("case", "SetCaseSelectedForOutput"), ("combo", "SetComboSelectedForOutput")):
-                for n, s in sel_snap[kind].items():
-                    if s:
-                        net.call_rc(setup, S, setter, n, True)
-            complete = len(sel_snap["case"]) == len(case_names) and len(sel_snap["combo"]) == len(combo_names)
-            restored["restored"].append("selected for output" + ("" if complete else " (snapshot incomplete)"))
-            if not complete:
-                restored["errors"].append("selection snapshot incomplete; selection may differ")
-        except Exception as e:
-            restored["errors"].append("restore selection: %s" % _err(e))
+        say("Route B: restoring output options and selection ...")
+        if "SetOptionMultiValuedCombo" in restored["attempted"]:
+            try:
+                net.call_rc(setup, S, "SetOptionMultiValuedCombo", orig_mv[0])
+                restored["restored"].append("SetOptionMultiValuedCombo")
+                r = net.call_rc(setup, S, "GetOptionMultiValuedCombo")
+                after = [_pyval(v) for k, v in r.items() if k != "__ret__"]
+                restored["options_after_restore_equal"] = (after == route["original_options"].get(
+                    "GetOptionMultiValuedCombo"))
+            except Exception as e:
+                restored["errors"].append("SetOptionMultiValuedCombo restore/verify: %s" % _err(e))
+        if "selected for output" in restored["changed"]:
+            try:
+                net.call_rc(setup, S, "DeselectAllCasesAndCombosForOutput")
+                for kind, setter in (("case", "SetCaseSelectedForOutput"), ("combo", "SetComboSelectedForOutput")):
+                    for n, s_ in sel_snap[kind].items():
+                        if s_:
+                            net.call_rc(setup, S, setter, n, True)
+                restored["restored"].append("selected for output")
+                ok = True
+                for kind, getter in (("case", "GetCaseSelectedForOutput"), ("combo", "GetComboSelectedForOutput")):
+                    for n, s_ in sel_snap[kind].items():
+                        v = [x for k, x in net.call_rc(setup, S, getter, n).items() if k != "__ret__"]
+                        if v and bool(v[0]) != s_:
+                            ok = False
+                restored["selection_after_restore_equal"] = ok
+            except Exception as e:
+                restored["errors"].append("restore selection: %s" % _err(e))
 
 
 # --------------------------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------------------------
+def _all_ok(restored):
+    recs = [v for v in restored.values() if isinstance(v, dict)]
+    if not recs:
+        return None
+    return all(not v.get("errors") and v.get("options_after_restore_equal") is not False
+               and v.get("selection_after_restore_equal") is not False for v in recs)
+
+
 def run(argv=None):
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    import contextlib
+    import io
     stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = os.path.abspath(args.out)
-    result = {"probe_version": 1, "started": stamp, "args": vars(args), "python": sys.version,
-              "attach": {}, "routes": {}, "restored": {"all_ok": None}, "warnings": [], "output_dir": out_dir}
-    t_start = time.perf_counter()
+    argv = sys.argv[1:] if argv is None else list(argv)
+    result = {"probe_version": 2, "started": stamp, "argv": argv, "python": sys.version,
+              "attach": {}, "routes": {}, "restored": {"all_ok": None}, "warnings": []}
+    args = None
+    err_buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err_buf):
+            args = parse_args(argv)
+        result["args"] = vars(args)
+    except SystemExit as e:
+        result["fatal"] = "argument error (exit %s): %s" % (e.code, err_buf.getvalue().strip())
+    out_dir = os.path.abspath(args.out if args else "probe_out")
     try:
         os.makedirs(out_dir, exist_ok=True)
     except Exception as e:
         result["warnings"].append("cannot create %s (%s); writing to current folder" % (out_dir, _err(e)))
-        out_dir = result["output_dir"] = os.getcwd()
-    json_path = os.path.join(out_dir, "probe_result_%s.json" % stamp)
-    result["json_path"] = json_path
+        out_dir = os.getcwd()
+    result["output_dir"] = out_dir
+    json_path = result["json_path"] = os.path.join(out_dir, "probe_result_%s.json" % stamp)
+    old_out, old_err = sys.stdout, sys.stderr
+    tee_out = tee_err = None
     try:
-        net, sap, model = attach(args, result)
-        if model is not None:
-            objs = case_names = combo_names = None
-            try:
-                objs, case_names, combo_names = probe_metadata(net, model, args, result)
-            except Exception as e:
-                result["metadata_fatal"] = _err(e)
-                result["metadata_traceback"] = traceback.format_exc()
-            if objs is not None:
-                for fn, key in ((probe_database_tables, "database_tables"), (probe_direct, "direct")):
-                    try:
-                        fn(net, objs, args, case_names, combo_names, out_dir, result)
-                    except Exception as e:
-                        result["routes"].setdefault(key, {}).setdefault("errors", []).append(
-                            "fatal: %s" % _err(e))
-                        result["routes"][key]["traceback"] = traceback.format_exc()
-    except BaseException as e:  # noqa: BLE001 - must always write the JSON
+        tee_out = Tee(old_out, os.path.join(out_dir, "console.txt"))
+        tee_err = Tee(old_err, os.path.join(out_dir, "console.txt"))
+        sys.stdout, sys.stderr = tee_out, tee_err
+    except Exception as e:
+        result["warnings"].append("console copy not written: %s" % _err(e))
+    t_start = time.perf_counter()
+
+    def save(stage):
+        result["last_stage"] = stage
+        result["total_seconds"] = round(time.perf_counter() - t_start, 3)
+        result["restored"]["all_ok"] = _all_ok(result["restored"])
+        try:
+            tmp = json_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(_jsonable(result), fh, indent=1, ensure_ascii=False)
+            os.replace(tmp, json_path)
+        except Exception as e:
+            print("Could not write JSON %s: %s" % (json_path, _err(e)))
+
+    try:
+        if result.get("fatal"):
+            say(result["fatal"])
+        if args is not None:
+            say("CSiBridge probe started %s. Output folder: %s" % (stamp, out_dir))
+            say("Do not close this window. It may take several minutes. The model is never saved.")
+            if not args.case:
+                result["warnings"].append("no --case given: tables are not fetched and the output selection "
+                                          "is not changed; give --case <combination>")
+            if not args.group and not (args.frames or args.joints):
+                result["warnings"].append("no --group and no --frames/--joints: nothing to fetch")
+            save("start")
+            say("Stage 1/4: attaching to CSiBridge ...")
+            net, sap, model = attach(args, result)
+            save("attach")
+            if model is not None:
+                say("Stage 2/4: reading model information (cases, combinations, groups) ...")
+                objs = case_names = combo_names = None
+                try:
+                    objs, case_names, combo_names = probe_metadata(net, model, args, result)
+                except Exception as e:
+                    result["metadata_fatal"] = _err(e)
+                    result["metadata_traceback"] = traceback.format_exc()
+                save("metadata")
+                if objs is not None:
+                    for stage, fn, key in (("Stage 3/4: route A (database tables)", probe_database_tables,
+                                            "database_tables"),
+                                           ("Stage 4/4: route B (direct result calls)", probe_direct, "direct")):
+                        say(stage + " ...")
+                        try:
+                            fn(net, objs, args, case_names, combo_names, out_dir, result, save)
+                        except Exception as e:
+                            r = result["routes"].setdefault(key, {})
+                            r.setdefault("errors", []).append("fatal: %s" % _err(e))
+                            r["traceback"] = traceback.format_exc()
+                        save(key)
+    except BaseException as e:  # noqa: BLE001 - must always write the JSON (also on Ctrl+C)
         result["fatal"] = _err(e)
         result["traceback"] = traceback.format_exc()
     finally:
-        rs = [v for k, v in result["restored"].items() if isinstance(v, dict)]
-        result["restored"]["all_ok"] = bool(rs) and all(not v.get("errors") for v in rs) if rs else None
         result["restored"]["note"] = "the probe never saves the model and never runs the analysis"
-        result["total_seconds"] = round(time.perf_counter() - t_start, 3)
-        try:
-            with open(json_path, "w", encoding="utf-8") as fh:
-                json.dump(_jsonable(result), fh, indent=1, ensure_ascii=False)
-        except Exception as e:
-            print("Could not write JSON %s: %s" % (json_path, _err(e)))
-            try:
-                print(json.dumps(_jsonable(result), indent=1)[:20000])
-            except Exception:
-                pass
+        save("final")
         try:
             print(summarise(result))
         except Exception as e:
             print("summary failed: %s; JSON at %s" % (_err(e), json_path))
+        sys.stdout, sys.stderr = old_out, old_err
+        for t_ in (tee_out, tee_err):
+            if t_ is not None:
+                t_.close()
     return result
 
 
