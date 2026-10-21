@@ -5,7 +5,8 @@ import json
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
-MODES = ("envelope", "correspondence")
+from .source import MODES
+
 TABLE_KEYS = ("frame", "joint")
 
 
@@ -44,15 +45,39 @@ def load_job(path) -> Job:
     warnings = [f"unknown key ignored: {k}" for k in raw if k not in _SAVED]
     kw = {k: raw[k] for k in _SAVED if k in raw}
     kw.setdefault("version", 1)
+    if isinstance(kw["version"], bool) or not isinstance(kw["version"], int):
+        raise ValueError("job file: 'version' must be an integer")
+    if kw["version"] > 1:
+        warnings.append(f"job file version {kw['version']} is newer than supported (1); fields may be ignored")
+    for k in ("frames", "joints", "name_pattern"):
+        if k in kw and not isinstance(kw[k], str):
+            raise ValueError(f"job file: '{k}' must be a string")
+    for k in ("groups", "cases"):
+        if k in kw:
+            if not isinstance(kw[k], list) or not all(isinstance(x, str) for x in kw[k]):
+                raise ValueError(f"job file: '{k}' must be a list of strings")
+            kw[k] = list(dict.fromkeys(kw[k]))
+    if "output_dir" in kw and kw["output_dir"] is not None and not isinstance(kw["output_dir"], str):
+        raise ValueError("job file: 'output_dir' must be a string or null")
+    raw_tables = kw.get("tables")
+    if raw_tables is None:
+        raw_tables = {}
+    if not isinstance(raw_tables, dict):
+        raise ValueError("job file: 'tables' must be an object")
     tables = _default_tables()
-    for t, spec in (kw.get("tables") or {}).items():
+    for t, spec in raw_tables.items():
         if t not in TABLE_KEYS:
             warnings.append(f"unknown key ignored: tables.{t}")
             continue
-        modes = list(spec.get("modes", tables[t]["modes"]))
+        if not isinstance(spec, dict):
+            raise ValueError(f"tables.{t}: must be an object")
+        modes = spec.get("modes", tables[t]["modes"])
+        if not isinstance(modes, list):
+            raise ValueError(f"tables.{t}.modes: must be a list")
         for m in modes:
             if m not in MODES:
                 raise ValueError(f"tables.{t}.modes: invalid mode {m!r} (allowed: {', '.join(MODES)})")
+        modes = list(dict.fromkeys(modes))
         tables[t] = {"enabled": bool(spec.get("enabled", tables[t]["enabled"])), "modes": modes}
     kw["tables"] = tables
     job = Job(**kw)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_RANGE = re.compile(r"^(\d+)-(\d+)$")
+_RANGE = re.compile(r"^([0-9]+)-([0-9]+)$")
 _SPLIT = re.compile(r"[,\s]+")
 
 
@@ -33,6 +33,10 @@ class Resolution:
     missing_joints: list[str] = field(default_factory=list)
     missing_groups: list[str] = field(default_factory=list)
     empty_ranges: list[str] = field(default_factory=list)
+    # "group:label" for group members that are not frames/joints of the model (not extracted)
+    group_members_not_in_model: list[str] = field(default_factory=list)
+    # range-looking tokens that are also literal labels (both interpretations are extracted)
+    ambiguous_tokens: list[str] = field(default_factory=list)
 
 
 def parse_labels(text: str) -> list:
@@ -54,17 +58,19 @@ def parse_labels(text: str) -> list:
 
 
 def _expand(text: str, existing: set[str], found: list[str], missing: list[str],
-            empty_ranges: list[str]) -> None:
+            empty_ranges: list[str], ambiguous: list[str]) -> None:
     ints = None  # lazily built: sorted (int, label) pairs of purely numeric labels
     for tok in parse_labels(text):
-        if isinstance(tok, RangeToken) and tok.text() in existing:
-            found.append(tok.text())  # a real label that happens to look like a range wins
-        elif isinstance(tok, RangeToken):
+        if isinstance(tok, RangeToken):
+            literal = tok.text() in existing
+            if literal:
+                found.append(tok.text())
+                ambiguous.append(tok.text())
             if ints is None:
-                ints = sorted((int(s), s) for s in existing if s.isdigit())
+                ints = sorted((int(s), s) for s in existing if s.isascii() and s.isdigit())
             lo, hi = tok.a, tok.b
             hits = [s for n, s in ints if lo <= n <= hi]
-            if not hits:
+            if not hits and not literal:
                 empty_ranges.append(tok.text())
             found.extend(hits)
         elif tok in existing:
@@ -82,13 +88,22 @@ def resolve(frames_text: str, joints_text: str, groups: list[str], model: ModelL
     frames: list[str] = []
     joints: list[str] = []
     empty: list[str] = []
-    _expand(frames_text, model.frames, frames, res.missing_frames, empty)
-    _expand(joints_text, model.joints, joints, res.missing_joints, empty)
+    ambiguous: list[str] = []
+    _expand(frames_text, model.frames, frames, res.missing_frames, empty, ambiguous)
+    _expand(joints_text, model.joints, joints, res.missing_joints, empty, ambiguous)
     for g in groups:
         if g in model.groups:
             gf, gj = model.groups[g]
-            frames.extend(sorted(gf, key=_sort_key))
-            joints.extend(sorted(gj, key=_sort_key))
+            for lab in sorted(gf, key=_sort_key):
+                if lab in model.frames:
+                    frames.append(lab)
+                else:
+                    res.group_members_not_in_model.append(f"{g}:{lab}")
+            for lab in sorted(gj, key=_sort_key):
+                if lab in model.joints:
+                    joints.append(lab)
+                else:
+                    res.group_members_not_in_model.append(f"{g}:{lab}")
         else:
             res.missing_groups.append(g)
     res.frames = _dedupe(frames)
@@ -97,8 +112,10 @@ def resolve(frames_text: str, joints_text: str, groups: list[str], model: ModelL
     res.missing_joints = _dedupe(res.missing_joints)
     res.missing_groups = _dedupe(res.missing_groups)
     res.empty_ranges = _dedupe(empty)
+    res.ambiguous_tokens = _dedupe(ambiguous)
+    res.group_members_not_in_model = _dedupe(res.group_members_not_in_model)
     return res
 
 
 def _sort_key(s: str):
-    return (0, int(s), s) if s.isdigit() else (1, 0, s)
+    return (0, int(s), s) if s.isascii() and s.isdigit() else (1, 0, s)

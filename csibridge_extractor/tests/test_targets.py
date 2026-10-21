@@ -29,7 +29,8 @@ def test_resolve_ranges_only_existing():
 
 def test_resolve_groups_and_missing():
     r = targets.resolve("1301 nope 1227-1", "10 99", ["G1", "G2", "GX"], model())
-    assert r.frames == ["1301", "1227-1", "1999"]
+    assert r.frames == ["1301", "1227-1"]
+    assert r.group_members_not_in_model == ["G1:1999"]
     assert r.joints == ["10", "12"]
     assert r.missing_frames == ["nope"]
     assert r.missing_joints == ["99"]
@@ -39,4 +40,18 @@ def test_resolve_groups_and_missing():
 def test_dedupe_keeps_order():
     assert targets.parse_labels("b a b a c") == ["b", "a", "c"]
     r = targets.resolve("1305 1301-1302 1305", "", ["G1"], model())
-    assert r.frames == ["1305", "1301", "1302", "1999"]
+    assert r.frames == ["1305", "1301", "1302"]
+
+
+def test_ambiguous_token_extracts_both():
+    m = ModelLists(frames={"5", "6", "7", "5-7"}, joints=set())
+    r = targets.resolve("5-7", "", [], m)
+    assert r.frames == ["5-7", "5", "6", "7"] and r.ambiguous_tokens == ["5-7"]
+    assert r.empty_ranges == []
+    m2 = ModelLists(frames={"5-7"}, joints=set())
+    r2 = targets.resolve("5-7", "", [], m2)
+    assert r2.frames == ["5-7"] and r2.ambiguous_tokens == ["5-7"] and r2.empty_ranges == []
+
+
+def test_non_ascii_digits_not_ranges():
+    assert targets.parse_labels("١-٣") == ["١-٣"]

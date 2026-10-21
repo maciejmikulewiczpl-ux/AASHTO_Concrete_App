@@ -47,3 +47,27 @@ def test_validate_messages():
     j.tables["joint"]["modes"] = []
     errs = jobs.validate(j)
     assert len(errs) == 1 and "joint" in errs[0]
+
+
+@pytest.mark.parametrize("raw,field", [
+    ({"cases": "DEAD"}, "cases"),
+    ({"tables": []}, "tables"),
+    ({"tables": {"frame": "x"}}, "tables.frame"),
+    ({"tables": {"frame": {"modes": "envelope"}}}, "modes"),
+    ({"frames": 5}, "frames"),
+])
+def test_load_type_validation(tmp_path, raw, field):
+    p = tmp_path / "j.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match=field):
+        jobs.load_job(p)
+
+
+def test_load_future_version_warns_and_dedupes(tmp_path):
+    p = tmp_path / "j.json"
+    p.write_text(json.dumps({"version": 2, "cases": ["A", "B", "A"],
+                             "tables": {"frame": {"enabled": True, "modes": ["envelope", "envelope"]}}}),
+                 encoding="utf-8")
+    j = jobs.load_job(p)
+    assert j.cases == ["A", "B"] and j.tables["frame"]["modes"] == ["envelope"]
+    assert any("version" in w for w in j.warnings)

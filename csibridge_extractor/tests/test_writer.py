@@ -110,3 +110,53 @@ def test_tab_names_within_31_chars(tmp_path):
         assert all(len(n) <= 31 for n in t.tabs) and len(set(t.tabs)) == 3
     wb = openpyxl.load_workbook(p)
     assert all(len(n) <= 31 for n in wb.sheetnames) and len(wb.sheetnames) == 4
+
+
+def test_long_text_data_cell_raises_run_info_splits(tmp_path):
+    from csibridge_extractor.extractor.writer import WriterError
+    p = tmp_path / "g.xlsx"
+    big = "x" * 40000
+    with WorkbookWriter(p) as w:
+        t = w.open_table("T", ["a"], ["u"])
+        with pytest.raises(WriterError, match="T"):
+            t.write((big,))
+        w.write_run_info([("Note", big), ("End", "ok")])
+    vals = [[c.value for c in r] for r in openpyxl.load_workbook(p)["Run info"].iter_rows()]
+    assert "".join(v[1] for v in vals[:2]) == big
+    assert vals[1][0] == "Note (continued)" and vals[2] == ["End", "ok"]
+
+
+def test_exception_writes_incomplete_run_info_and_propagates(tmp_path):
+    p = tmp_path / "h.xlsx"
+    with pytest.raises(KeyError):
+        with WorkbookWriter(p) as w:
+            w.open_table("T", ["a"], ["u"]).write((1,))
+            raise KeyError("boom")
+    wb = openpyxl.load_workbook(p)
+    text = " ".join(str(c.value) for r in wb["Run info"].iter_rows() for c in r)
+    assert "INCOMPLETE" in text and "KeyError" in text
+
+
+def test_bool_numbers_and_counters(tmp_path):
+    p = tmp_path / "i.xlsx"
+    with WorkbookWriter(p) as w:
+        t = w.open_table("T", ["a", "b"], ["u", "u"])
+        t.write((1, True))
+        t.write((math.inf, False))
+        t.write(("n/a", None))
+        assert t.non_finite_cells == 1 and t.non_numeric_cells == 1
+    ws = openpyxl.load_workbook(p)["T"]
+    assert ws.cell(3, 2).value is True and ws.cell(3, 2).data_type == "b"
+    assert ws.cell(3, 1).value == 1
+
+
+def test_atomic_replace_keeps_old_file_on_failure(tmp_path):
+    p = tmp_path / "j.xlsx"
+    with WorkbookWriter(p) as w:
+        w.open_table("T", ["a"], ["u"]).write((1,))
+    good = p.read_bytes()
+    w2 = WorkbookWriter(p)
+    assert p.read_bytes() == good  # untouched until close
+    w2.close()
+    assert p.read_bytes() != good
+    assert not [f for f in tmp_path.iterdir() if f.name.startswith(".part_")]
