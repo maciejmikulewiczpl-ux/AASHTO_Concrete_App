@@ -12,7 +12,8 @@ cd csibridge_extractor
 run.bat
 ```
 
-`run.bat` creates `.venv` on first use, installs `requirements.txt`, then starts `app.py`. Extra arguments are passed on.
+`run.bat` creates `.venv` on first use, installs `requirements.txt`, then starts `app.py`. Extra arguments are passed on; relative paths in them are relative to the
+`csibridge_extractor` folder (the script changes to it). It prefers `py -3` and falls back to `python`.
 
 Demo without CSiBridge (replays a recorded fixture):
 

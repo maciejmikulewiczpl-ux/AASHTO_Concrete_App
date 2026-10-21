@@ -131,3 +131,31 @@ def test_app_loads_html_without_pywebview():
     html = app.get_html()
     assert "<title>CSiBridge Results Extractor</title>" in html and "http" not in html.split("<script>")[1]
     assert "webview" not in sys.modules
+
+
+def test_source_built_in_worker_thread_and_connect_refused_during_run(tmp_path):
+    made = []
+    started, gate = threading.Event(), threading.Event()
+
+    def factory():
+        made.append(threading.current_thread())
+        return _Gated(FIX, started, gate)
+
+    api = Api(source_factory=factory)
+    api.connect()
+    main = threading.current_thread()
+    assert made[-1] is main
+    api.run(_job(tmp_path, frames="1227, 1301"))
+    assert started.wait(10)
+    assert made[-1] is not main
+    assert "error" in json.loads(api.connect())
+    api.cancel()
+    gate.set()
+    _wait_done(api)
+
+
+def test_adapter_missing_reported_via_poll(tmp_path):
+    api = Api()
+    api.run(_job(tmp_path))
+    p, _ = _wait_done(api)
+    assert "Task 7" in p["error"]

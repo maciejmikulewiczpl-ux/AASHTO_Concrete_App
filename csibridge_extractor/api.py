@@ -49,7 +49,7 @@ def _job_from_json(raw: str) -> Job:
 
 class Api:
     def __init__(self, fake: str | None = None, source_factory=None, window=None):
-        self.window = window
+        self._window = window
         self._fake = fake
         self._factory = source_factory
         self._lists = None
@@ -58,6 +58,14 @@ class Api:
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
         self._reset_run()
+
+    @property
+    def window(self):
+        return self._window
+
+    @window.setter
+    def window(self, w):
+        self._window = w
 
     def _reset_run(self):
         self._progress = None
@@ -85,6 +93,8 @@ class Api:
     # -- connection ----------------------------------------------------------
     def connect(self) -> str:
         try:
+            if self._thread is not None and self._thread.is_alive():
+                return _err("a run is in progress: wait for it to finish or cancel it")
             src = self._new_source()
             try:
                 info = src.model_info()
@@ -137,19 +147,16 @@ class Api:
             with self._lock:
                 if self._thread is not None and self._thread.is_alive():
                     return _err("a run is already in progress")
-                source = self._new_source()
                 self._reset_run()
                 self._cancel = threading.Event()
-                self._thread = threading.Thread(target=self._worker, args=(job, source, self._cancel),
+                self._thread = threading.Thread(target=self._worker, args=(job, self._cancel),
                                                 daemon=True)
                 self._thread.start()
             return _dump({"started": True})
-        except RuntimeError as exc:
-            return _err(exc)
         except Exception as exc:
             return _err(_fmt(exc))
 
-    def _worker(self, job, source, cancel):
+    def _worker(self, job, cancel):
         def progress(p):
             with self._lock:
                 self._progress = dict(p)
@@ -157,6 +164,8 @@ class Api:
                     self._log.append(f"{p['table']}/{p['mode']}: {p.get('table_rows', p['rows'])} rows "
                                      f"({p['seconds']:.1f}s)")
         try:
+            # Built here, not on the js_api thread: COM/.NET objects keep thread affinity.
+            source = self._new_source()
             res = run_job(job, source, None, progress=progress, cancel=cancel)
             with self._lock:
                 for w in res.warnings:
@@ -170,7 +179,7 @@ class Api:
                                 "seconds": res.seconds, "complete": res.complete}
         except Exception as exc:
             with self._lock:
-                self._error = _fmt(exc)
+                self._error = str(exc) if isinstance(exc, RuntimeError) else _fmt(exc)
                 self._error_path = getattr(exc, "workbook_path", None)
                 self._log.append(f"FAILED: {self._error}")
                 if self._error_path:
@@ -195,11 +204,11 @@ class Api:
     # -- files ---------------------------------------------------------------
     def _dialog(self, kind: str, **kw):
         import webview  # lazy: not needed by the tests
-        if self.window is None:
+        if self._window is None:
             raise RuntimeError("no window")
         const = {"open": webview.OPEN_DIALOG, "save": webview.SAVE_DIALOG,
                  "folder": webview.FOLDER_DIALOG}[kind]
-        res = self.window.create_file_dialog(const, **kw)
+        res = self._window.create_file_dialog(const, **kw)
         if not res:
             return None
         return res if isinstance(res, str) else res[0]

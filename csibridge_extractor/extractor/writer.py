@@ -135,12 +135,12 @@ class WorkbookWriter:
     it is capped so a tab never exceeds Excel's 1,048,576 rows."""
 
     def __init__(self, path, row_limit: int = EXCEL_MAX_ROWS):
-        self.path = str(path)
+        self.path = self.requested_path = os.path.abspath(str(path))
+        self.close_note = None  # set when close() had to use an alternate name
         check_writable(self.path)
         fd, self._tmp = tempfile.mkstemp(dir=Path(self.path).parent, prefix=".part_", suffix=".xlsx")
         os.close(fd)
         self._data_per_tab = max(1, min(int(row_limit), EXCEL_MAX_ROWS - HEADER_ROWS))
-        self.requested_path = self.path
         try:
             self._wb = xlsxwriter.Workbook(self._tmp, {"constant_memory": True, "use_zip64": True})
         except BaseException:
@@ -193,7 +193,7 @@ class WorkbookWriter:
                 check_writable(cand)
             except OutputLockedError:
                 continue
-            if cand != self.path:
+            if os.path.normcase(os.path.abspath(cand)) != os.path.normcase(os.path.abspath(self.path)):
                 self.path = cand
                 return f"output file locked; saving to {cand} instead of {self.requested_path}"
             return None
@@ -211,16 +211,22 @@ class WorkbookWriter:
             except OSError:
                 pass
             raise
-        for cand in self._alternates():
+        first = [self.path] + [c for c in self._alternates()
+                               if os.path.normcase(os.path.abspath(c)) != os.path.normcase(os.path.abspath(self.path))]
+        for cand in first:
             try:
                 os.replace(self._tmp, cand)
             except OSError:
                 continue
+            if os.path.normcase(os.path.abspath(cand)) != os.path.normcase(os.path.abspath(self.path)):
+                self.close_note = f"output file locked at close; saved to {cand} instead of {self.path}"
             self.path = cand
             return
         # nothing could be replaced: keep the data in the .part file rather than delete it
-        raise OutputLockedError(self.requested_path,
+        exc = OutputLockedError(self.requested_path,
                                 f"cannot replace the file or any alternate name; data kept in {self._tmp}")
+        exc.workbook_path = self._tmp
+        raise exc
 
     def __enter__(self) -> "WorkbookWriter":
         return self

@@ -77,10 +77,12 @@ def run_job(job: Job, source: ResultSource, out_path: str | None = None,
             with WorkbookWriter(out_path) as writer:
                 result = _run(job, source, writer, progress, cancel, t0, started, pre)
         except Exception as exc:
-            if writer is not None:
+            if writer is not None and not getattr(exc, "workbook_path", None):
                 exc.workbook_path = writer.path
             raise
         result.path = writer.path
+        if writer.close_note:
+            result.warnings.append(writer.close_note)
         return result
     finally:
         source.close()

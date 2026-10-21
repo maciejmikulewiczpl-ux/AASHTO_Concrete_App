@@ -118,7 +118,7 @@
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var state = { cases: [], ticked: {}, connected: false, polling: null, startedAt: 0, resolveTimer: null };
+  var state = { cases: [], ticked: {}, groups: [], connected: false, polling: null, startedAt: 0, resolveTimer: null };
 
   // Escape model-derived text before it goes into HTML.
   function esc(s) {
@@ -161,16 +161,28 @@
     }
     document.querySelector('input[name="' + name + '"][value="' + v + '"]').checked = true;
   }
-  function selectedGroups() {
-    return Array.prototype.filter.call($("groups").options, function (o) { return o.selected; })
-      .map(function (o) { return o.value; });
+  // state.groups / state.ticked are the source of truth (independent of the DOM and of the model).
+  function syncGroupsFromDom() {
+    var shown = {}, keep;
+    Array.prototype.forEach.call($("groups").options, function (o) { shown[o.value] = o.selected; });
+    keep = state.groups.filter(function (g) { return !(g in shown); });
+    Object.keys(shown).forEach(function (g) { if (shown[g]) keep.push(g); });
+    state.groups = keep;
+  }
+  function renderGroupSelection() {
+    Array.prototype.forEach.call($("groups").options, function (o) { o.selected = state.groups.indexOf(o.value) >= 0; });
+  }
+  function tickedNames() {
+    var inModel = {}, out = [];
+    state.cases.forEach(function (c) { inModel[c.name] = true; if (state.ticked[c.name]) out.push(c.name); });
+    Object.keys(state.ticked).forEach(function (k) { if (state.ticked[k] && !inModel[k]) out.push(k); });
+    return out;
   }
   function getJob() {
-    var cases = state.cases.filter(function (c) { return state.ticked[c.name]; }).map(function (c) { return c.name; });
     return {
       version: 1,
-      frames: $("frames").value, joints: $("joints").value, groups: selectedGroups(),
-      cases: cases,
+      frames: $("frames").value, joints: $("joints").value, groups: state.groups.slice(),
+      cases: tickedNames(),
       tables: { frame: modes("frame"), joint: modes("joint") },
       output_dir: $("out-dir").value.trim() || null,
       name_pattern: $("out-pattern").value || "{model}_results_{stamp}.xlsx",
@@ -179,8 +191,9 @@
   }
   function setJob(j) {
     $("frames").value = j.frames || ""; $("joints").value = j.joints || "";
-    var g = j.groups || [];
-    Array.prototype.forEach.call($("groups").options, function (o) { o.selected = g.indexOf(o.value) >= 0; });
+    state.groups = (j.groups || []).slice();
+    renderGroupSelection();
+    if (state.connected) warnUnknown();
     state.ticked = {};
     (j.cases || []).forEach(function (c) { state.ticked[c] = true; });
     setModes("frame", (j.tables || {}).frame); setModes("joint", (j.tables || {}).joint);
@@ -246,7 +259,20 @@
     });
   }
   ["frames", "joints", "out-dir", "out-pattern"].forEach(function (id) { $(id).addEventListener("input", scheduleResolve); });
-  $("groups").addEventListener("change", scheduleResolve);
+  $("groups").addEventListener("change", function () { syncGroupsFromDom(); scheduleResolve(); });
+  function warnUnknown() {
+    var known = {}, gk = {};
+    state.cases.forEach(function (c) { known[c.name] = c; });
+    Array.prototype.forEach.call($("groups").options, function (o) { gk[o.value] = true; });
+    Object.keys(state.ticked).forEach(function (k) {
+      if (!state.ticked[k]) return;
+      if (!known[k]) logLine("WARNING: saved case not in this model (kept in the job): " + k, "w");
+      else if (!known[k].has_results) logLine("WARNING: saved case has no results (kept in the job): " + k, "w");
+    });
+    state.groups.forEach(function (g) {
+      if (!gk[g]) logLine("WARNING: saved group not in this model (kept in the job): " + g, "w");
+    });
+  }
 
   // ---- connect ----
   $("btn-connect").onclick = function () {
@@ -264,14 +290,11 @@
         " | " + r.n_frames + " frames, " + r.n_joints + " joints";
       $("conn-notes").textContent = (r.notes || []).join(" ");
       state.cases = r.cases;
-      var prev = {};
-      selectedGroups().forEach(function (g) { prev[g] = true; });
       $("groups").innerHTML = r.groups.map(function (g) {
-        return '<option value="' + esc(g) + '"' + (prev[g] ? " selected" : "") + ">" + esc(g) + "</option>";
+        return '<option value="' + esc(g) + '">' + esc(g) + "</option>";
       }).join("");
-      var known = {};
-      r.cases.forEach(function (c) { known[c.name] = c; });
-      Object.keys(state.ticked).forEach(function (k) { if (!known[k] || !known[k].has_results) delete state.ticked[k]; });
+      renderGroupSelection();
+      warnUnknown();
       renderCases(); refreshResolve();
     });
   };
@@ -305,6 +328,7 @@
     $("bar").className = "bar" + (on ? " busy" : "");
   }
   $("btn-run").onclick = function () {
+    if (!state.connected) { logLine("Connect first.", "e"); $("prog-text").textContent = "Connect first."; return; }
     $("log").textContent = "";
     call("run", JSON.stringify(getJob())).then(function (r) {
       if (r.error) { logLine(r.error, "e"); $("prog-text").textContent = "Not started."; return; }
@@ -318,7 +342,11 @@
   };
   function poll() {
     call("poll").then(function (p) {
-      if (p.error && !p.done) { logLine(p.error, "e"); }
+      if (p.done === undefined) {  // bridge failure, not a run result: stop polling
+        clearInterval(state.polling); setRunning(false);
+        logLine("Lost contact with the run: " + (p.error || "no reply"), "e"); return;
+      }
+      if (p.running === false) p.done = true;
       var secs = ((Date.now() - state.startedAt) / 1000).toFixed(0);
       if (p.progress) {
         $("prog-text").textContent = p.progress.table + "/" + p.progress.mode + ": " + p.progress.rows + " rows, " + secs + " s";

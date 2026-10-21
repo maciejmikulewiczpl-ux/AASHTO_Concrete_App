@@ -272,3 +272,32 @@ def test_enabled_must_be_bool_and_bad_pattern(tmp_path):
     p.write_text(json.dumps({"name_pattern": "{oops}.xlsx"}), encoding="utf-8")
     with pytest.raises(ValueError, match="name_pattern"):
         load_job(p)
+
+
+def test_forward_slash_and_relative_out_no_false_move(tmp_path, monkeypatch):
+    jp = tmp_path / "j.json"
+    save_job(_job(), jp)
+    assert cli.main(["run", str(jp), "--out", (tmp_path / "b.xlsx").as_posix(), "--fake", str(FIX)]) == 0
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["run", str(jp), "--out", "./d.xlsx", "--fake", str(FIX)]) == 0
+    res = run_job(_job(), FakeSource(FIX), "./e.xlsx")
+    assert not res.warnings and Path(res.path).is_absolute()
+
+
+def test_all_replaces_fail_sets_part_path(tmp_path, monkeypatch):
+    from csibridge_extractor.extractor import writer as wmod
+    monkeypatch.setattr(wmod.os, "replace", lambda s, d: (_ for _ in ()).throw(PermissionError("x")))
+    with pytest.raises(OutputLockedError) as ei:
+        run_job(_job(), FakeSource(FIX), str(tmp_path / "o.xlsx"))
+    assert Path(ei.value.workbook_path).name.startswith(".part_")
+
+
+def test_close_fallback_is_reported(tmp_path, monkeypatch):
+    import os
+    from csibridge_extractor.extractor import writer as wmod
+    out = tmp_path / "o.xlsx"
+    real = os.replace
+    monkeypatch.setattr(wmod.os, "replace",
+                        lambda s, d: (_ for _ in ()).throw(PermissionError("x")) if str(d) == str(out) else real(s, d))
+    res = run_job(_job(), FakeSource(FIX), str(out))
+    assert res.path.endswith("o_1.xlsx") and any("o_1.xlsx" in w for w in res.warnings)
