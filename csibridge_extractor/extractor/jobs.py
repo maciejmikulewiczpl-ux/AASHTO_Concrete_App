@@ -57,6 +57,11 @@ def load_job(path) -> Job:
             if not isinstance(kw[k], list) or not all(isinstance(x, str) for x in kw[k]):
                 raise ValueError(f"job file: '{k}' must be a list of strings")
             kw[k] = list(dict.fromkeys(kw[k]))
+    if "name_pattern" in kw:
+        try:
+            kw["name_pattern"].format(model="m", stamp="s")
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ValueError(f"job file: 'name_pattern' is malformed ({exc!r}); use {{model}} and {{stamp}}") from exc
     if "output_dir" in kw and kw["output_dir"] is not None and not isinstance(kw["output_dir"], str):
         raise ValueError("job file: 'output_dir' must be a string or null")
     raw_tables = kw.get("tables")
@@ -78,7 +83,10 @@ def load_job(path) -> Job:
             if m not in MODES:
                 raise ValueError(f"tables.{t}.modes: invalid mode {m!r} (allowed: {', '.join(MODES)})")
         modes = list(dict.fromkeys(modes))
-        tables[t] = {"enabled": bool(spec.get("enabled", tables[t]["enabled"])), "modes": modes}
+        enabled = spec.get("enabled", tables[t]["enabled"])
+        if not isinstance(enabled, bool):
+            raise ValueError(f"tables.{t}.enabled: must be true or false")
+        tables[t] = {"enabled": enabled, "modes": modes}
     kw["tables"] = tables
     job = Job(**kw)
     job.warnings = warnings

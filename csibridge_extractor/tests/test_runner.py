@@ -106,11 +106,11 @@ def test_source_error_on_one_object_continues(tmp_path):
 
     job = _job(tables={"frame": {"enabled": False, "modes": ["envelope"]},
                        "joint": {"enabled": True, "modes": ["envelope"]}})
-    res = run_job(job, Flaky(FIX), str(tmp_path / "o.xlsx"))
+    res = run_job(job, Flaky(FIX, batch_objects=1), str(tmp_path / "o.xlsx"))
     assert res.complete
     assert res.rows[f"Joint Reactions {EN} Envelope"] == _fixture_count("joint", "envelope",
                                                                          {"Str-I1", "Str-I2"}, {"11"})
-    assert any("object 10" in w and "boom" in w for w in res.warnings)
+    assert any("[10]" in w and "boom" in w for w in res.warnings)
 
 
 def test_default_out_path(tmp_path):
@@ -134,3 +134,141 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert cli.main(["run", str(jp), "--out", str(tmp_path / "nodir" / "o.xlsx"), "--fake", str(FIX)]) == 1
     assert cli.main(["run", str(jp), "--out", out]) == 1
     assert "not available yet" in capsys.readouterr().err
+
+
+def _joint_job():
+    return _job(tables={"frame": {"enabled": False, "modes": ["envelope"]},
+                        "joint": {"enabled": True, "modes": ["envelope"]}})
+
+
+def test_batches_are_chunked(tmp_path):
+    seen = []
+
+    class Rec(FakeSource):
+        def iter_rows(self, table, mode, cases, objects):
+            seen.append(list(objects))
+            return super().iter_rows(table, mode, cases, objects)
+
+    run_job(_job(joints="10 11 12"), Rec(FIX, batch_objects=2), str(tmp_path / "o.xlsx"))
+    assert [b for b in seen if b[0] in ("10", "11", "12")] == [["10", "11"], ["12"]]
+    seen.clear()
+    run_job(_job(joints="10 11 12"), Rec(FIX), str(tmp_path / "o2.xlsx"))
+    assert [b for b in seen if b[0] in ("10", "11", "12")] == [["10", "11", "12"]]
+
+
+def test_output_locked_mid_run_saves_alternate(tmp_path, monkeypatch):
+    import os
+    from csibridge_extractor.extractor import writer as wmod
+    out = tmp_path / "o.xlsx"
+    real = os.replace
+
+    def fake_replace(src, dst):
+        if str(dst) == str(out):
+            raise PermissionError("locked")
+        return real(src, dst)
+
+    monkeypatch.setattr(wmod.os, "replace", fake_replace)
+    real_check = wmod.check_writable
+    n = {"i": 0}
+
+    def late_lock(path):  # unlocked at start, locked by the time Run info is written
+        n["i"] += 1
+        if n["i"] > 1 and str(path) == str(out):
+            raise OutputLockedError(path, "locked")
+        return real_check(path)
+
+    monkeypatch.setattr(wmod, "check_writable", late_lock)
+    out.write_bytes(b"old")
+    res = run_job(_job(), FakeSource(FIX), str(out))
+    assert res.path == str(tmp_path / "o_1.xlsx") and Path(res.path).exists()
+    assert out.read_bytes() == b"old"
+    info = dict(_run_info(res.path))
+    assert info["Output file"] == res.path
+    assert any("o_1.xlsx" in w for w in res.warnings)
+
+
+def test_all_replaces_fail_keeps_part_file(tmp_path, monkeypatch):
+    from csibridge_extractor.extractor import writer as wmod
+
+    def nope(src, dst):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(wmod.os, "replace", nope)
+    with pytest.raises(OutputLockedError):
+        run_job(_job(), FakeSource(FIX), str(tmp_path / "o.xlsx"))
+    assert [f for f in tmp_path.iterdir() if f.name.startswith(".part_")]
+
+
+@pytest.mark.parametrize("exc", [ValueError("odd"), RuntimeError("boom")])
+def test_aborted_run_writes_full_run_info_and_reraises(tmp_path, exc):
+    class Bad(FakeSource):
+        def iter_rows(self, table, mode, cases, objects):
+            raise exc
+
+    out = tmp_path / "o.xlsx"
+    with pytest.raises(type(exc)) as ei:
+        run_job(_job(frames="1227 9999"), Bad(FIX), str(out))
+    assert ei.value.workbook_path == str(out)
+    info = _run_info(out)
+    d = dict(info)
+    assert d["complete"] == "False" and "Job" in d
+    assert any(k == "Warning" and "9999" in v for k, v in info)
+    assert any(k == "Warning" and "ABORTED" in v for k, v in info)
+
+
+def test_writer_error_aborts_with_run_info(tmp_path):
+    from csibridge_extractor.extractor.writer import WriterError
+
+    class Huge(FakeSource):
+        def iter_rows(self, table, mode, cases, objects):
+            yield ("1227", 0.0, "x" * 40000) + (0,) * 10
+
+    out = tmp_path / "o.xlsx"
+    with pytest.raises(WriterError):
+        run_job(_job(), Huge(FIX), str(out))
+    assert dict(_run_info(out))["complete"] == "False"
+
+
+def test_zero_rows_and_absent_objects_warned(tmp_path):
+    # frame 1301 has no fixture rows; with 1227 present it is "absent"
+    res = run_job(_job(frames="1227 1301"), FakeSource(FIX), str(tmp_path / "o.xlsx"))
+    assert any("absent" in w and "1301" in w for w in res.warnings)
+    res = run_job(_job(frames="1301"), FakeSource(FIX, batch_objects=1), str(tmp_path / "p.xlsx"))
+    assert any("no rows" in w and "1301" in w for w in res.warnings)
+
+
+def test_wrong_row_length_warned_not_dropped(tmp_path):
+    class Short(FakeSource):
+        def iter_rows(self, table, mode, cases, objects):
+            return iter([("10", "Str-I1", "c", "Max", 1.0)])
+
+    res = run_job(_joint_job(), Short(FIX), str(tmp_path / "o.xlsx"))
+    assert res.rows[f"Joint Reactions {EN} Envelope"] == 1
+    assert any("wrong number of cells" in w for w in res.warnings)
+
+
+def test_notes_are_not_warnings(tmp_path):
+    class Noted(FakeSource):
+        def notes(self):
+            return ["correspondence not provided"]
+
+    res = run_job(_joint_job(), Noted(FIX), str(tmp_path / "o.xlsx"))
+    assert res.warnings == [] and res.notes == ["correspondence not provided"]
+    assert ("Note", "correspondence not provided") in _run_info(tmp_path / "o.xlsx")
+
+
+def test_final_progress_event(tmp_path):
+    ev = []
+    run_job(_joint_job(), FakeSource(FIX), str(tmp_path / "o.xlsx"), progress=ev.append)
+    assert ev and ev[-1].get("final")
+
+
+def test_enabled_must_be_bool_and_bad_pattern(tmp_path):
+    from csibridge_extractor.extractor.jobs import load_job
+    p = tmp_path / "j.json"
+    p.write_text(json.dumps({"tables": {"frame": {"enabled": "no"}}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="enabled"):
+        load_job(p)
+    p.write_text(json.dumps({"name_pattern": "{oops}.xlsx"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="name_pattern"):
+        load_job(p)

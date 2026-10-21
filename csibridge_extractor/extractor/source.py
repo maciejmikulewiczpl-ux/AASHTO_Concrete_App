@@ -39,6 +39,9 @@ class CaseInfo:
 
 
 class ResultSource(Protocol):
+    # max objects per iter_rows call (None = all objects in one call)
+    batch_objects: int | None
+
     def model_info(self) -> ModelInfo: ...
     def list_cases(self) -> list[CaseInfo]: ...
     def model_lists(self) -> ModelLists: ...
@@ -51,7 +54,8 @@ class ResultSource(Protocol):
 class FakeSource:
     """Replays a JSON fixture; rows are returned exactly as stored, in fixture order."""
 
-    def __init__(self, fixture_path):
+    def __init__(self, fixture_path, batch_objects: int | None = None):
+        self.batch_objects = batch_objects
         with open(Path(fixture_path), encoding="utf-8") as fh:
             self._d = json.load(fh)
         self.closed = False

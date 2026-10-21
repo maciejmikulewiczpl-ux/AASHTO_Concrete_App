@@ -140,7 +140,15 @@ class WorkbookWriter:
         fd, self._tmp = tempfile.mkstemp(dir=Path(self.path).parent, prefix=".part_", suffix=".xlsx")
         os.close(fd)
         self._data_per_tab = max(1, min(int(row_limit), EXCEL_MAX_ROWS - HEADER_ROWS))
-        self._wb = xlsxwriter.Workbook(self._tmp, {"constant_memory": True, "use_zip64": True})
+        self.requested_path = self.path
+        try:
+            self._wb = xlsxwriter.Workbook(self._tmp, {"constant_memory": True, "use_zip64": True})
+        except BaseException:
+            try:
+                os.remove(self._tmp)
+            except OSError:
+                pass
+            raise
         self._bold = self._wb.add_format({"bold": True})
         self._used: set = {RUN_INFO_TAB.lower()}
         # Created first so it is tab #1. In constant_memory mode each sheet streams to its own
@@ -169,21 +177,50 @@ class WorkbookWriter:
                 TableHandle._put(ws, RUN_INFO_TAB, r, 1, part)
                 r += 1
 
+    def _alternates(self):
+        p = Path(self.requested_path)
+        yield str(p)
+        for i in range(1, 100):
+            alt = p.with_name(f"{p.stem}_{i}{p.suffix}")
+            if not alt.exists():
+                yield str(alt)
+
+    def ensure_target(self):
+        """If the requested file became locked, switch to the first free alternate name
+        (<stem>_1.xlsx ...). Returns a message when the path changed, else None."""
+        for cand in self._alternates():
+            try:
+                check_writable(cand)
+            except OutputLockedError:
+                continue
+            if cand != self.path:
+                self.path = cand
+                return f"output file locked; saving to {cand} instead of {self.requested_path}"
+            return None
+        return None
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         try:
             self._wb.close()
-            os.replace(self._tmp, self.path)
-        except PermissionError as exc:
-            raise OutputLockedError(self.path, f"cannot replace the file ({exc})") from exc
-        finally:
+        except BaseException:
             try:
-                if os.path.exists(self._tmp):
-                    os.remove(self._tmp)
+                os.remove(self._tmp)
             except OSError:
                 pass
+            raise
+        for cand in self._alternates():
+            try:
+                os.replace(self._tmp, cand)
+            except OSError:
+                continue
+            self.path = cand
+            return
+        # nothing could be replaced: keep the data in the .part file rather than delete it
+        raise OutputLockedError(self.requested_path,
+                                f"cannot replace the file or any alternate name; data kept in {self._tmp}")
 
     def __enter__(self) -> "WorkbookWriter":
         return self
