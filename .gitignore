@@ -32,3 +32,7 @@ app.spec
 chat.json
 verify_out.txt
 verification_report*.txt
+
+# CSiBridge extractor: probe output and interrupted workbook temp files
+probe_out/
+*.part_*.xlsx
