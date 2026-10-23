@@ -120,7 +120,7 @@ def test_default_out_path(tmp_path):
     assert p.parent == tmp_path and p.name.startswith("fake_bridge_x_") and p.exists()
 
 
-def test_cli_exit_codes(tmp_path, capsys):
+def test_cli_exit_codes(tmp_path, capsys, monkeypatch):
     jp = tmp_path / "j.json"
     out = str(tmp_path / "o.xlsx")
     save_job(_job(), jp)
@@ -132,8 +132,14 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert cli.main(["run", str(jp), "--out", out, "--fake", str(FIX)]) == 1
     save_job(_job(), jp)
     assert cli.main(["run", str(jp), "--out", str(tmp_path / "nodir" / "o.xlsx"), "--fake", str(FIX)]) == 1
+    from csibridge_extractor.extractor import csi_source
+
+    def no_csi(*a, **k):
+        raise csi_source.CsiConnectError(csi_source.connect_message("not_running"))
+    monkeypatch.setattr(csi_source, "CsiSource", no_csi)
+    capsys.readouterr()
     assert cli.main(["run", str(jp), "--out", out]) == 1
-    assert "not available yet" in capsys.readouterr().err
+    assert "not running" in capsys.readouterr().err
 
 
 def _joint_job():
@@ -301,3 +307,71 @@ def test_close_fallback_is_reported(tmp_path, monkeypatch):
                         lambda s, d: (_ for _ in ()).throw(PermissionError("x")) if str(d) == str(out) else real(s, d))
     res = run_job(_job(), FakeSource(FIX), str(out))
     assert res.path.endswith("o_1.xlsx") and any("o_1.xlsx" in w for w in res.warnings)
+
+
+def test_csv_output_folder_power_query_layout(tmp_path):
+    import csv as _csv
+    res = run_job(_job(output_format="csv"), FakeSource(FIX), str(tmp_path / "o.xlsx"))
+    folder = Path(res.path)
+    assert res.complete and folder.is_dir() and folder.name == "o"
+    names = sorted(p.name for p in folder.iterdir())
+    assert names == ["Frame Forces - Corresp.csv", "Frame Forces - Envelope.csv",
+                     "Joint Reactions - Envelope.csv", "Run info.csv"]
+    with open(folder / "Frame Forces - Envelope.csv", encoding="utf-8-sig", newline="") as fh:
+        rows = list(_csv.reader(fh))
+    assert rows[0][:2] == ["Frame", "Station [ft]"] and rows[0][5] == "P [Kip]"
+    assert len(rows) - 1 == _fixture_count("frame", "envelope", ["Str-I1", "Str-I2"], {"1227"})
+    float(rows[1][5])  # numbers, not a units row
+    info = (folder / "Run info.csv").read_text(encoding="utf-8-sig")
+    assert "COMPLETE" in info
+
+
+def test_csv_does_not_overwrite_existing_folder(tmp_path):
+    (tmp_path / "o").mkdir()
+    (tmp_path / "o" / "keep.txt").write_text("x")
+    res = run_job(_job(output_format="csv"), FakeSource(FIX), str(tmp_path / "o"))
+    assert Path(res.path).name == "o_1" and (tmp_path / "o" / "keep.txt").exists()
+    assert any("already had files" in w for w in res.warnings)
+
+
+def test_csv_overwrite_replaces_own_files_only(tmp_path):
+    folder = tmp_path / "fixed"
+    job = _job(output_format="csv", overwrite=True, name_pattern="{model}.xlsx")
+    run_job(job, FakeSource(FIX), str(folder))
+    (folder / "my notes.txt").write_text("keep")
+    # second run without joints: the stale joint CSV must disappear, user file stays
+    job2 = _job(output_format="csv", overwrite=True, name_pattern="{model}.xlsx",
+                tables={"frame": {"enabled": True, "modes": ["envelope"]},
+                        "joint": {"enabled": False, "modes": ["envelope"]}})
+    res = run_job(job2, FakeSource(FIX), str(folder))
+    assert Path(res.path) == folder
+    assert sorted(p.name for p in folder.iterdir()) == ["Frame Forces - Envelope.csv", "Run info.csv",
+                                                        "my notes.txt"]
+
+
+def test_csv_overwrite_locked_file_fails_before_deleting(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    folder = tmp_path / "fixed"
+    job = _job(output_format="csv", overwrite=True, name_pattern="{model}.xlsx")
+    run_job(job, FakeSource(FIX), str(folder))
+    target = folder / "Joint Reactions - Envelope.csv"
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    h = k32.CreateFileW(str(target), 0x80000000 | 0x40000000, 0, None, 3, 0x80, None)  # share 0, like Excel
+    assert h not in (None, ctypes.c_void_p(-1).value)
+    try:
+        with pytest.raises(OutputLockedError):
+            run_job(job, FakeSource(FIX), str(folder))
+        assert (folder / "Frame Forces - Envelope.csv").exists()  # nothing deleted
+        assert (folder / "Run info.csv").exists()
+    finally:
+        k32.CloseHandle(h)
+
+
+def test_overwrite_requires_fixed_name():
+    from csibridge_extractor.extractor.jobs import validate
+    assert any("{stamp}" in e for e in validate(_job(overwrite=True)))
+    assert not validate(_job(overwrite=True, name_pattern="{model}_results.xlsx"))

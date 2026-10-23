@@ -27,6 +27,7 @@ def main(argv=None) -> int:
     r.add_argument("job")
     r.add_argument("--out")
     r.add_argument("--fake", metavar="FIXTURE", help="replay a JSON fixture instead of CSiBridge")
+    r.add_argument("--pid", type=int, help="process id of the CSiBridge window (when several are open)")
     args = ap.parse_args(argv)
 
     try:
@@ -43,18 +44,11 @@ def main(argv=None) -> int:
     else:
         try:
             from .csi_source import CsiSource
-        except ModuleNotFoundError as exc:
-            if exc.name and exc.name.endswith("csi_source"):
-                print("real CSiBridge adapter not available yet (Task 7)", file=sys.stderr)
-            else:
-                print(f"CSiBridge adapter could not be imported (missing module {exc.name}): {exc}",
-                      file=sys.stderr)
-            return 1
         except ImportError as exc:
             print(f"CSiBridge adapter could not be imported: {exc}", file=sys.stderr)
             return 1
         try:
-            source = CsiSource()
+            source = CsiSource(pid=args.pid)
         except Exception as exc:
             print(f"Cannot connect to CSiBridge: {exc}", file=sys.stderr)
             return 1

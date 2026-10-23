@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import threading
 from dataclasses import asdict
@@ -48,9 +49,10 @@ def _job_from_json(raw: str) -> Job:
 
 
 class Api:
-    def __init__(self, fake: str | None = None, source_factory=None, window=None):
+    def __init__(self, fake: str | None = None, source_factory=None, window=None, pid: int | None = None):
         self._window = window
         self._fake = fake
+        self._pid = pid
         self._factory = source_factory
         self._lists = None
         self._info = None
@@ -82,19 +84,25 @@ class Api:
             return self._factory()
         if self._fake:
             return FakeSource(self._fake)
-        try:
-            from csibridge_extractor.extractor.csi_source import CsiSource
-        except ModuleNotFoundError as exc:
-            if exc.name and exc.name.endswith("csi_source"):
-                raise RuntimeError("real CSiBridge adapter not available yet (Task 7)") from exc
-            raise
-        return CsiSource()
+        from csibridge_extractor.extractor.csi_source import CsiSource
+        return CsiSource(pid=self._pid)
 
     # -- connection ----------------------------------------------------------
-    def connect(self) -> str:
+    def instances(self) -> str:
+        if self._fake or self._factory:
+            return _dump({"instances": []})
+        try:
+            from csibridge_extractor.extractor.csi_source import list_instances
+            return _dump({"instances": list_instances()})
+        except Exception as exc:
+            return _err(_fmt(exc))
+
+    def connect(self, pid=None) -> str:
         try:
             if self._thread is not None and self._thread.is_alive():
                 return _err("a run is in progress: wait for it to finish or cancel it")
+            if pid not in (None, ""):
+                self._pid = int(pid)
             src = self._new_source()
             try:
                 info = src.model_info()
@@ -246,11 +254,13 @@ class Api:
     def open_file(self, path: str) -> str:
         try:
             p = Path(path)
-            if p.suffix.lower() != ".xlsx" or not p.is_file():
-                return _err(f"not an existing .xlsx file: {path}")
+            if not (p.is_dir() or (p.suffix.lower() == ".xlsx" and p.is_file())):
+                return _err(f"not an existing .xlsx file or output folder: {path}")
             if not hasattr(os, "startfile"):
                 return _err("opening files is only supported on Windows")
-            os.startfile(str(p))
+            # Via Explorer so Excel gets the desktop environment, not this venv/.NET process's
+            # (Excel add-ins such as Arup Compute fail when started from here).
+            subprocess.Popen(["explorer.exe", str(p)])
             return _dump({"opened": str(p)})
         except Exception as exc:
             return _err(_fmt(exc))

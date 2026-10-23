@@ -71,6 +71,8 @@ def parse_args(argv):
     p.add_argument("--case", action="append", default=[], help="load case or combination name (repeatable)")
     p.add_argument("--out", default="probe_out", help="output folder")
     p.add_argument("--dll", default=None, help="full path to CSiAPIv1.dll (optional)")
+    p.add_argument("--pid", type=int, default=None,
+                   help="process id of the CSiBridge instance (when several are open)")
     return p.parse_args(argv)
 
 
@@ -560,7 +562,8 @@ def attach(args, result):
                     a = {"dll": dll, "namespace": ns, "progid": progid, "step": "cHelper(Helper()).GetObject"}
                     try:
                         helper = cHelper(Helper())
-                        sap = helper.GetObject(progid)
+                        pid = getattr(args, "pid", None)
+                        sap = helper.GetObjectProcess(progid, pid) if pid else helper.GetObject(progid)
                         if sap is None:
                             raise RuntimeError("GetObject returned None (is CSiBridge running?)")
                         model = sap.SapModel
@@ -756,38 +759,9 @@ def probe_database_tables(net, objs, args, case_names, combo_names, out_dir, res
     def rec(msg, e):
         route["errors"].append("%s: %s" % (msg, _err(e)))
 
-    # Available tables
-    say("Route A (database tables): listing available tables ...")
-    keys = []
-    try:
-        r = net.call_rc(dt, L, "GetAvailableTables")
-        tk = [str(x) for x in _list(r.get("TableKey"))]
-        tn = [str(x) for x in _list(r.get("TableName"))] or tk
-        keys = list(zip(tk, tn + [""] * (len(tk) - len(tn))))
-        route["n_available_tables"] = len(tk)
-    except Exception as e:
-        rec("GetAvailableTables", e)
-        try:
-            r = net.call_rc(dt, L, "GetAllTables")
-            tk = [str(x) for x in _list(r.get("TableKey"))]
-            keys = [(k, k) for k in tk]
-            route["n_available_tables_via_GetAllTables"] = len(tk)
-        except Exception as e2:
-            rec("GetAllTables", e2)
-    rel = [(k, n) for k, n in keys if "frame" in (k + n).lower() or "reaction" in (k + n).lower()]
-    route["tables_matching_frame_or_reaction"] = [{"key": k, "name": n} for k, n in rel]
-
-    def pick(exact, words):
-        for k, n in rel:
-            if k.lower() in exact or n.lower() in exact:
-                return k
-        for k, n in rel:
-            if all(w in (k + " " + n).lower() for w in words):
-                return k
-        return None
-
-    targets = {"frame": pick({"element forces - frames"}, ["element", "forces", "frame"]),
-               "joint": pick({"joint reactions"}, ["joint", "reaction"])}
+    # GetAvailableTables scans every table for data and hangs on large models; use the known keys.
+    say("Route A (database tables): using known table keys ...")
+    targets = {"frame": "Element Forces - Frames", "joint": "Joint Reactions"}
     route["tables_found"] = targets
     for tbl, key in targets.items():
         if key is None:

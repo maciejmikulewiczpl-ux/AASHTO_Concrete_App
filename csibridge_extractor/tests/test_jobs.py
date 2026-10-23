@@ -71,3 +71,20 @@ def test_load_future_version_warns_and_dedupes(tmp_path):
     j = jobs.load_job(p)
     assert j.cases == ["A", "B"] and j.tables["frame"]["modes"] == ["envelope"]
     assert any("version" in w for w in j.warnings)
+
+
+def test_output_format_roundtrip_and_validation(tmp_path):
+    import json as _json
+    from csibridge_extractor.extractor.jobs import Job, load_job, save_job
+    p = tmp_path / "j.json"
+    save_job(Job(frames="1", cases=["A"], output_format="csv"), p)
+    assert load_job(p).output_format == "csv"
+    d = _json.loads(p.read_text(encoding="utf-8"))
+    del d["output_format"]
+    p.write_text(_json.dumps(d), encoding="utf-8")
+    assert load_job(p).output_format == "xlsx"
+    d["output_format"] = "parquet"
+    p.write_text(_json.dumps(d), encoding="utf-8")
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="output_format"):
+        load_job(p)

@@ -154,8 +154,27 @@ def test_source_built_in_worker_thread_and_connect_refused_during_run(tmp_path):
     _wait_done(api)
 
 
-def test_adapter_missing_reported_via_poll(tmp_path):
+def test_instances_and_connect_with_pid(monkeypatch):
+    from csibridge_extractor.extractor import csi_source
+    assert json.loads(Api(fake=str(FIX)).instances()) == {"instances": []}
+    monkeypatch.setattr(csi_source, "list_instances", lambda: [{"pid": 7, "model": "M"}])
     api = Api()
+    assert json.loads(api.instances())["instances"][0]["pid"] == 7
+    seen = []
+
+    def fake_source(pid=None):
+        seen.append(pid)
+        return FakeSource(FIX)
+    monkeypatch.setattr(csi_source, "CsiSource", fake_source)
+    assert "error" not in json.loads(api.connect("7"))
+    assert seen == [7]
+
+
+def test_source_error_reported_via_poll(tmp_path):
+    def boom():
+        raise RuntimeError("CSiBridge is not running")
+
+    api = Api(source_factory=boom)
     api.run(_job(tmp_path))
     p, _ = _wait_done(api)
-    assert "Task 7" in p["error"]
+    assert "not running" in p["error"]

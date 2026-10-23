@@ -8,6 +8,7 @@ from pathlib import Path
 from .source import MODES
 
 TABLE_KEYS = ("frame", "joint")
+OUTPUT_FORMATS = ("xlsx", "csv")
 
 
 def _default_tables() -> dict:
@@ -26,6 +27,8 @@ class Job:
     output_dir: str | None = None
     name_pattern: str = "{model}_results_{stamp}.xlsx"
     open_when_done: bool = True
+    output_format: str = "xlsx"  # "xlsx" workbook or "csv" folder
+    overwrite: bool = False  # fixed output name, replaced every run (for Power Query)
     # load-time notes (unknown keys); never saved, ignored in comparisons
     warnings: list[str] = field(default_factory=list, compare=False)
 
@@ -64,6 +67,11 @@ def load_job(path) -> Job:
             raise ValueError(f"job file: 'name_pattern' is malformed ({exc!r}); use {{model}} and {{stamp}}") from exc
     if "output_dir" in kw and kw["output_dir"] is not None and not isinstance(kw["output_dir"], str):
         raise ValueError("job file: 'output_dir' must be a string or null")
+    if "output_format" in kw and kw["output_format"] not in OUTPUT_FORMATS:
+        raise ValueError(f"job file: 'output_format' must be one of {', '.join(OUTPUT_FORMATS)}")
+    for k in ("overwrite", "open_when_done"):
+        if k in kw and not isinstance(kw[k], bool):
+            raise ValueError(f"job file: '{k}' must be true or false")
     raw_tables = kw.get("tables")
     if raw_tables is None:
         raw_tables = {}
@@ -103,4 +111,6 @@ def validate(job: Job) -> list[str]:
         spec = job.tables.get(t, {})
         if spec.get("enabled") and not spec.get("modes"):
             errors.append(f"Table '{t}' is enabled but has no mode selected.")
+    if job.overwrite and "{stamp}" in job.name_pattern:
+        errors.append("Overwrite needs a fixed file name: remove {stamp} from the name pattern.")
     return errors

@@ -32,17 +32,44 @@
   @keyframes slide { 0%{margin-left:-40%} 100%{margin-left:100%} }
   #log { height:200px; overflow:auto; background:#10151f; color:#d6dbe6; font:12px/1.4 Consolas, monospace; padding:6px 8px; border-radius:4px; white-space:pre-wrap; }
   #log .w { color:#f5b455; } #log .e { color:#ff8a80; } #log .n { color:#8fb8ff; }
+  details.help summary { cursor:pointer; font-weight:600; }
+  details.help ol, details.help ul { margin:6px 0 4px 20px; padding:0; }
+  details.help li { margin:2px 0; }
 </style>
 </head>
 <body>
 <main>
 
+<section id="s-help">
+  <details class="help" open>
+    <summary>How to use</summary>
+    <ol>
+      <li>In CSiBridge: open the model, run the analysis, and <b>close every dialog</b> (CSiBridge does not answer while a dialog is open).</li>
+      <li><b>Connection:</b> pick the model in the list (Refresh if you just opened it) and click Connect.</li>
+      <li><b>Targets:</b> pick one or more groups, and/or type frame / joint labels or ranges (e.g. 1201-1210). A group alone is enough: its frames go to Frame forces, its joints to Joint reactions.</li>
+      <li><b>Cases:</b> tick the load cases / combinations. Greyed ones have no results (not analysed).</li>
+      <li><b>Tables:</b> choose Envelope, Correspondence or Both. Joint reactions are off by default; CSiBridge gives them as envelope only.</li>
+      <li><b>Output:</b> leave the folder empty to save next to the model file. Choose Excel, or CSV for big extractions (much faster; one file per table, ready for Power Query: Data &gt; Get Data &gt; From Folder). Then click <b>Run</b>.</li>
+    </ol>
+    <ul class="mute">
+      <li>Fastest: one CSiBridge group that holds everything you need (about a second). Objects not in one group make it read the whole model (can take minutes).</li>
+      <li>Values are written exactly as CSiBridge gives them, in the model's units (shown in row 2 of each tab). Check the Run info tab for warnings.</li>
+      <li>Linking other spreadsheets (Power Query): tick <b>Overwrite</b> so every run replaces the same file / folder; save the job and re-run it after each analysis, then Refresh in Excel.</li>
+      <li>Save job / Load job repeats the same extraction later. The model is never changed or saved.</li>
+    </ul>
+  </details>
+</section>
+
 <section id="s-conn">
   <h2>1. Connection</h2>
   <div class="row" style="align-items:center">
+    <label for="instance" style="margin:0">CSiBridge model</label>
+    <select id="instance" style="max-width:420px"><option value="">(looking for CSiBridge...)</option></select>
+    <button id="btn-refresh">Refresh</button>
     <button id="btn-connect" class="primary">Connect</button>
     <span id="conn-status" class="mute">Not connected.</span>
   </div>
+  <div class="mute" style="margin-top:4px">Close any open dialog in CSiBridge first: CSiBridge does not answer while a dialog is open.</div>
   <div id="conn-notes" class="mute" style="margin-top:4px"></div>
 </section>
 
@@ -92,7 +119,13 @@
     <div class="col"><label for="out-pattern">File name pattern ({model}, {stamp})</label><input type="text" id="out-pattern" value="{model}_results_{stamp}.xlsx"></div>
   </div>
   <div style="margin-top:6px"><span class="mute">Will write: </span><span id="out-preview" class="mute">-</span></div>
-  <label style="margin-top:6px"><input type="checkbox" id="open-done" checked> Open the workbook when done</label>
+  <div class="row" style="margin-top:6px;align-items:center;gap:16px">
+    <span class="mute">Format:</span>
+    <label style="margin:0"><input type="radio" name="fmt" value="xlsx" checked> Excel workbook (.xlsx)</label>
+    <label style="margin:0"><input type="radio" name="fmt" value="csv"> CSV folder (fast, for big data / Power Query)</label>
+  </div>
+  <label style="margin-top:6px"><input type="checkbox" id="overwrite"> Overwrite the same file / folder each run (fixed name, for Power Query links)</label>
+  <label style="margin-top:6px"><input type="checkbox" id="open-done" checked> Open the workbook / folder when done</label>
 </section>
 
 <section id="s-jobs">
@@ -186,7 +219,9 @@
       tables: { frame: modes("frame"), joint: modes("joint") },
       output_dir: $("out-dir").value.trim() || null,
       name_pattern: $("out-pattern").value || "{model}_results_{stamp}.xlsx",
-      open_when_done: $("open-done").checked
+      open_when_done: $("open-done").checked,
+      output_format: document.querySelector('input[name="fmt"]:checked').value,
+      overwrite: $("overwrite").checked
     };
   }
   function setJob(j) {
@@ -200,6 +235,8 @@
     $("out-dir").value = j.output_dir || "";
     $("out-pattern").value = j.name_pattern || "{model}_results_{stamp}.xlsx";
     $("open-done").checked = j.open_when_done !== false;
+    $("overwrite").checked = j.overwrite === true;
+    document.querySelector('input[name="fmt"][value="' + (j.output_format === "csv" ? "csv" : "xlsx") + '"]').checked = true;
     renderCases(); scheduleResolve();
   }
 
@@ -259,6 +296,12 @@
     });
   }
   ["frames", "joints", "out-dir", "out-pattern"].forEach(function (id) { $(id).addEventListener("input", scheduleResolve); });
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="fmt"]'), function (el) { el.addEventListener("change", scheduleResolve); });
+  $("overwrite").addEventListener("change", function () {
+    var p = $("out-pattern");
+    if ($("overwrite").checked && p.value.indexOf("{stamp}") >= 0) p.value = p.value.replace(/[_\- ]?\{stamp\}/g, "");
+    scheduleResolve();
+  });
   $("groups").addEventListener("change", function () { syncGroupsFromDom(); scheduleResolve(); });
   function warnUnknown() {
     var known = {}, gk = {};
@@ -275,9 +318,24 @@
   }
 
   // ---- connect ----
+  function refreshInstances() {
+    call("instances").then(function (r) {
+      var sel = $("instance"), list = (r && r.instances) || [];
+      if (r.error) { sel.innerHTML = '<option value="">' + esc(r.error) + "</option>"; return; }
+      if (!list.length) {
+        sel.innerHTML = '<option value="">' + (window.pywebview ? "default (no CSiBridge window found)" : "default") + "</option>";
+        return;
+      }
+      sel.innerHTML = list.map(function (x) {
+        return '<option value="' + x.pid + '">' + esc(x.model || "(no model)") + " (pid " + x.pid + ")</option>";
+      }).join("");
+    });
+  }
+  $("btn-refresh").onclick = refreshInstances;
+  window.addEventListener("pywebviewready", refreshInstances);
   $("btn-connect").onclick = function () {
     $("conn-status").className = "mute"; $("conn-status").textContent = "Connecting...";
-    call("connect").then(function (r) {
+    call("connect", $("instance").value || null).then(function (r) {
       if (r.error) {
         state.connected = false;
         $("conn-status").className = "bad"; $("conn-status").textContent = r.error; return;

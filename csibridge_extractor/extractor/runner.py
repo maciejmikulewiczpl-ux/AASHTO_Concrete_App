@@ -12,7 +12,7 @@ from typing import Callable
 from .jobs import Job, TABLE_KEYS, validate
 from .source import MODES, TABLE_COLUMNS, ResultSource, SourceError
 from .targets import resolve
-from .writer import WorkbookWriter
+from .writer import CsvWriter, WorkbookWriter
 
 TOOL_VERSION = "0.1.0"
 PROGRESS_EVERY = 1000
@@ -43,6 +43,8 @@ def default_out_path(job: Job, model_file: str, now: datetime | None = None) -> 
         name = job.name_pattern.format(model=p.stem, stamp=now.strftime("%Y-%m-%d_%H%M"))
     except (KeyError, IndexError, ValueError) as exc:
         raise ValueError(f"name_pattern is malformed ({exc!r}); use {{model}} and {{stamp}}") from exc
+    if job.output_format == "csv" and name.lower().endswith(".xlsx"):
+        name = name[:-5]  # CSV output is a folder
     return str(Path(folder) / name)
 
 
@@ -74,7 +76,11 @@ def run_job(job: Job, source: ResultSource, out_path: str | None = None,
             out_path = default_out_path(job, model_file, started)
         try:
             # The writer checks the output is writable in __init__: fail fast, before extraction.
-            with WorkbookWriter(out_path) as writer:
+            if job.output_format == "csv":
+                writer_cm = CsvWriter(out_path, overwrite=job.overwrite, managed=TAB_BASE.values())
+            else:
+                writer_cm = WorkbookWriter(out_path)
+            with writer_cm as writer:
                 result = _run(job, source, writer, progress, cancel, t0, started, pre)
         except Exception as exc:
             if writer is not None and not getattr(exc, "workbook_path", None):

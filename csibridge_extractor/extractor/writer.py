@@ -1,6 +1,7 @@
 """Streaming XLSX writer: two header rows, continuation tabs, Run info as the first tab."""
 from __future__ import annotations
 
+import csv
 import logging
 import math
 import numbers
@@ -242,3 +243,116 @@ class WorkbookWriter:
             self.close()
         except Exception:
             _log.exception("could not finalise workbook after %s", exc_type.__name__)
+
+
+def csv_name(base: str) -> str:
+    return _BAD_CHARS.sub("-", base).replace("\u2013", "-").strip().rstrip(".") + ".csv"
+
+
+class CsvTableHandle:
+    """One CSV per table/mode: a single header row 'Name [unit]' (Power Query friendly), then data."""
+
+    def __init__(self, folder: Path, base: str, header: list, units: list):
+        self.non_finite_cells = 0
+        self.non_numeric_cells = 0
+        self._numeric_cols = None
+        name = csv_name(base)
+        self.tabs = [name]
+        self.rows_written = 0
+        self._fh = open(folder / name, "w", newline="", encoding="utf-8-sig")
+        self._w = csv.writer(self._fh)
+        u = list(units) + [""] * (len(header) - len(units))
+        self._w.writerow([f"{h} [{x}]" if x and x.lower() != "text" else str(h) for h, x in zip(header, u)])
+
+    def write(self, row: tuple) -> None:
+        if self._numeric_cols is None:
+            self._numeric_cols = {c for c, v in enumerate(row)
+                                  if isinstance(v, numbers.Real) and not isinstance(v, bool)}
+        out = []
+        for c, v in enumerate(row):
+            if isinstance(v, numbers.Real) and not isinstance(v, bool):
+                if not math.isfinite(v):
+                    self.non_finite_cells += 1
+            elif v is not None and c in self._numeric_cols:
+                self.non_numeric_cells += 1
+            out.append("" if v is None else v)
+        self._w.writerow(out)
+        self.rows_written += 1
+
+    def close(self) -> None:
+        if not self._fh.closed:
+            self._fh.close()
+
+
+class CsvWriter:
+    """Writes a folder: one CSV per table/mode plus 'Run info.csv'. Same interface as WorkbookWriter.
+
+    overwrite=True reuses the folder and replaces only the files named in ``managed`` (table bases)
+    and Run info; otherwise a non-empty folder is never touched and <name>_1, _2 ... is used.
+    """
+
+    def __init__(self, path, overwrite: bool = False, managed=()):
+        p = Path(os.path.abspath(str(path)))
+        if p.suffix.lower() in (".xlsx", ".csv"):
+            p = p.with_suffix("")
+        self.requested_path = str(p)
+        self.close_note = None
+        check_writable(p.with_name(p.name + ".check"))  # parent folder exists and is writable
+        if overwrite:
+            if p.exists() and not p.is_dir():
+                raise OutputLockedError(p, "a file with this name exists (expected a folder)")
+            p.mkdir(exist_ok=True)
+            own = [p / csv_name(b) for b in managed] + [p / f"{RUN_INFO_TAB}.csv"]
+            old = [f for f in own if f.exists()]
+            for f in old:  # all checked before any is deleted
+                check_writable(f)
+            for f in old:
+                f.unlink()
+            cand = p
+        else:
+            cand = p
+            i = 0
+            while cand.exists() and (not cand.is_dir() or any(cand.iterdir())):
+                i += 1
+                cand = p.with_name(f"{p.name}_{i}")
+            cand.mkdir(exist_ok=True)
+            if cand != p:
+                self.close_note = f"folder {p} already had files; wrote to {cand}"
+        self.path = str(cand)
+        self._folder = cand
+        self._handles: list = []
+        self._info_written = False
+
+    def open_table(self, tab_base: str, header: list, units: list) -> CsvTableHandle:
+        h = CsvTableHandle(self._folder, tab_base, header, units)
+        self._handles.append(h)
+        return h
+
+    def write_run_info(self, items: list) -> None:
+        if self._info_written:
+            raise RuntimeError("Run info already written")
+        self._info_written = True
+        with open(self._folder / f"{RUN_INFO_TAB}.csv", "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(["Item", "Value"])
+            for k, v in items:
+                w.writerow([str(k), str(v)])
+
+    def ensure_target(self):
+        return None
+
+    def close(self) -> None:
+        for h in self._handles:
+            h.close()
+
+    def __enter__(self) -> "CsvWriter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if exc_type is not None and not self._info_written:
+                self.write_run_info([("Status", f"INCOMPLETE: aborted ({exc_type.__name__}: {exc})")])
+        except Exception:
+            _log.exception("could not write Run info after %s", exc_type.__name__)
+        finally:
+            self.close()
