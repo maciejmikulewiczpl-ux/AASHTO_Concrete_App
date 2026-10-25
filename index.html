@@ -905,6 +905,35 @@ canvas { width: 100% !important; height: 100% !important; }
       <canvas id="serviceStrainCanvas" width="600" height="400" style="width:100%;border-radius:4px;background:#fff;"></canvas>
     </div></div>
   </div>
+  <div class="card" id="mphiCard" style="margin-top:14px">
+    <div class="card-header orange">Secant Stiffness from Moment&ndash;Curvature Analysis <small>(active demand row: M<sub>s</sub>, P<sub>s</sub>)</small></div>
+    <div class="card-body">
+      <div class="form-row" style="flex-wrap:wrap;gap:10px;align-items:center">
+        <label>Materials</label>
+        <select id="mphi_materials" class="wide" onchange="if(_mphiRes)runMphi()">
+          <option value="nominal" selected>Nominal &mdash; f&prime;c, E<sub>c</sub>, f<sub>y</sub>; tension to f<sub>r</sub>, zero after cracking</option>
+          <option value="expected">Expected &mdash; 1.3 f&prime;c, A706 expected steel, Mander confined core</option>
+        </select>
+        <label>Stiffness at</label>
+        <select id="mphi_point" onchange="if(_mphiRes)renderMphi(_mphiRes)">
+          <option value="service" selected>Service demand: M<sub>s</sub>/&phi;(M<sub>s</sub>)</option>
+          <option value="first_yield">First yield: M<sub>y</sub>/&phi;<sub>y</sub></option>
+          <option value="idealised">Idealised bilinear: M<sub>p</sub>/&phi;<sub>y</sub> (seismic style)</option>
+        </select>
+        <button class="calc-btn" onclick="runMphi()">&#9654; Run M&ndash;&phi;</button>
+        <span id="mphiStatus" style="font-size:0.85em;color:#666"></span>
+      </div>
+      <div class="grid grid-2" style="margin-top:10px">
+        <div id="mphiResults"><div style="color:#888;font-size:0.85em">Press <b>Run M&ndash;&phi;</b> to compute the moment&ndash;curvature curve for the active demand row. It then updates automatically on every Calculate.</div></div>
+        <div style="text-align:center"><canvas id="mphiCanvas" width="600" height="400" style="width:100%;border-radius:4px;background:#fff;"></canvas></div>
+      </div>
+      <div style="font-size:0.8em;color:#666;margin-top:6px">
+        Fibre-section moment&ndash;curvature analysis (a &ldquo;more comprehensive analysis&rdquo; than the tabulated I<sub>e</sub>, cf. AASHTO 5.6.3.5.2a wording; no AASHTO equation is used).
+        EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Concrete displaced by the bars is deducted; compression steel is included.
+        Expected materials use the column-on-shaft seismic models (Mander 1988; Caltrans SDC A706); rectangular/I confinement is approximate (k<sub>e</sub> = 0.75, mean lateral pressure). Not available for prestressed sections.
+      </div>
+    </div>
+  </div>
   <div id="ptServiceBlock" style="display:none">
     <div class="card" style="margin-top:14px"><div class="card-header orange">PT Service Stress &mdash; Per-Row Summary <small>(AASHTO LRFD 10th Ed., &sect;5.9.2.3)</small></div><div class="card-body" id="ptServiceSummary"><div style="color:#888;font-size:0.85em">Add demand rows in the Demands &amp; Results tab and pick a Load Case per row, then press Calculate.</div></div></div>
     <div class="grid grid-2" style="margin-top:14px">
@@ -4537,6 +4566,111 @@ function gatherInputs(){
     crack_mode, pt_flags, pt_profile, pt_loss_summary}, secType==='CIRCULAR'?circPayload(circParamsFromDOM()):{});
 }
 
+/* ─── Moment–curvature secant stiffness (Service Stress tab) ─── */
+let _mphiRes=null;
+function runMphi(){
+  const st=document.getElementById('mphiStatus');
+  if(!(window.pywebview&&window.pywebview.api&&window.pywebview.api.moment_curvature)){ st.textContent='Python bridge not ready.'; return; }
+  let inputs; try{ inputs=gatherInputs(); }catch(e){ st.textContent='Inputs: '+e.message; return; }
+  const demandRows=[];
+  for(let r=1;r<=demandRowCount;r++){ const d=getDemandRow(r); demandRows.push(d||{Ms:0,Ps:0}); }
+  const payload=JSON.stringify({inputs,demandRows,activeRow:Math.max(0,activeRow-1),
+    options:{materials:document.getElementById('mphi_materials').value}});
+  st.textContent='Running...';
+  window.pywebview.api.moment_curvature(payload).then(json=>{
+    let r; try{ r=JSON.parse(json); }catch(e){ st.textContent='Bad reply'; return; }
+    if(r.error){ st.textContent='Error: '+r.error; return; }
+    _mphiRes=r; st.textContent='';
+    try{ renderMphi(r); }catch(e){ console.error('renderMphi error:',e); st.textContent='Render error: '+e.message; }
+  });
+}
+function mphiSelected(r){
+  const k=document.getElementById('mphi_point').value;
+  return {key:k, pt:r[k]||null};
+}
+function renderMphi(r){
+  const box=document.getElementById('mphiResults');
+  if(!r.available){ box.innerHTML='<div style="color:#c0392b">'+r.reason+'</div>'; drawMphiChart(null); return; }
+  const fl=window._lastFlex||{}, Ig=r.Ig, Icr=fl.Icr, inf=r.info||{};
+  const sel=mphiSelected(r);
+  const pct=(I)=>F(I/Ig,3)+(Icr?' &middot; '+F(I/Icr,2)+'&times;I<sub>cr</sub>':'');
+  let o='';
+  o+=R('Direction',r.direction==='hogging'?'Hogging (bottom in compression)':'Sagging (top in compression)');
+  o+=R('M<sub>s</sub> (active row)',F(r.Ms,1),'kip-in');
+  o+=R('P<sub>s</sub> (active row, + tension)',F(r.Ps,1),'kip');
+  o+=R('f&prime;c used',F(inf.fc_used,2),'ksi');
+  o+=R('f<sub>y</sub> used',F(inf.fy_used,1),'ksi');
+  o+=R('E<sub>c</sub> used (for I<sub>eff</sub> = EI/E<sub>c</sub>)',F(r.Ec_used,0),'ksi');
+  if(inf.confined&&inf.fcc){ o+=R('Confined strength f&prime;cc',F(inf.fcc,2),'ksi'); o+=R('Ultimate confined strain &epsilon;<sub>cu</sub>',F(inf.eps_cu,4)); }
+  const block=(key,title,M,phi,EI,Ie)=>{
+    const on=sel.key===key;
+    let s=SH(title+(on?' &nbsp;<span style="color:#c0392b">&#9664; selected</span>':''));
+    s+=R('M',F(M,1),'kip-in');
+    s+=R('&phi;',(isFinite(phi)?phi.toExponential(4):'&mdash;'),'1/in');
+    s+=R('EI = M/&phi;',(isFinite(EI)?EI.toExponential(4):'&mdash;'),'kip-in&sup2;');
+    s+=R('I<sub>eff</sub> = EI/E<sub>c</sub>',F(Ie,0),'in&#8308;');
+    s+=R('I<sub>eff</sub> / I<sub>g</sub>',pct(Ie));
+    return on?'<div style="background:#fff6f0;border-left:3px solid #e67e22;padding-left:4px">'+s+'</div>':s;
+  };
+  if(r.service) o+=block('service','At service demand M<sub>s</sub>',r.service.M,r.service.phi,r.service.EI,r.service.Ieff);
+  else o+=SH('At service demand M<sub>s</sub>')+'<div style="color:#c0392b;font-size:0.85em">'+(r.service_error||'Not available (M<sub>s</sub> = 0).')+'</div>';
+  if(r.first_yield) o+=block('first_yield','At first yield',r.first_yield.M,r.first_yield.phi,r.first_yield.EI,r.first_yield.Ieff);
+  if(r.idealised) o+=block('idealised','Idealised bilinear (equal area)',r.idealised.Mp,r.idealised.phi_y,r.idealised.EI,r.idealised.Ieff);
+  o+=SH('Reference');
+  if(r.cracking) o+=R('M<sub>cr</sub> (M&ndash;&phi;, incl. P<sub>s</sub> and steel)',F(r.cracking.M,1),'kip-in');
+  o+=R('M<sub>ult</sub> ('+r.ultimate.failure+')',F(r.ultimate.M,1),'kip-in');
+  o+=R('I<sub>g</sub> (gross)',F(Ig,0),'in&#8308;');
+  if(Icr) o+=R('I<sub>cr</sub> (geometric, this tab)',F(Icr,0),'in&#8308;');
+  if(r.idealised&&r.first_yield) o+='<div style="font-size:0.8em;color:#666;margin:2px 4px">Equal-area bilinear passes through first yield, so M<sub>p</sub>/&phi;<sub>y</sub> = M<sub>y</sub>/&phi;<sub>y,first</sub>.</div>';
+  (r.notes||[]).forEach(n=>{ o+='<div style="font-size:0.85em;color:#b54708;margin:2px 4px">&#9888; '+n+'</div>'; });
+  box.innerHTML=o;
+  try{ convertRenderedOutputs(box); }catch(e){}
+  drawMphiChart(r);
+}
+function drawMphiChart(r){
+  const cv=document.getElementById('mphiCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  if(!r||!r.available||!r.curve) return;
+  const mU=v=>fromEngine(v,'moment');
+  const phi=r.curve.phi, M=r.curve.M.map(mU);
+  const m={l:70,r:16,t:20,b:46}, pW=W-m.l-m.r, pH=H-m.t-m.b;
+  const xMax=Math.max(...phi)*1.05||1, yMax=Math.max(...M,0)*1.1||1, yMin=Math.min(0,...M);
+  const tX=x=>m.l+x/xMax*pW, tY=y=>m.t+(yMax-y)/(yMax-yMin)*pH;
+  ctx.fillStyle='#fafbfc'; ctx.fillRect(m.l,m.t,pW,pH);
+  ctx.strokeStyle='#e8e8e8'; ctx.lineWidth=0.5; ctx.fillStyle='#666'; ctx.font='11px sans-serif';
+  for(let i=0;i<=5;i++){
+    const x=m.l+pW*i/5, y=m.t+pH*i/5;
+    ctx.beginPath();ctx.moveTo(x,m.t);ctx.lineTo(x,m.t+pH);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(m.l,y);ctx.lineTo(m.l+pW,y);ctx.stroke();
+    ctx.textAlign='center'; ctx.fillText((xMax*i/5).toExponential(1),x,m.t+pH+14);
+    ctx.textAlign='right'; ctx.fillText((yMax-(yMax-yMin)*i/5).toFixed(0),m.l-4,y+4);
+  }
+  ctx.textAlign='center'; ctx.fillText('Curvature \u03c6 (1/in)',m.l+pW/2,H-6);
+  ctx.save(); ctx.translate(14,m.t+pH/2); ctx.rotate(-Math.PI/2); ctx.fillText('M ('+unitLabel('moment')+')',0,0); ctx.restore();
+  ctx.strokeStyle='#2c3e50'; ctx.lineWidth=2; ctx.beginPath();
+  phi.forEach((p,i)=>{ i?ctx.lineTo(tX(p),tY(M[i])):ctx.moveTo(tX(p),tY(M[i])); }); ctx.stroke();
+  if(r.idealised){
+    const iy=r.idealised; ctx.strokeStyle='#27ae60'; ctx.lineWidth=1.2; ctx.setLineDash([6,4]); ctx.beginPath();
+    ctx.moveTo(tX(0),tY(0)); ctx.lineTo(tX(iy.phi_y),tY(mU(iy.Mp))); ctx.lineTo(tX(r.ultimate.phi),tY(mU(iy.Mp))); ctx.stroke(); ctx.setLineDash([]);
+  }
+  const sel=mphiSelected(r);
+  const pts=[['cracking','#7f8c8d','M_cr'],['service','#c0392b','M_s'],['first_yield','#e67e22','M_y']];
+  if(sel.pt){
+    const p=sel.key==='idealised'?{M:sel.pt.Mp,phi:sel.pt.phi_y}:sel.pt;
+    ctx.strokeStyle='#c0392b'; ctx.lineWidth=1; ctx.setLineDash([3,3]); ctx.beginPath();
+    ctx.moveTo(tX(0),tY(0)); const t=Math.min(1.6, xMax/p.phi, yMax/Math.max(mU(p.M),1e-9));
+    ctx.lineTo(tX(p.phi*t),tY(mU(p.M)*t)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  pts.forEach(([k,c,lbl])=>{
+    const p=r[k]; if(!p||!isFinite(p.phi)) return;
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(tX(p.phi),tY(mU(p.M)),4,0,2*Math.PI); ctx.fill();
+    ctx.textAlign='left'; ctx.fillText(lbl,tX(p.phi)+6,tY(mU(p.M))-6);
+  });
+  ctx.textAlign='left'; ctx.fillStyle='#27ae60'; if(r.idealised) ctx.fillText('-- idealised bilinear',m.l+8,m.t+14);
+  ctx.fillStyle='#c0392b'; ctx.fillText('-- secant (selected)',m.l+8,m.t+28);
+}
+
 function runAllCalculations(){
   document.getElementById('recalcBanner').style.display='none';
   document.getElementById('errorBanner').style.display='none';
@@ -4573,6 +4707,7 @@ function runAllCalculations(){
         try{ renderShear(res.shear, res.inputs, res.demands, res.flexure); }catch(e){ console.error('renderShear error:',e); }
         try{ renderTorsion(res.torsion, res.inputs, res.demands); }catch(e){ console.error('renderTorsion error:',e); }
         try{ renderPtServiceRows(res.row_results, res.inputs); }catch(e){ console.error('renderPtServiceRows error:',e); }
+        if(_mphiRes) runMphi();
         try{ updateFactorsDisplay(res); }catch(e){ console.error('updateFactorsDisplay error:',e); }
         // P-M chart
         pmChartData=res.flexure.pm_curve_sag; pmChartDataHog=res.flexure.pm_curve_hog; pmChartPu=res.demands.Pu; pmChartMu=res.demands.Mu; pmKeyPointsCache=res.flexure.pm_key_points||[];
@@ -7726,6 +7861,27 @@ function generateReport(){
     h2+=RR('I<sub>g</sub> (gross)',F(fl.Ig,1),'in&#8308;');
     h2+=RR('I<sub>eff</sub>',F(fl.Ieff,1),'in&#8308;');
     h2+=RR('I<sub>eff</sub> / I<sub>g</sub>',F(fl.Ieff/fl.Ig,4));
+    const mr=_mphiRes;
+    if(mr&&mr.available){
+      const mi=mr.info||{};
+      h2+=`<h3>13.4 Secant Stiffness from Moment&ndash;Curvature Analysis</h3>`;
+      h2+=`<div class="rpt-note">Fibre-section moment&ndash;curvature analysis for the active demand row (a more comprehensive analysis than the tabulated I<sub>e</sub>; no AASHTO equation is used). EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Materials: ${mr.materials==='expected'?'expected (1.3 f&prime;c, A706 expected steel, Mander confined core; rectangular/I confinement approximate)':'nominal (f&prime;c, E<sub>c</sub>, f<sub>y</sub>; concrete tension to f<sub>r</sub>, zero after cracking)'}. Direction: ${mr.direction}.</div>`;
+      h2+=RR('M<sub>s</sub> (active row)',F(mr.Ms,1),'kip-in');
+      h2+=RR('P<sub>s</sub> (active row, + tension)',F(mr.Ps,1),'kip');
+      h2+=RR('f&prime;c used',F(mi.fc_used,2),'ksi');
+      h2+=RR('f<sub>y</sub> used',F(mi.fy_used,1),'ksi');
+      h2+=RR('E<sub>c</sub> used',F(mr.Ec_used,0),'ksi');
+      h2+='<table class="rpt-table"><tr><th>Point</th><th>M (kip-in)</th><th>&phi; (1/in)</th><th>EI (kip-in&sup2;)</th><th>I<sub>eff</sub> (in&#8308;)</th><th>I<sub>eff</sub>/I<sub>g</sub></th></tr>';
+      [['service','Service demand M<sub>s</sub>','M','phi'],['first_yield','First yield','M','phi'],['idealised','Idealised bilinear','Mp','phi_y']].forEach(([k,lbl,mk,pk])=>{
+        const p=mr[k]; if(!p) return;
+        h2+=`<tr><td>${lbl}</td><td>${F(p[mk],1)}</td><td>${p[pk].toExponential(4)}</td><td>${p.EI.toExponential(4)}</td><td>${F(p.Ieff,0)}</td><td>${F(p.Ieff/mr.Ig,3)}</td></tr>`;
+      });
+      h2+='</table>';
+      if(mr.service_error) h2+=`<div class="rpt-note" style="color:#c0392b">${mr.service_error}</div>`;
+      if(mr.cracking) h2+=RR('M<sub>cr</sub> (M&ndash;&phi;)',F(mr.cracking.M,1),'kip-in');
+      h2+=RR('M<sub>ult</sub> ('+mr.ultimate.failure+')',F(mr.ultimate.M,1),'kip-in');
+      (mr.notes||[]).forEach(n=>{ h2+=`<div class="rpt-note">${n}</div>`; });
+    }
   }
 
   // ===================== 14. PT DESIGN — LOSSES & EFFECTIVE FORCE =====================

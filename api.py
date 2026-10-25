@@ -6,6 +6,7 @@ import json
 import os
 import webview
 import calc_engine
+import mphi_engine
 import pt_engine
 import csi_import
 import colshaft_demands
@@ -36,6 +37,22 @@ class Api:
             active_row = data.get("activeRow", 0)
             results = calc_engine.calculate_all(raw_inputs, demand_rows, active_row)
             return json.dumps(results)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def moment_curvature(self, payload_json):
+        """JS: pywebview.api.moment_curvature(JSON.stringify({inputs, demandRows, activeRow, options}))
+        options.materials: 'nominal' | 'expected'. Uses Ms / Ps of the active demand row."""
+        try:
+            data = json.loads(payload_json)
+            rows = data.get("demandRows") or [{}]
+            idx = int(data.get("activeRow", 0) or 0)
+            row = rows[idx] if 0 <= idx < len(rows) else rows[0]
+            opts = data.get("options") or {}
+            res = mphi_engine.moment_curvature_section(
+                data["inputs"], Ms=float(row.get("Ms") or 0), Ps=float(row.get("Ps") or 0),
+                materials=opts.get("materials", "nominal"))
+            return json.dumps(res)
         except Exception as e:
             return json.dumps({"error": str(e)})
 
