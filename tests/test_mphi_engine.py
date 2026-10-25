@@ -130,13 +130,42 @@ CSI_ROUND_8FT = [
 
 
 @pytest.mark.parametrize("P,phi_fy,M_fy,phi_yi,Mp,Mmax", CSI_ROUND_8FT)
-def test_circular_expected_matches_csibridge_section_designer(monkeypatch, P, phi_fy, M_fy, phi_yi, Mp, Mmax):
-    monkeypatch.setattr(me, "FYE_RATIO", 1.0)  # CSiBridge used fy = 60 ksi for A615 Gr60
-    monkeypatch.setattr(me, "FUE_RATIO", 1.5)
+def test_circular_expected_matches_csibridge_section_designer(P, phi_fy, M_fy, phi_yi, Mp, Mmax):
     inp = circ_inputs(D=96, cover=2.0, bar1=14, n1=40, bundle1=2, trans="hoop", shN=8, s=60, fc=4.0, fy=60)
-    r = me.moment_curvature_section(inp, Ms=1000.0, Ps=P, materials="expected")
+    r = me.moment_curvature_section(inp, Ms=1000.0, Ps=P, model="confined",
+                                    expected_concrete=True, expected_steel=False)
     assert r["first_yield"]["phi"] * 12 == pytest.approx(phi_fy, rel=0.02)
     assert r["first_yield"]["M"] / 12 == pytest.approx(M_fy, rel=0.03)
     assert r["idealised"]["phi_y"] * 12 == pytest.approx(phi_yi, rel=0.02)
     assert r["idealised"]["Mp"] / 12 == pytest.approx(Mp, rel=0.02)
     assert max(r["curve"]["M"]) / 12 == pytest.approx(Mmax, rel=0.02)
+
+
+def test_defaults_nominal_and_independent_expected_switches():
+    inp = circ_inputs()
+    d = me.moment_curvature_section(inp, Ms=2000.0)
+    assert d["model"] == "service" and not d["expected_concrete"] and not d["expected_steel"]
+    assert d["info"]["fc_used"] == inp["fc"] and d["info"]["fy_used"] == inp["fy"]
+    c = me.moment_curvature_section(inp, Ms=2000.0, model="confined")
+    assert c["info"]["fc_used"] == inp["fc"] and c["info"]["fy_used"] == inp["fy"]
+    ec = me.moment_curvature_section(inp, Ms=2000.0, model="confined", expected_concrete=True)
+    assert ec["info"]["fc_used"] == pytest.approx(1.3 * inp["fc"]) and ec["info"]["fy_used"] == inp["fy"]
+    es = me.moment_curvature_section(inp, Ms=2000.0, model="confined", expected_steel=True)
+    assert es["info"]["fc_used"] == inp["fc"] and es["info"]["fy_used"] == pytest.approx(68.0)
+    assert es["first_yield"]["M"] > c["first_yield"]["M"]
+    sv = me.moment_curvature_section(inp, Ms=2000.0, expected_concrete=True)
+    assert sv["Ec_used"] == pytest.approx(inp["Ec"] * 1.3 ** 0.5)
+    with pytest.raises(ValueError):
+        me.moment_curvature_section(inp, Ms=2000.0, model="x")
+
+
+def test_api_options_default_nominal():
+    import json
+    import api
+    rows = [demand(Ms=2000.0)]
+    r = json.loads(api.Api().moment_curvature(json.dumps({"inputs": circ_inputs(), "demandRows": rows,
+                                                          "options": {"model": "confined"}})))
+    assert r["model"] == "confined" and r["expected_concrete"] is False and r["expected_steel"] is False
+    r = json.loads(api.Api().moment_curvature(json.dumps({"inputs": circ_inputs(), "demandRows": rows,
+                                                          "options": {"model": "confined", "expected_steel": True}})))
+    assert r["expected_steel"] is True and r["info"]["fy_used"] == pytest.approx(68.0)

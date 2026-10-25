@@ -42,7 +42,8 @@ class Api:
 
     def moment_curvature(self, payload_json):
         """JS: pywebview.api.moment_curvature(JSON.stringify({inputs, demandRows, activeRow, options}))
-        options.materials: 'nominal' | 'expected'. Uses Ms / Ps of the active demand row."""
+        options: model 'service' | 'confined', expected_concrete, expected_steel (default nominal).
+        Uses Ms / Ps of the active demand row."""
         try:
             data = json.loads(payload_json)
             rows = data.get("demandRows") or [{}]
@@ -51,7 +52,10 @@ class Api:
             opts = data.get("options") or {}
             res = mphi_engine.moment_curvature_section(
                 data["inputs"], Ms=float(row.get("Ms") or 0), Ps=float(row.get("Ps") or 0),
-                materials=opts.get("materials", "nominal"))
+                model=opts.get("model", "service"),
+                expected_concrete=bool(opts.get("expected_concrete", False)),
+                expected_steel=bool(opts.get("expected_steel", False)),
+                materials=opts.get("materials"))
             return json.dumps(res)
         except Exception as e:
             return json.dumps({"error": str(e)})

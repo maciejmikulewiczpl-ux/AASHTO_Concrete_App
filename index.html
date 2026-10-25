@@ -909,11 +909,13 @@ canvas { width: 100% !important; height: 100% !important; }
     <div class="card-header orange">Secant Stiffness from Moment&ndash;Curvature Analysis <small>(active demand row: M<sub>s</sub>, P<sub>s</sub>)</small></div>
     <div class="card-body">
       <div class="form-row" style="flex-wrap:wrap;gap:10px;align-items:center">
-        <label>Materials</label>
+        <label>Concrete model</label>
         <select id="mphi_materials" class="wide" onchange="if(_mphiRes)runMphi()">
-          <option value="nominal" selected>Nominal &mdash; f&prime;c, E<sub>c</sub>, f<sub>y</sub>; tension to f<sub>r</sub>, zero after cracking</option>
-          <option value="expected">Expected &mdash; 1.3 f&prime;c, A706 expected steel, Mander confined core</option>
+          <option value="service" selected>Service &mdash; unconfined, tension to f<sub>r</sub>, zero after cracking</option>
+          <option value="confined">Seismic &mdash; Mander confined core, steel strain hardening, no tension</option>
         </select>
+        <label title="Default: nominal f'c"><input type="checkbox" id="mphi_exp_c" onchange="if(_mphiRes)runMphi()"> Expected concrete f&prime;<sub>ce</sub> = 1.3 f&prime;c</label>
+        <label title="Default: nominal fy"><input type="checkbox" id="mphi_exp_s" onchange="if(_mphiRes)runMphi()"> Expected steel (A706: f<sub>ye</sub> = 68/60&middot;f<sub>y</sub>, f<sub>ue</sub> = 95/60&middot;f<sub>y</sub>)</label>
         <label>Stiffness at</label>
         <select id="mphi_point" onchange="if(_mphiRes)renderMphi(_mphiRes)">
           <option value="service" selected>Service demand: M<sub>s</sub>/&phi;(M<sub>s</sub>)</option>
@@ -930,8 +932,40 @@ canvas { width: 100% !important; height: 100% !important; }
       <div style="font-size:0.8em;color:#666;margin-top:6px">
         Fibre-section moment&ndash;curvature analysis (a &ldquo;more comprehensive analysis&rdquo; than the tabulated I<sub>e</sub>, cf. AASHTO 5.6.3.5.2a wording; no AASHTO equation is used).
         EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Concrete displaced by the bars is deducted; compression steel is included.
-        Expected materials use the column-on-shaft seismic models (Mander 1988; Caltrans SDC A706); rectangular/I confinement is approximate (k<sub>e</sub> = 0.75, mean lateral pressure). Not available for prestressed sections.
+        Strengths are nominal unless the expected boxes are ticked. The seismic model uses the column-on-shaft models (Mander 1988; Caltrans SDC steel curve); rectangular/I confinement is approximate (k<sub>e</sub> = 0.75, mean lateral pressure). Not available for prestressed sections.
       </div>
+      <details id="mphiHelp" style="margin-top:8px;font-size:0.88em;line-height:1.45;border:1px solid #e0e0e0;border-radius:4px;padding:6px 10px;background:#fbfcfd">
+        <summary style="cursor:pointer;font-weight:600;color:#1f5fbf">&#9432; How is this calculated? (click to expand)</summary>
+        <div style="margin-top:6px">
+          <b>The idea:</b> bend the section a little at a time and, at each step, find the moment needed to hold that shape. Plotting curvature &phi; against moment M gives the curve.
+          <ol style="margin:6px 0 6px 18px;padding:0">
+            <li><b>Slice the section.</b> Concrete is cut into 160 thin horizontal strips (area + depth); in the seismic model each strip is split into cover and confined core. Each bar row is its own fibre; the concrete it displaces is removed.</li>
+            <li><b>Pick a curvature &phi;</b>, starting very small and increasing in ~140 steps until the concrete crushes or the steel reaches its strain limit.</li>
+            <li><b>Strains from curvature</b> (plane sections stay plane): &epsilon;(y) = &epsilon;<sub>0</sub> + &phi;&middot;(y<sub>c</sub> &minus; y). The slope &phi; is known; &epsilon;<sub>0</sub> (strain at the centroid) is not yet.</li>
+            <li><b>Stresses from strains</b> with each material&rsquo;s stress&ndash;strain curve: concrete parabola (service) or Mander confined/unconfined (seismic); concrete tension up to f<sub>r</sub> then zero after cracking (service only); steel elastic&ndash;plastic, with strain hardening in the seismic model. Fibre force = stress &times; area.</li>
+            <li><b>Balance the axial load:</b> &epsilon;<sub>0</sub> is adjusted (the strain line slides left/right) until &Sigma; fibre forces = P<sub>s</sub>. This is the only iterative step (a root finder, ~10&ndash;20 tries).</li>
+            <li><b>Moment:</b> M = &Sigma; force &times; distance from the centroid &rarr; one point (&phi;, M).</li>
+            <li><b>Repeat</b> with a larger &phi;. The curve shows: uncracked (slope &asymp; E<sub>c</sub>I<sub>g</sub>) &rarr; cracking at M<sub>cr</sub> (slope drops towards E<sub>c</sub>I<sub>cr</sub>) &rarr; first yield &rarr; plastic plateau &rarr; ultimate.</li>
+            <li><b>Secant stiffness:</b> EI = M/&phi; on a straight line from the origin to the chosen point (service M<sub>s</sub>, first yield, or the equal-area bilinear M<sub>p</sub>/&phi;<sub>y</sub>, which passes through first yield). I<sub>eff</sub> = EI/E<sub>c</sub>.</li>
+          </ol>
+          <b>Centroid vs. neutral axis</b>
+          <ul style="margin:4px 0 6px 18px;padding:0">
+            <li><b>Centroid y<sub>c</sub></b>: fixed, from geometry only (h/2 for a rectangle or circle; &Sigma;A<sub>i</sub>y<sub>i</sub>/&Sigma;A<sub>i</sub> of flanges and web for an I-section). It is only the point moments are taken about &mdash; strain is <i>not</i> assumed zero there.</li>
+            <li><b>Neutral axis</b> (zero strain): found at every step from equilibrium, y<sub>NA</sub> = y<sub>c</sub> + &epsilon;<sub>0</sub>/&phi;. It moves: near mid-depth while uncracked, jumps towards the compression face after cracking (tension concrete lost), and moves down under axial compression.</li>
+          </ul>
+          <b>Difference from the P&ndash;M (strain-compatibility) engine on the Flexure tab</b>
+          <table style="border-collapse:collapse;margin:4px 0;font-size:0.95em">
+            <tr style="border-bottom:1px solid #ccc"><th style="text-align:left;padding:2px 8px"></th><th style="text-align:left;padding:2px 8px">P&ndash;M engine</th><th style="text-align:left;padding:2px 8px">M&ndash;&phi; engine (this panel)</th></tr>
+            <tr><td style="padding:2px 8px">Purpose</td><td style="padding:2px 8px">Strength: M<sub>n</sub>, P<sub>n</sub> &rarr; &phi;M<sub>n</sub> (AASHTO 5.6)</td><td style="padding:2px 8px">Stiffness: EI, I<sub>eff</sub>, curvature</td></tr>
+            <tr><td style="padding:2px 8px">State</td><td style="padding:2px 8px">Ultimate only (concrete at &epsilon;<sub>cu</sub> = 0.003)</td><td style="padding:2px 8px">Every state, zero load to failure</td></tr>
+            <tr><td style="padding:2px 8px">Varied</td><td style="padding:2px 8px">Neutral-axis depth c &rarr; one (P<sub>n</sub>, M<sub>n</sub>) per c</td><td style="padding:2px 8px">Curvature &phi;; P<sub>s</sub> is fixed and &epsilon;<sub>0</sub> solved</td></tr>
+            <tr><td style="padding:2px 8px">Concrete</td><td style="padding:2px 8px">Rectangular stress block &alpha;<sub>1</sub>f&prime;c over &beta;<sub>1</sub>c, no tension</td><td style="padding:2px 8px">Full stress&ndash;strain curves, tension to f<sub>r</sub> (service), confinement (seismic)</td></tr>
+            <tr><td style="padding:2px 8px">Prestress</td><td style="padding:2px 8px">Included</td><td style="padding:2px 8px">Not available</td></tr>
+          </table>
+          Use the P&ndash;M engine for AASHTO strength checks and this panel for stiffness (analysis models, deflections, seismic EI<sub>eff</sub>).
+          With linear concrete and no tension this engine reproduces the I<sub>cr</sub> shown above (pinned by a test); with the service model and nominal strengths its peak moment matches M<sub>n</sub> from the P&ndash;M engine within about 1 %.
+        </div>
+      </details>
     </div>
   </div>
   <div id="ptServiceBlock" style="display:none">
@@ -4575,7 +4609,7 @@ function runMphi(){
   const demandRows=[];
   for(let r=1;r<=demandRowCount;r++){ const d=getDemandRow(r); demandRows.push(d||{Ms:0,Ps:0}); }
   const payload=JSON.stringify({inputs,demandRows,activeRow:Math.max(0,activeRow-1),
-    options:{materials:document.getElementById('mphi_materials').value}});
+    options:{model:document.getElementById('mphi_materials').value,expected_concrete:document.getElementById('mphi_exp_c').checked,expected_steel:document.getElementById('mphi_exp_s').checked}});
   st.textContent='Running...';
   window.pywebview.api.moment_curvature(payload).then(json=>{
     let r; try{ r=JSON.parse(json); }catch(e){ st.textContent='Bad reply'; return; }
@@ -7865,7 +7899,7 @@ function generateReport(){
     if(mr&&mr.available){
       const mi=mr.info||{};
       h2+=`<h3>13.4 Secant Stiffness from Moment&ndash;Curvature Analysis</h3>`;
-      h2+=`<div class="rpt-note">Fibre-section moment&ndash;curvature analysis for the active demand row (a more comprehensive analysis than the tabulated I<sub>e</sub>; no AASHTO equation is used). EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Materials: ${mr.materials==='expected'?'expected (1.3 f&prime;c, A706 expected steel, Mander confined core; rectangular/I confinement approximate)':'nominal (f&prime;c, E<sub>c</sub>, f<sub>y</sub>; concrete tension to f<sub>r</sub>, zero after cracking)'}. Direction: ${mr.direction}.</div>`;
+      h2+=`<div class="rpt-note">Fibre-section moment&ndash;curvature analysis for the active demand row (a more comprehensive analysis than the tabulated I<sub>e</sub>; no AASHTO equation is used). EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Concrete model: ${mr.model==='confined'?'Mander confined core, steel strain hardening, no concrete tension (rectangular/I confinement approximate)':'unconfined, concrete tension to f<sub>r</sub>, zero after cracking'}. Strengths: concrete ${mr.expected_concrete?'expected (1.3 f&prime;c)':'nominal'}, steel ${mr.expected_steel?'expected (A706, 68/60&middot;f<sub>y</sub>)':'nominal'}. Direction: ${mr.direction}.</div>`;
       h2+=RR('M<sub>s</sub> (active row)',F(mr.Ms,1),'kip-in');
       h2+=RR('P<sub>s</sub> (active row, + tension)',F(mr.Ps,1),'kip');
       h2+=RR('f&prime;c used',F(mi.fc_used,2),'ksi');

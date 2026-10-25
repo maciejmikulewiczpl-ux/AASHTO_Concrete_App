@@ -5,14 +5,15 @@ with the concrete displaced by each bar removed. Units kip, in, ksi. App sign co
 Ms > 0 sagging, Ps > 0 tension.
 
 This is a "more comprehensive analysis" alternative to the table/formula I_e (BDS-10 Art. 5.6.3.5.2a
-wording); no AASHTO equation is implemented here. Materials:
-  nominal  - f'c with the app's Ec; Hognestad parabola in compression (eps_cu 0.003); linear tension up
-             to fr = 0.24*lam*sqrt(f'c) (Art. 5.4.2.6), zero after cracking; steel elastic-perfectly
-             plastic at fy.
-  expected - f'ce = 1.3 f'c, A706 expected steel (Caltrans SDC model, seismic_port.materials), Mander
-             confined core + unconfined cover, no concrete tension (same models as the column-on-shaft
-             seismic module). Rectangular/I confinement uses ke = 0.75 and the mean of the two lateral
-             pressures (approximation, listed in OPEN_VERIFICATION_ITEMS MP1).
+wording); no AASHTO equation is implemented here. Concrete model:
+  service  - Hognestad parabola in compression (eps_cu 0.003) with the app's Ec; linear tension up to
+             fr = 0.24*lam*sqrt(f'c) (Art. 5.4.2.6), zero after cracking; steel elastic-perfectly plastic.
+  confined - Mander confined core + unconfined cover, no concrete tension, Caltrans SDC steel curve with
+             strain hardening (same models as the column-on-shaft seismic module, seismic_port.materials).
+             Rectangular/I confinement uses ke = 0.75 and the mean of the two lateral pressures
+             (approximation, OPEN_VERIFICATION_ITEMS MP1).
+Strengths are nominal by default; expected_concrete -> f'ce = 1.3 f'c, expected_steel -> A706 fye = 68/60 fy,
+fue = 95/60 fy (nominal fu = 1.5 fy).
 Prestressed sections are not supported.
 """
 from __future__ import annotations
@@ -28,6 +29,7 @@ N_KAPPA = 140
 CURVE_POINTS = 150
 FCE_FACTOR = 1.3
 FYE_RATIO, FUE_RATIO = 68.0 / 60.0, 95.0 / 60.0  # A706 Gr 60 expected 68 / 95 ksi, scaled for other fy
+FU_NOMINAL_RATIO = 1.5  # nominal fu/fy (A615 Gr 60: 90/60) for the strain-hardening curve
 NOMINAL_EPS_CU = 0.003
 NOMINAL_EPS_SU = 0.05  # curve end for elastic-perfectly plastic steel
 KE_RECT = 0.75
@@ -230,12 +232,15 @@ class _Model:
         return ea, M
 
 
-def _materials(I, materials, tension, linear):
+def _materials(I, model, exp_c, exp_s, tension, linear):
     fc, Es = I["fc"], I["Es"]
-    if materials == "expected":
-        fce = FCE_FACTOR * fc
-        fye, fue = FYE_RATIO * I["fy_long"], FUE_RATIO * I["fy_long"]
-        fyh = FYE_RATIO * I["fy_trans"]
+    fc_u = FCE_FACTOR * fc if exp_c else fc
+    fy_u = FYE_RATIO * I["fy_long"] if exp_s else I["fy_long"]
+    fu_u = (FUE_RATIO if exp_s else FU_NOMINAL_RATIO) * I["fy_long"]
+    fyh = FYE_RATIO * I["fy_trans"] if exp_s else I["fy_trans"]
+    base = {"fc_used": fc_u, "fy_used": fy_u, "expected_concrete": exp_c, "expected_steel": exp_s}
+    if model == "confined":
+        fce, fye, fue = fc_u, fy_u, fu_u
         cover_m = _NoTension(UnconfinedConcrete(fc=fce))
         s, tr_bar = I.get("s_shear", 0), int(I.get("shN") or 4)
         core_m = cover_m
@@ -263,18 +268,17 @@ def _materials(I, materials, tension, linear):
                                             fye=fye, fue=fue, Es=Es)
             return cache[n]
         Ec = concrete_modulus(fce)
-        info = {"fc_used": fce, "fy_used": fye, "fu_used": fue, "Ec_used": Ec,
-                "confined": core_m is not cover_m,
-                "fcc": getattr(getattr(core_m, "m", None), "fcc", None),
-                "eps_cu": getattr(core_m, "eps_cu", None)}
+        info = dict(base, fu_used=fue, Ec_used=Ec, confined=core_m is not cover_m,
+                    fcc=getattr(getattr(core_m, "m", None), "fcc", None),
+                    eps_cu=getattr(core_m, "eps_cu", None))
         return cover_m, core_m, steel, Ec, info
     lam = I.get("lam", 1.0)
-    fr = 0.24 * lam * math.sqrt(fc)
-    conc = NominalConcrete(fc, I["Ec"], fr, tension=tension, linear=linear)
-    st = NominalSteel(I["fy_long"], Es)
-    info = {"fc_used": fc, "fy_used": I["fy_long"], "Ec_used": I["Ec"], "fr": fr, "confined": False,
-            "eps_cu": NOMINAL_EPS_CU}
-    return conc, conc, (lambda n: st), I["Ec"], info
+    fr = 0.24 * lam * math.sqrt(fc_u)
+    Ec = I["Ec"] * math.sqrt(fc_u / fc)  # app Ec, scaled with sqrt(f'c) when expected
+    conc = NominalConcrete(fc_u, Ec, fr, tension=tension, linear=linear)
+    st = NominalSteel(fy_u, Es)
+    info = dict(base, Ec_used=Ec, fr=fr, confined=False, eps_cu=NOMINAL_EPS_CU)
+    return conc, conc, (lambda n: st), Ec, info
 
 
 def _mirror(strips, bars, h):
@@ -288,17 +292,27 @@ def _downsample(phi, M, n):
     return [phi[i] for i in idx], [M[i] for i in idx]
 
 
-def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, materials="nominal",
-                             tension=True, linear=False, n_strips=N_STRIPS, n_kappa=N_KAPPA):
-    """M-phi curve and secant stiffnesses. Returns a JSON-ready dict."""
+def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, model="service", expected_concrete=False,
+                             expected_steel=False, tension=True, linear=False, n_strips=N_STRIPS,
+                             n_kappa=N_KAPPA, materials=None):
+    """M-phi curve and secant stiffnesses. Returns a JSON-ready dict.
+
+    model: 'service' (unconfined, tension to fr) or 'confined' (Mander core, no tension).
+    materials: legacy alias - 'nominal' = service/nominal, 'expected' = confined with expected concrete+steel.
+    """
+    if materials is not None:
+        if materials not in ("nominal", "expected"):
+            raise ValueError(f"materials must be 'nominal' or 'expected', not {materials!r}")
+        if materials == "expected":
+            model, expected_concrete, expected_steel = "confined", True, True
+    if model not in ("service", "confined"):
+        raise ValueError(f"model must be 'service' or 'confined', not {model!r}")
     I = _prepare(raw_inputs)
     if I.get("hasPT"):
         return {"available": False,
                 "reason": "Moment-curvature stiffness is not available for prestressed sections."}
-    if materials not in ("nominal", "expected"):
-        raise ValueError(f"materials must be 'nominal' or 'expected', not {materials!r}")
     h = I["h"]
-    confined = materials == "expected"
+    confined = model == "confined"
     strips, bars = build_fibres(I, confined, n_strips)
     if not bars:
         return {"available": False, "reason": "No longitudinal reinforcement."}
@@ -307,7 +321,7 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, materials="nominal",
     if hog:
         strips, bars = _mirror(strips, bars, h)
         yref = h - yref
-    cover_m, core_m, steel_fn, Ec, info = _materials(I, materials, tension, linear)
+    cover_m, core_m, steel_fn, Ec, info = _materials(I, model, expected_concrete, expected_steel, tension, linear)
     mdl = _Model(strips, bars, yref, cover_m, core_m, steel_fn)
     P = -Ps  # compression positive
     notes = []
@@ -369,12 +383,13 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, materials="nominal",
         EI = m / k if k > 0 else None
         return {"M": m, "phi": k, "EI": EI, "Ieff": EI / Ec if EI else None}
 
-    out = {"available": True, "materials": materials, "direction": "hogging" if hog else "sagging",
+    out = {"available": True, "model": model, "expected_concrete": bool(expected_concrete),
+           "expected_steel": bool(expected_steel), "direction": "hogging" if hog else "sagging",
            "Ms": Ms, "Ps": Ps, "Ec_used": Ec, "Ig": I["Ig"], "M0": M[0], "info": info, "notes": notes,
            "ultimate": {"M": M_u, "phi": phi_u, "failure": failure}}
 
     # Cracking (nominal with tension): extreme tension concrete fibre reaches eps_cr
-    if materials == "nominal" and tension and info.get("fr"):
+    if not confined and tension and info.get("fr"):
         eps_cr = info["fr"] / Ec
 
         def crack_margin(k):
