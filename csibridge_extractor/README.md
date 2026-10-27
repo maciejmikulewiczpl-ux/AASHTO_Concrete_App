@@ -1,6 +1,6 @@
 # CSiBridge Results Extractor
 
-Pulls frame forces and joint reactions out of an analysed CSiBridge v27.1 model into an Excel workbook,
+Pulls frame forces, joint reactions and joint displacements out of an analysed CSiBridge v27.1 model into an Excel workbook,
 for chosen frames / joints / groups and load cases / combinations, as envelope, correspondence, or both.
 Self-contained: it shares no code with the concrete-section app. Units are whatever the model is in (written to the
 sheet's units row and to Run info).
@@ -34,7 +34,8 @@ With CSiBridge:
 - Speed: the results are filtered by the smallest existing CSiBridge group that contains all requested objects
   (~0.5 s). If only a whole-model group covers them, the whole table is read (seconds to minutes on big models):
   put the objects you extract often into a group in CSiBridge. The tool never edits the model.
-- Joint reactions: CSiBridge gives envelope (Max/Min) only; correspondence is not provided.
+- Joint reactions and joint displacements (U1-U3, R1-R3): CSiBridge gives envelope (Max/Min) only; correspondence is
+  not provided. Joints can come from typed labels or from groups (a group's joints feed both joint tables).
 
 ## CSV output (big extractions, Power Query)
 
@@ -62,7 +63,7 @@ Exit code 0 = complete, 2 = complete with warnings, 1 = failed or incomplete.
 ## Workbook layout
 
 One tab per table and mode: `Frame Forces – Envelope`, `Frame Forces – Corresp.`, `Joint Reactions – Envelope`,
-`Joint Reactions – Corresp.` (long tables continue on numbered tabs), each with a header row and a units row, then
+`Joint Reactions – Corresp.`, `Joint Displacements – Envelope` (long tables continue on numbered tabs), each with a header row and a units row, then
 data rows. The last tab, `Run info`, records status (COMPLETE / INCOMPLETE), model file and version, units, the job,
 resolved counts, cases extracted, rows per tab, timing, every warning and note. Check Run info before using the data.
 The frame tab can be copy-pasted into the concrete app's Column on Shaft paste box.

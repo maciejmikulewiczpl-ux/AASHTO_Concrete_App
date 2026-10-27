@@ -12,9 +12,10 @@ TABLE_COLUMNS = {
     "frame": ["Frame", "Station", "OutputCase", "CaseType", "StepType", "P", "V2", "V3", "T",
               "M2", "M3", "FrameElem", "ElemStation"],
     "joint": ["Joint", "OutputCase", "CaseType", "StepType", "F1", "F2", "F3", "M1", "M2", "M3"],
+    "disp": ["Joint", "OutputCase", "CaseType", "StepType", "U1", "U2", "U3", "R1", "R2", "R3"],
 }
 # index of the OutputCase column per table
-_CASE_COL = {"frame": 2, "joint": 1}
+_CASE_COL = {"frame": 2, "joint": 1, "disp": 1}
 MODES = ("envelope", "correspondence")
 
 

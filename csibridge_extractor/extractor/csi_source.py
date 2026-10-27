@@ -5,7 +5,8 @@ probe_out_joints/, probe_out_frames/): DatabaseTables.GetTableForDisplayArray. I
 (OutputCase, CaseType, StepType, CSiBridge rounding). The direct Results.FrameForce / JointReact route gave
 different joint maxima for joint 5073, so it is not used.
 Table output option "Combo": 1 = envelope (Max/Min), 3 = correspondence (Max P, Min M3, ...). Joint reactions return
-Max/Min for every Combo value, so joint correspondence is reported as not provided.
+Max/Min for every Combo value, so joint correspondence is reported as not provided. The same holds for Joint
+Displacements (checked 2026-10-26 on "Structure A_v2.0_v1_MM3", group "CONT - False (Pin)").
 Speed: ~0.5 s filtered by a group, 8-40+ s unfiltered (whole model), so the smallest existing group that contains
 every requested object is used as the filter. The model is never modified (no temporary groups: editing a locked,
 analysed model would delete its results).
@@ -20,10 +21,11 @@ from typing import Iterator
 from .source import MODES, TABLE_COLUMNS, CaseInfo, ModelInfo, SourceError
 from .targets import ModelLists
 
-TABLE_KEYS = {"frame": "Element Forces - Frames", "joint": "Joint Reactions"}
+TABLE_KEYS = {"frame": "Element Forces - Frames", "joint": "Joint Reactions", "disp": "Joint Displacements"}
 COMBO_OPTION = {"envelope": 1, "correspondence": 3}
 NUMERIC = {"frame": {"Station", "P", "V2", "V3", "T", "M2", "M3", "ElemStation"},
-           "joint": {"F1", "F2", "F3", "M1", "M2", "M3"}}
+           "joint": {"F1", "F2", "F3", "M1", "M2", "M3"},
+           "disp": {"U1", "U2", "U3", "R1", "R2", "R3"}}
 CASE_FINISHED = 4  # Analyze.GetCaseStatus value of an analysed case (probe: analysed cases = 4)
 COMBO_TYPES = {0: "Linear Add", 1: "Envelope", 2: "Absolute Add", 3: "SRSS", 4: "Range Add"}
 OBJ_POINT, OBJ_FRAME = 1, 2  # GroupDef.GetAssignments ObjectType (probe: joint 5073 -> 1, frame 5417 -> 2)
@@ -257,8 +259,9 @@ class CsiSource:
             raise SourceError(f"unknown table {table!r}")
         if mode not in MODES:
             raise SourceError(f"unknown mode {mode!r}")
-        if table == "joint" and mode == "correspondence":
-            raise SourceError("CSiBridge does not provide correspondence for joint reactions; use Envelope")
+        if table in ("joint", "disp") and mode == "correspondence":
+            what = "joint reactions" if table == "joint" else "joint displacements"
+            raise SourceError(f"CSiBridge does not provide correspondence for {what}; use Envelope")
         if not objects or not cases:
             return
         group = self._group_for(table, objects)

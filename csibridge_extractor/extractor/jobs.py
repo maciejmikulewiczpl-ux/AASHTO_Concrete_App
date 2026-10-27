@@ -7,13 +7,14 @@ from pathlib import Path
 
 from .source import MODES
 
-TABLE_KEYS = ("frame", "joint")
+TABLE_KEYS = ("frame", "joint", "disp")
 OUTPUT_FORMATS = ("xlsx", "csv")
 
 
 def _default_tables() -> dict:
     return {"frame": {"enabled": True, "modes": ["envelope"]},
-            "joint": {"enabled": False, "modes": ["envelope"]}}
+            "joint": {"enabled": False, "modes": ["envelope"]},
+            "disp": {"enabled": False, "modes": ["envelope"]}}
 
 
 @dataclass

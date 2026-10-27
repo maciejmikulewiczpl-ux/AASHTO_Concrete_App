@@ -174,3 +174,31 @@ def test_whole_table_read_one_case_at_a_time():
     api2 = FakeApi()
     list(CsiSource(api=api2).iter_rows("frame", "envelope", ["X Str-I1", "DC"], ["5417"]))
     assert len([c for c in api2.calls if c[0] == "table"]) == 1  # small group: one call
+
+
+def test_joint_displacements_table_and_envelope_only():
+    disp_fields = ["Joint", "OutputCase", "CaseType", "StepType", "U1", "U2", "U3", "R1", "R2", "R3"]
+    row = ["5073", "X Str-I1", "Combination", "Max", "0.184676", "0.103956", "0.032669", "0.008583", "0.010739",
+           "0.005613"]
+
+    class DispApi(FakeApi):
+        def table_units(self, key):
+            if key == "Joint Displacements":
+                return dict(zip(disp_fields, ["", "", "", "", "ft", "ft", "ft", "Radians", "Radians", "Radians"]))
+            return super().table_units(key)
+
+        def table(self, key, group):
+            if key == "Joint Displacements":
+                self.calls.append(("table", key, group, dict(self.opts)["Combo"], self.sel))
+                return disp_fields, list(row)
+            return super().table(key, group)
+
+    api = DispApi()
+    src = CsiSource(api=api)
+    rows = list(src.iter_rows("disp", "envelope", ["X Str-I1"], ["5073"]))
+    assert rows == [("5073", "X Str-I1", "Combination", "Max", 0.184676, 0.103956, 0.032669, 0.008583, 0.010739,
+                     0.005613)]
+    assert [c for c in api.calls if c[0] == "table"][0][2] == "PIER"  # smallest group with joint 5073
+    assert src.units_row("disp")[4:] == ["ft", "ft", "ft", "Radians", "Radians", "Radians"]
+    with pytest.raises(SourceError, match="joint displacements"):
+        list(src.iter_rows("disp", "correspondence", ["X Str-I1"], ["5073"]))

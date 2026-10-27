@@ -375,3 +375,29 @@ def test_overwrite_requires_fixed_name():
     from csibridge_extractor.extractor.jobs import validate
     assert any("{stamp}" in e for e in validate(_job(overwrite=True)))
     assert not validate(_job(overwrite=True, name_pattern="{model}_results.xlsx"))
+
+
+def test_joint_displacements_from_group(tmp_path):
+    job = _job(frames="", joints="", groups=["GirderA", "Piers"],
+               tables={"frame": {"enabled": False, "modes": ["envelope"]},
+                       "joint": {"enabled": False, "modes": ["envelope"]},
+                       "disp": {"enabled": True, "modes": ["envelope"]}})
+    res = run_job(job, FakeSource(FIX), str(tmp_path / "d.xlsx"))
+    tab = f"Joint Displacements {EN} Envelope"
+    assert res.complete and res.tabs == [tab]
+    assert res.rows[tab] == _fixture_count("disp", "envelope", {"Str-I1", "Str-I2"}, {"10", "11", "12"})
+    ws = openpyxl.load_workbook(res.path)[tab]
+    rows = list(ws.iter_rows(values_only=True))
+    assert list(rows[0]) == ["Joint", "OutputCase", "CaseType", "StepType", "U1", "U2", "U3", "R1", "R2", "R3"]
+    assert list(rows[1])[4:] == ["ft", "ft", "ft", "Radians", "Radians", "Radians"]
+
+
+def test_joint_displacements_csv(tmp_path):
+    job = _job(output_format="csv", tables={"frame": {"enabled": False, "modes": ["envelope"]},
+                                            "joint": {"enabled": False, "modes": ["envelope"]},
+                                            "disp": {"enabled": True, "modes": ["envelope"]}})
+    res = run_job(job, FakeSource(FIX), str(tmp_path / "o"))
+    names = sorted(p.name for p in Path(res.path).iterdir())
+    assert names == ["Joint Displacements - Envelope.csv", "Run info.csv"]
+    head = (Path(res.path) / "Joint Displacements - Envelope.csv").read_text(encoding="utf-8-sig").splitlines()[0]
+    assert head == "Joint,OutputCase,CaseType,StepType,U1 [ft],U2 [ft],U3 [ft],R1 [Radians],R2 [Radians],R3 [Radians]"

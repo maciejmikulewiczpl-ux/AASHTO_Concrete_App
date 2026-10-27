@@ -9,8 +9,18 @@ from csibridge_extractor.extractor.jobs import Job
 def full_job():
     return Job(frames="1301-1310", joints="10", groups=["G1"], cases=["DEAD", "STR-I"],
                tables={"frame": {"enabled": True, "modes": ["envelope", "correspondence"]},
-                       "joint": {"enabled": True, "modes": ["envelope"]}},
+                       "joint": {"enabled": True, "modes": ["envelope"]},
+                       "disp": {"enabled": True, "modes": ["envelope"]}},
                output_dir="C:/out", open_when_done=False)
+
+
+def test_old_job_without_disp_loads_with_disp_off(tmp_path):
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"frames": "1", "cases": ["A"],
+                             "tables": {"frame": {"enabled": True, "modes": ["envelope"]},
+                                        "joint": {"enabled": True, "modes": ["envelope"]}}}), encoding="utf-8")
+    j = jobs.load_job(p)
+    assert j.tables["disp"] == {"enabled": False, "modes": ["envelope"]} and j.warnings == []
 
 
 def test_roundtrip(tmp_path):

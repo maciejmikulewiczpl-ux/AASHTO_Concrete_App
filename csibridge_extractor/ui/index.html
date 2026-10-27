@@ -46,9 +46,9 @@
     <ol>
       <li>In CSiBridge: open the model, run the analysis, and <b>close every dialog</b> (CSiBridge does not answer while a dialog is open).</li>
       <li><b>Connection:</b> pick the model in the list (Refresh if you just opened it) and click Connect.</li>
-      <li><b>Targets:</b> pick one or more groups, and/or type frame / joint labels or ranges (e.g. 1201-1210). A group alone is enough: its frames go to Frame forces, its joints to Joint reactions.</li>
+      <li><b>Targets:</b> pick one or more groups, and/or type frame / joint labels or ranges (e.g. 1201-1210). A group alone is enough: its frames go to Frame forces, its joints to Joint reactions and Joint displacements.</li>
       <li><b>Cases:</b> tick the load cases / combinations. Greyed ones have no results (not analysed).</li>
-      <li><b>Tables:</b> choose Envelope, Correspondence or Both. Joint reactions are off by default; CSiBridge gives them as envelope only.</li>
+      <li><b>Tables:</b> choose Envelope, Correspondence or Both. Joint reactions and joint displacements (U1-U3, R1-R3) are off by default; CSiBridge gives both as envelope only.</li>
       <li><b>Output:</b> leave the folder empty to save next to the model file. Choose Excel, or CSV for big extractions (much faster; one file per table, ready for Power Query: Data &gt; Get Data &gt; From Folder). Then click <b>Run</b>.</li>
     </ol>
     <ul class="mute">
@@ -108,6 +108,11 @@
       <td><label><input type="radio" name="joint" value="correspondence"> </label></td>
       <td><label><input type="radio" name="joint" value="both"> </label></td>
       <td><label><input type="radio" name="joint" value="off" checked> off</label></td></tr>
+    <tr><td>Joint displacements <span class="mute">(U1-U3, R1-R3)</span></td>
+      <td><label><input type="radio" name="disp" value="envelope"> </label></td>
+      <td><label title="CSiBridge gives joint displacements as envelope (Max/Min) only"><input type="radio" name="disp" value="correspondence" disabled> <span class="mute">n/a</span></label></td>
+      <td><label title="CSiBridge gives joint displacements as envelope (Max/Min) only"><input type="radio" name="disp" value="both" disabled> <span class="mute">n/a</span></label></td>
+      <td><label><input type="radio" name="disp" value="off" checked> off</label></td></tr>
   </table>
 </section>
 
@@ -216,7 +221,7 @@
       version: 1,
       frames: $("frames").value, joints: $("joints").value, groups: state.groups.slice(),
       cases: tickedNames(),
-      tables: { frame: modes("frame"), joint: modes("joint") },
+      tables: { frame: modes("frame"), joint: modes("joint"), disp: modes("disp") },
       output_dir: $("out-dir").value.trim() || null,
       name_pattern: $("out-pattern").value || "{model}_results_{stamp}.xlsx",
       open_when_done: $("open-done").checked,
@@ -231,7 +236,7 @@
     if (state.connected) warnUnknown();
     state.ticked = {};
     (j.cases || []).forEach(function (c) { state.ticked[c] = true; });
-    setModes("frame", (j.tables || {}).frame); setModes("joint", (j.tables || {}).joint);
+    setModes("frame", (j.tables || {}).frame); setModes("joint", (j.tables || {}).joint); setModes("disp", (j.tables || {}).disp);
     $("out-dir").value = j.output_dir || "";
     $("out-pattern").value = j.name_pattern || "{model}_results_{stamp}.xlsx";
     $("open-done").checked = j.open_when_done !== false;

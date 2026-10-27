@@ -21,6 +21,8 @@ TAB_BASE = {
     ("frame", "correspondence"): "Frame Forces – Corresp.",
     ("joint", "envelope"): "Joint Reactions – Envelope",
     ("joint", "correspondence"): "Joint Reactions – Corresp.",
+    ("disp", "envelope"): "Joint Displacements – Envelope",
+    ("disp", "correspondence"): "Joint Displ. – Corresp.",
 }
 
 
