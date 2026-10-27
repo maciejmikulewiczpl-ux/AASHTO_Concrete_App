@@ -4,9 +4,9 @@ Route decision (probe 2026-10-23 on "Structure A_v2.1", CSiBridge 27.1.0; probe_
 probe_out_joints/, probe_out_frames/): DatabaseTables.GetTableForDisplayArray. It returns the Show Tables rows
 (OutputCase, CaseType, StepType, CSiBridge rounding). The direct Results.FrameForce / JointReact route gave
 different joint maxima for joint 5073, so it is not used.
-Table output option "Combo": 1 = envelope (Max/Min), 3 = correspondence (Max P, Min M3, ...). Joint reactions return
-Max/Min for every Combo value, so joint correspondence is reported as not provided. The same holds for Joint
-Displacements (checked 2026-10-26 on "Structure A_v2.0_v1_MM3", group "CONT - False (Pin)").
+Table output option "Combo": 1 = envelope (Max/Min), 3 = correspondence (Max P, Min M3, ...). On "Structure A_v2.1"
+joint reactions came back as Max/Min for every Combo value, but other models return joint reaction and displacement
+correspondence (user, 2026-10-27), so it is requested and a note is added when only Max/Min rows come back.
 Speed: ~0.5 s filtered by a group, 8-40+ s unfiltered (whole model), so the smallest existing group that contains
 every requested object is used as the filter. The model is never modified (no temporary groups: editing a locked,
 analysed model would delete its results).
@@ -259,9 +259,6 @@ class CsiSource:
             raise SourceError(f"unknown table {table!r}")
         if mode not in MODES:
             raise SourceError(f"unknown mode {mode!r}")
-        if table in ("joint", "disp") and mode == "correspondence":
-            what = "joint reactions" if table == "joint" else "joint displacements"
-            raise SourceError(f"CSiBridge does not provide correspondence for {what}; use Envelope")
         if not objects or not cases:
             return
         group = self._group_for(table, objects)
@@ -277,10 +274,19 @@ class CsiSource:
         kinds = {c.name: c.kind for c in self.list_cases()}
         # Whole-model reads go one case at a time so CSiBridge never builds the full table at once.
         chunks = [[c] for c in cases] if whole else [list(cases)]
+        env_only = set()
         for chunk in chunks:
-            yield from self._rows(table, objects, *self._fetch(
-                table, mode, [c for c in chunk if kinds.get(c) == "case"],
-                [c for c in chunk if kinds.get(c) == "combo"], group))
+            for row in self._rows(table, objects, *self._fetch(
+                    table, mode, [c for c in chunk if kinds.get(c) == "case"],
+                    [c for c in chunk if kinds.get(c) == "combo"], group)):
+                if mode == "correspondence" and table != "frame" and row[3] in ("Max", "Min"):
+                    env_only.add(row[1])
+                yield row
+        if env_only:
+            what = "joint reactions" if table == "joint" else "joint displacements"
+            self._notes.append(f"{what}, Correspondence: CSiBridge returned envelope (Max/Min) rows for "
+                               + ", ".join(sorted(env_only)) + "; those rows are envelope values, not "
+                               "corresponding sets.")
 
     def _rows(self, table, objects, fields, data):
         w = len(fields)

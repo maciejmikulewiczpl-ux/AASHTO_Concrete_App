@@ -34,8 +34,9 @@ With CSiBridge:
 - Speed: the results are filtered by the smallest existing CSiBridge group that contains all requested objects
   (~0.5 s). If only a whole-model group covers them, the whole table is read (seconds to minutes on big models):
   put the objects you extract often into a group in CSiBridge. The tool never edits the model.
-- Joint reactions and joint displacements (U1-U3, R1-R3): CSiBridge gives envelope (Max/Min) only; correspondence is
-  not provided. Joints can come from typed labels or from groups (a group's joints feed both joint tables).
+- Joint reactions and joint displacements (U1-U3, R1-R3): correspondence is requested from CSiBridge like frame
+  forces; if CSiBridge returns only Max/Min rows for a case, the Run info tab says so.
+  Joints can come from typed labels or from groups (a group's joints feed both joint tables).
 
 ## CSV output (big extractions, Power Query)
 

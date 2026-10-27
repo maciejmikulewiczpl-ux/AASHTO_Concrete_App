@@ -19,12 +19,14 @@ FRAME_COR = [
 JOINT_FIELDS = ["Joint", "OutputCase", "CaseType", "StepType", "F1", "F2", "F3", "M1", "M2", "M3"]
 JOINT_ENV = [["5073", "X Str-I1", "Combination", "Max", "4179.662", "126.709", "784.955", "13564.462",
               "65587.262", "304294.961"]]
+JOINT_COR = [["5073", "X Str-I1", "Combination", "Max F3", "1964.521", "126.709", "784.955", "13564.462",
+              "64433.784", "200766.481"]]
 OPTS = [("BaseReactionGX", 0.0), ("IsAllModes", True), ("Combo", 1), ("BridgeDesign", 1)]
 
 
 class FakeApi:
-    def __init__(self, version="27.1.0", file="C:/m/Structure A_v2.1.bdb", fail_table=False):
-        self.v, self.f, self.fail_table = version, file, fail_table
+    def __init__(self, version="27.1.0", file="C:/m/Structure A_v2.1.bdb", fail_table=False, joint_cor=True):
+        self.v, self.f, self.fail_table, self.joint_cor = version, file, fail_table, joint_cor
         self.opts = list(OPTS)
         self.sel = (["DC"], ["X Str-I1", "Str-V1"])
         self.calls = []
@@ -65,7 +67,8 @@ class FakeApi:
         if self.fail_table:
             raise RuntimeError("GetTableForDisplayArray returned 1")
         if key == "Joint Reactions":
-            return JOINT_FIELDS, [x for r in JOINT_ENV for x in r]
+            rows = JOINT_COR if combo == 3 and self.joint_cor else JOINT_ENV
+            return JOINT_FIELDS, [x for r in rows for x in r]
         rows = FRAME_ENV if combo == 1 else FRAME_COR
         return FRAME_FIELDS, [x for r in rows for x in r]
 
@@ -108,11 +111,21 @@ def test_whole_table_read_noted():
     assert any("whole" in n for n in src.notes())
 
 
-def test_joint_correspondence_not_provided():
-    src = CsiSource(api=FakeApi())
-    with pytest.raises(SourceError, match="correspondence"):
-        list(src.iter_rows("joint", "correspondence", ["X Str-I1"], ["5073"]))
+def test_joint_correspondence_requested():
+    api = FakeApi()
+    src = CsiSource(api=api)
+    rows = list(src.iter_rows("joint", "correspondence", ["X Str-I1"], ["5073"]))
+    assert rows[0][3] == "Max F3" and rows[0][4] == 1964.521
+    assert [c for c in api.calls if c[0] == "table"][0][3] == 3
+    assert not any("Max/Min" in n for n in src.notes())
     assert list(src.iter_rows("joint", "envelope", ["X Str-I1"], ["5073"]))[0][4] == 4179.662
+
+
+def test_joint_correspondence_envelope_fallback_noted():
+    src = CsiSource(api=FakeApi(joint_cor=False))
+    rows = list(src.iter_rows("joint", "correspondence", ["X Str-I1"], ["5073"]))
+    assert rows[0][3] == "Max"
+    assert any("Max/Min" in n and "X Str-I1" in n for n in src.notes())
 
 
 def test_has_results_cases_and_nested_combos():
@@ -176,10 +189,11 @@ def test_whole_table_read_one_case_at_a_time():
     assert len([c for c in api2.calls if c[0] == "table"]) == 1  # small group: one call
 
 
-def test_joint_displacements_table_and_envelope_only():
+def test_joint_displacements_table_and_correspondence():
     disp_fields = ["Joint", "OutputCase", "CaseType", "StepType", "U1", "U2", "U3", "R1", "R2", "R3"]
     row = ["5073", "X Str-I1", "Combination", "Max", "0.184676", "0.103956", "0.032669", "0.008583", "0.010739",
            "0.005613"]
+    cor = ["5073", "X Str-I1", "Combination", "Max U3", "0.1", "0.2", "0.032669", "0.001", "0.002", "0.003"]
 
     class DispApi(FakeApi):
         def table_units(self, key):
@@ -189,8 +203,9 @@ def test_joint_displacements_table_and_envelope_only():
 
         def table(self, key, group):
             if key == "Joint Displacements":
-                self.calls.append(("table", key, group, dict(self.opts)["Combo"], self.sel))
-                return disp_fields, list(row)
+                combo = dict(self.opts)["Combo"]
+                self.calls.append(("table", key, group, combo, self.sel))
+                return disp_fields, list(cor if combo == 3 and self.joint_cor else row)
             return super().table(key, group)
 
     api = DispApi()
@@ -200,5 +215,9 @@ def test_joint_displacements_table_and_envelope_only():
                      0.005613)]
     assert [c for c in api.calls if c[0] == "table"][0][2] == "PIER"  # smallest group with joint 5073
     assert src.units_row("disp")[4:] == ["ft", "ft", "ft", "Radians", "Radians", "Radians"]
-    with pytest.raises(SourceError, match="joint displacements"):
-        list(src.iter_rows("disp", "correspondence", ["X Str-I1"], ["5073"]))
+    rows = list(src.iter_rows("disp", "correspondence", ["X Str-I1"], ["5073"]))
+    assert rows[0][3] == "Max U3" and [c for c in api.calls if c[0] == "table"][-1][3] == 3
+    assert not any("Max/Min" in n for n in src.notes())
+    src2 = CsiSource(api=DispApi(joint_cor=False))
+    assert list(src2.iter_rows("disp", "correspondence", ["X Str-I1"], ["5073"]))[0][3] == "Max"
+    assert any(n.startswith("joint displacements") and "Max/Min" in n for n in src2.notes())
