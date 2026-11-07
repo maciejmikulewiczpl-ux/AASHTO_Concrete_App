@@ -88,6 +88,39 @@ class FakeSource:
             if row[ci] in case_set and row[0] in obj_set:
                 yield tuple(row)
 
+    # In-memory stand-ins for the CSiBridge group calls (extractor/groups.py); nothing is written to disk.
+    def group_names(self) -> list[str]:
+        return list(self._d["lists"]["groups"])
+
+    def joint_names(self) -> list[str]:
+        return list(self._d["lists"]["joints"])
+
+    def group_items(self, name) -> list[tuple]:
+        g = self._d["lists"]["groups"][name]
+        return [(2, f) for f in g["frames"]] + [(1, j) for j in g["joints"]]
+
+    def model_locked(self) -> bool:
+        return bool(self._d["model"]["analysed"])
+
+    def case_status(self) -> dict:
+        return {c["name"]: 4 if c["has_results"] else 1 for c in self._d["cases"]}
+
+    def create_group(self, name) -> None:
+        self._d["lists"]["groups"][name] = {"frames": [], "joints": []}
+
+    def assign_joint(self, joint, group) -> None:
+        self._d["lists"]["groups"][group]["joints"].append(joint)
+
+    def unassign_joint(self, joint, group) -> None:
+        self._d["lists"]["groups"][group]["joints"].remove(joint)
+
+    def delete_group(self, name) -> None:
+        del self._d["lists"]["groups"][name]
+
+    def edit_joint_group(self, action: str, name: str, joints: list[str]):
+        from .groups import edit_joint_group
+        return edit_joint_group(self, action, name, joints)
+
     def notes(self) -> list[str]:
         return list(self._d.get("notes", []))
 

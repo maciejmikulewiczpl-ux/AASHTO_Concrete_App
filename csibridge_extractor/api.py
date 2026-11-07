@@ -13,6 +13,7 @@ import threading
 from dataclasses import asdict
 from pathlib import Path
 
+from csibridge_extractor.extractor.groups import GroupError, joint_range, plan
 from csibridge_extractor.extractor.jobs import Job, load_job, save_job, validate
 from csibridge_extractor.extractor.runner import default_out_path, run_job
 from csibridge_extractor.extractor.source import FakeSource
@@ -52,6 +53,7 @@ class Api:
     def __init__(self, fake: str | None = None, source_factory=None, window=None, pid: int | None = None):
         self._window = window
         self._fake = fake
+        self._fake_src = None
         self._pid = pid
         self._factory = source_factory
         self._lists = None
@@ -83,7 +85,9 @@ class Api:
         if self._factory:
             return self._factory()
         if self._fake:
-            return FakeSource(self._fake)
+            if self._fake_src is None:  # one instance, so group edits persist for the session
+                self._fake_src = FakeSource(self._fake)
+            return self._fake_src
         from csibridge_extractor.extractor.csi_source import CsiSource
         return CsiSource(pid=self._pid)
 
@@ -134,6 +138,65 @@ class Api:
             out = asdict(r)
             out["counts"] = {"frames": len(r.frames), "joints": len(r.joints)}
             return _dump(out)
+        except Exception as exc:
+            return _err(_fmt(exc))
+
+    @staticmethod
+    def _range(action, start, end, step) -> list:
+        blank = [str(x if x is not None else "").strip() == "" for x in (start, end)]
+        if action == "create" and all(blank):
+            return []
+        return joint_range(start, end, step if str(step if step is not None else "").strip() else 1)
+
+    def preview_group(self, action, name, start, end, step) -> str:
+        """What edit_group would do, from the lists read at Connect (the model is not touched)."""
+        try:
+            if self._lists is None:
+                return _err("not connected: click Connect first")
+            labels = self._range(action, start, end, step)
+            name = (name or "").strip()
+            g = next((x for x in self._lists.groups if x.casefold() == name.casefold()), None) if name else None
+            if action == "create":
+                if g is not None:
+                    return _err(f"group '{g}' already exists")
+                current = set()
+            else:
+                if not name:
+                    return _err("pick the group to edit")
+                if g is None:
+                    return _err(f"group '{name}' does not exist")
+                if g.casefold() == "all" or self._lists.groups[g][0]:
+                    return _err(f"group '{g}' is not joint-only: it cannot be edited by this tool")
+                current = set(self._lists.groups[g][1])
+            out = asdict(plan(action, current, labels, self._lists.joints))
+            out["name"] = g or name
+            if any(not j.strip() for j in current):
+                out["notes"] = ["CSiBridge reports members of this group without a name; they will be left as they are"]
+            return _dump(out)
+        except GroupError as exc:
+            return _err(exc)
+        except Exception as exc:
+            return _err(_fmt(exc))
+
+    def edit_group(self, action, name, start, end, step) -> str:
+        try:
+            if self._lists is None:
+                return _err("not connected: click Connect first")
+            if self._thread is not None and self._thread.is_alive():
+                return _err("a run is in progress: wait for it to finish or cancel it")
+            labels = self._range(action, start, end, step)
+            src = self._new_source()
+            try:
+                res = src.edit_joint_group(action, name, labels)
+            finally:
+                src.close()
+            frames = self._lists.groups.get(res.name, (set(), set()))[0]
+            self._lists.groups[res.name] = (frames, set(res.joints))
+            out = asdict(res)
+            out["groups"] = sorted(self._lists.groups)
+            return _dump(out)
+        except RuntimeError as exc:
+            return _err(exc)
         except Exception as exc:
             return _err(_fmt(exc))
 

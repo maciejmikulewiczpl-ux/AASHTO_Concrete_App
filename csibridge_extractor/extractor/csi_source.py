@@ -167,6 +167,22 @@ class _NetApi:
         r = self._c("DatabaseTables", "GetTableForDisplayArray", key, [], group)
         return [str(x) for x in _l(r.get("FieldsKeysIncluded"))], [x for x in _l(r.get("TableData"))]
 
+    # -- the only model edits (extractor/groups.py) -------------------------------------------
+    def model_locked(self) -> bool:
+        return bool(self._net.call(self._m, "SapModel", "GetModelIsLocked")["__ret__"])
+
+    def create_group(self, name) -> None:
+        self._c("GroupDef", "SetGroup", name)  # other arguments: the OAPI defaults
+
+    def assign_joint(self, joint, group) -> None:
+        self._c("PointObj", "SetGroupAssign", joint, group, False, 0)  # Remove=False, ItemType=Object
+
+    def unassign_joint(self, joint, group) -> None:
+        self._c("PointObj", "SetGroupAssign", joint, group, True, 0)  # Remove=True, ItemType=Object
+
+    def delete_group(self, name) -> None:
+        self._c("GroupDef", "Delete", name)
+
 
 class CsiSource:
     batch_objects = None  # one table fetch per (table, mode)
@@ -350,6 +366,11 @@ class CsiSource:
         if errors:
             self._notes.append("Could not restore CSiBridge display settings (" + "; ".join(errors) +
                                "). Results are unaffected; check Display > Show Tables options.")
+
+    def edit_joint_group(self, action: str, name: str, joints: list[str]):
+        from .groups import edit_joint_group
+        self._lists = None
+        return edit_joint_group(self._api, action, name, joints)
 
     def notes(self) -> list[str]:
         return list(dict.fromkeys(self._notes))
