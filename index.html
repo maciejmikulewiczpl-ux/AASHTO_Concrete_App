@@ -111,6 +111,7 @@ body.circ-mode .circ-block { display: block !important; }
 .slab-note code { background:rgba(255,255,255,0.6); padding:0 3px; border-radius:2px; font-size:0.78rem; }
 .form-row input:not([type="checkbox"]), .form-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.84rem; width: 100px; }
 .form-row select.wide { flex: 1; min-width: 100px; max-width: 280px; }
+.form-row select.fit { width: auto; }
 .form-row input:not([type="checkbox"]):focus, .form-row select:focus { outline: none; border-color: var(--primary-light); box-shadow: 0 0 0 2px rgba(41,128,185,0.15); }
 .form-row input.auto-calc { background: #e8f4fd; border-color: #a8d8ea; }
 .form-row input[readonly].auto-calc { cursor: default; }
@@ -447,9 +448,9 @@ canvas { width: 100% !important; height: 100% !important; }
         </div>
         <div class="form-row"><label>Section classification</label>
           <select id="sectionClass" class="wide">
-            <option value="NP">Non-Prestressed</option>
+            <option value="NP" selected>Non-Prestressed</option>
             <option value="PP">Precast Prestressed</option>
-            <option value="CIP_PT" selected>CIP Post-Tensioned / PT Spliced Precast</option>
+            <option value="CIP_PT">CIP Post-Tensioned / PT Spliced Precast</option>
           </select>
         </div>
         <input type="hidden" id="phi_v" value="0.9">
@@ -588,13 +589,13 @@ canvas { width: 100% !important; height: 100% !important; }
             <select id="circ_bar1"><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option><option value="9" selected>#9</option><option value="10">#10</option><option value="11">#11</option><option value="14">#14</option><option value="18">#18</option></select>
           </div>
           <div class="form-row"><label>Number of bars / bundles</label><input type="number" id="circ_n1" value="12" min="1" step="1"><span class="unit">bars</span></div>
-          <div class="form-row"><label>Bundling</label><select id="circ_bundle1"><option value="1" selected>Single bars</option><option value="2">2-bar bundles</option><option value="3">3-bar bundles</option></select></div>
+          <div class="form-row"><label>Bundling</label><select id="circ_bundle1" class="fit"><option value="1" selected>Single bars</option><option value="2">2-bar bundles</option><option value="3">3-bar bundles</option></select></div>
           <div class="form-row"><label><input type="checkbox" id="circ_ring2" style="width:auto;margin-right:6px"><b>Inner ring</b></label></div>
           <div class="form-row"><label>Inner ring &mdash; bar size</label>
             <select id="circ_bar2"><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8" selected>#8</option><option value="9">#9</option><option value="10">#10</option><option value="11">#11</option><option value="14">#14</option><option value="18">#18</option></select>
           </div>
           <div class="form-row"><label>Inner ring &mdash; bars / bundles</label><input type="number" id="circ_n2" value="8" min="0" step="1"><span class="unit">bars</span></div>
-          <div class="form-row"><label>Inner ring &mdash; bundling</label><select id="circ_bundle2"><option value="1" selected>Single bars</option><option value="2">2-bar bundles</option><option value="3">3-bar bundles</option></select></div>
+          <div class="form-row"><label>Inner ring &mdash; bundling</label><select id="circ_bundle2" class="fit"><option value="1" selected>Single bars</option><option value="2">2-bar bundles</option><option value="3">3-bar bundles</option></select></div>
           <div class="form-row"><label>Inner ring centre diameter, D<sub>r2</sub></label><input type="number" id="circ_Dr2" value="20" step="any"><span class="unit">in</span></div>
           <div id="circ_rebar_info" class="circ-info"></div>
         </div>
@@ -666,10 +667,10 @@ canvas { width: 100% !important; height: 100% !important; }
           <p><strong>Additional torsional stirrup:</strong> Assumes two external legs of reinforcement working only for torsion. These optional closed-loop stirrups are added to the outer perimeter to increase torsional capacity. Area is added on top of existing stirrup external legs.</p>
         </div>
         <div class="form-row circ-field"><label>Transverse reinforcement type</label>
-          <select id="circ_trans_type"><option value="hoop" selected>Circular hoops</option><option value="spiral">Continuous spiral</option></select>
+          <select id="circ_trans_type" class="fit"><option value="hoop" selected>Circular hoops</option><option value="spiral">Continuous spiral</option></select>
         </div>
         <div class="form-row circ-field" id="circ_hoop_closure_row"><label>Hoop closure</label>
-          <select id="circ_hoop_closure" title="AASHTO 5.6.4.4: hoops closed by welded splice / mechanical coupler / hooks use Eq. 5.6.4.4-2 (0.85); lap-spliced hoops use Eq. 5.6.4.4-3 (0.80)"><option value="lap" selected>Lap splice (treated as tie, 0.80)</option><option value="hooked">Welded / mechanical / hooks around bars (0.85)</option></select>
+          <select id="circ_hoop_closure" class="fit" title="AASHTO 5.6.4.4: hoops closed by welded splice / mechanical coupler / hooks use Eq. 5.6.4.4-2 (0.85); lap-spliced hoops use Eq. 5.6.4.4-3 (0.80)"><option value="lap">Lap splice (treated as tie, 0.80)</option><option value="hooked" selected>Welded / mechanical / hooks around bars (0.85)</option></select>
         </div>
         <div class="form-row"><label id="lbl_shear_bar">Stirrup bar size</label>
           <select id="shear_bar"><option value="0">None</option><option value="3">#3</option><option value="4" selected>#4</option><option value="5">#5</option><option value="6">#6</option><option value="7">#7</option><option value="8">#8</option><option value="9">#9</option><option value="10">#10</option><option value="11">#11</option></select>
@@ -1203,14 +1204,15 @@ function getDefaultSectionState(){
     units: {force:'kip', length:'in'},
     inputs: {
       fc:5, fy:60, fy_trans:60, Es:29000, fpu:270, Ept:28500, ag:0.75, lam:1,
-      phi_v:0.9, gamma_e:0.75, codeEdition:'CA', sectionClass:'CIP_PT', astm_spec:'A615_60',
+      phi_v:0.9, gamma_e:0.75, codeEdition:'CA', sectionClass:'NP', astm_spec:'A615_60',
       secType:'RECTANGULAR', b:16.38, h:27.5, bw_input:12, hf_top:8, hf_bot:12, cover:2,
       barN_top:7, nBars_top:5, barN_bot:7, nBars_bot:5,
       d_top_ovr:false, d_bot_ovr:false, Ec_ovr:false, fpy_ovr:false, ecl_ovr:false, etl_ovr:false,
       fy_ovr:false, fy_trans_ovr:false, fy_val:'', fy_trans_val:'',
       Ec_val:'', fpy_val:'', ecl_val:'', etl_val:'', d_top_val:'', d_bot_val:'',
       nStrands:10, strand_area:0.217, dp_mode:'layout', dp_input:15.5, fpe_mode:'layout', fpe_input:0, duct_dia:6,
-      shN:4, shear_legs:2, shear_s:4, at_add_bar_N:0, at_add_s:12
+      shN:4, shear_legs:2, shear_s:4, at_add_bar_N:0, at_add_s:12,
+      circ_hoop_closure:'hooked'
     },
     demandRows: [
       {Pu:0,Mu:6953,Vu:108,Tu:0,Vp:0,Ps:-100,Ms:2500,x:null,dp:null,fpe:null,ptMode:'layout'}
