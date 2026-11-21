@@ -1,7 +1,14 @@
 """Moment-curvature secant stiffness (mphi_engine) — pinned against closed-form / existing engines."""
 import math
+import sys
+import types
 
 import pytest
+
+try:  # pywebview is a GUI dependency; the Api class itself does not need it here
+    import webview  # noqa: F401
+except ImportError:
+    sys.modules["webview"] = types.ModuleType("webview")
 
 import mphi_engine as me
 from calc_engine import BARS, calculate_all
@@ -169,3 +176,60 @@ def test_api_options_default_nominal():
     r = json.loads(api.Api().moment_curvature(json.dumps({"inputs": circ_inputs(), "demandRows": rows,
                                                           "options": {"model": "confined", "expected_steel": True}})))
     assert r["expected_steel"] is True and r["info"]["fy_used"] == pytest.approx(68.0)
+
+
+# ── AASHTO Seismic (SGS) preset, ductility, moment-stiffness curve, axial override (2026-11-21) ──
+
+def test_sgs_preset_is_confined_with_expected_materials():
+    inp = circ_inputs()
+    s = me.moment_curvature_section(inp, Ms=2000.0, Ps=-500.0, model="sgs")
+    c = me.moment_curvature_section(inp, Ms=2000.0, Ps=-500.0, model="confined",
+                                    expected_concrete=True, expected_steel=True)
+    assert s["model"] == "sgs" and s["preset"] == "sgs" and c["preset"] is None
+    assert s["expected_concrete"] and s["expected_steel"]
+    assert s["idealised"]["Mp"] == pytest.approx(c["idealised"]["Mp"])
+    assert s["ultimate"]["phi"] == pytest.approx(c["ultimate"]["phi"])
+
+
+@pytest.mark.parametrize("inp", [circ_inputs(), make_inputs(nBars_bot=6, barN_bot=9, nBars_top=4, barN_top=6)])
+def test_ultimate_ductility_and_equal_area(inp):
+    r = me.moment_curvature_section(inp, Ms=1000.0, Ps=-200.0, model="sgs")
+    iy, u = r["idealised"], r["ultimate"]
+    assert u["failure"] in ("concrete crushing", "steel strain limit")
+    assert r["curve"]["phi"][-1] == pytest.approx(u["phi"])  # curve ends at ultimate curvature
+    assert iy["phi_u"] == pytest.approx(u["phi"])
+    assert iy["mu_phi"] == pytest.approx(u["phi"] / iy["phi_y"]) and iy["mu_phi"] > 1.0
+    # equal areas: bilinear 0 -> (phi_y, Mp) -> (phi_u, Mp) encloses the same area as the curve
+    phi, M = r["curve"]["phi"], r["curve"]["M"]
+    area = sum(0.5 * (M[i] + M[i + 1]) * (phi[i + 1] - phi[i]) for i in range(len(phi) - 1))
+    bil = 0.5 * iy["Mp"] * iy["phi_y"] + iy["Mp"] * (u["phi"] - iy["phi_y"])
+    assert bil == pytest.approx(area, rel=0.02)
+
+
+def test_stiffness_curve_is_secant_of_mphi_curve():
+    inp = make_inputs(nBars_bot=6, barN_bot=9)
+    r = me.moment_curvature_section(inp, Ms=3000.0)
+    sc, cv = r["stiffness_curve"], r["curve"]
+    pts = [(k, m) for k, m in zip(cv["phi"], cv["M"]) if k > 0 and m > 0]
+    assert len(sc["M"]) == len(pts) and len(sc["EI"]) == len(pts)
+    for (k, m), Mi, EI, Ie in zip(pts, sc["M"], sc["EI"], sc["Ieff"]):
+        assert Mi == m and EI == pytest.approx(m / k) and Ie == pytest.approx(EI / r["Ec_used"])
+    # uncracked start near the gross stiffness, ends well below it (cracked / yielded)
+    assert sc["Ieff"][0] > 0.9 * r["Ig"] and sc["Ieff"][-1] < 0.5 * r["Ig"]
+    # the reported service secant lies on the same moment-stiffness relation
+    import bisect
+    j = bisect.bisect_left(sc["M"][:sc["M"].index(max(sc["M"]))], r["service"]["M"])
+    assert min(sc["EI"][j - 1], sc["EI"][j]) * 0.97 <= r["service"]["EI"] <= max(sc["EI"][j - 1], sc["EI"][j]) * 1.03
+    import json
+    json.dumps(r)
+
+
+def test_api_axial_override():
+    import json
+    import api
+    rows = [demand(Ms=2000.0, Ps=-100.0)]
+    base = {"inputs": circ_inputs(), "demandRows": rows}
+    r = json.loads(api.Api().moment_curvature(json.dumps(dict(base, options={"model": "sgs", "P_override": -800.0}))))
+    assert r["Ps"] == -800.0 and r["Ps_source"] == "override" and r["model"] == "sgs"
+    r = json.loads(api.Api().moment_curvature(json.dumps(dict(base, options={"model": "sgs", "P_override": ""}))))
+    assert r["Ps"] == -100.0 and r["Ps_source"] == "active row"

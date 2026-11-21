@@ -42,7 +42,8 @@ class Api:
 
     def moment_curvature(self, payload_json):
         """JS: pywebview.api.moment_curvature(JSON.stringify({inputs, demandRows, activeRow, options}))
-        options: model 'service' | 'confined', expected_concrete, expected_steel (default nominal).
+        options: model 'service' | 'confined' | 'sgs', expected_concrete, expected_steel (default nominal),
+        P_override (kip, + tension; blank/None = active row Ps).
         Uses Ms / Ps of the active demand row."""
         try:
             data = json.loads(payload_json)
@@ -50,12 +51,16 @@ class Api:
             idx = int(data.get("activeRow", 0) or 0)
             row = rows[idx] if 0 <= idx < len(rows) else rows[0]
             opts = data.get("options") or {}
+            P_over = opts.get("P_override")
+            use_over = P_over is not None and P_over != ""
+            Ps = float(P_over) if use_over else float(row.get("Ps") or 0)
             res = mphi_engine.moment_curvature_section(
-                data["inputs"], Ms=float(row.get("Ms") or 0), Ps=float(row.get("Ps") or 0),
+                data["inputs"], Ms=float(row.get("Ms") or 0), Ps=Ps,
                 model=opts.get("model", "service"),
                 expected_concrete=bool(opts.get("expected_concrete", False)),
                 expected_steel=bool(opts.get("expected_steel", False)),
                 materials=opts.get("materials"))
+            res["Ps_source"] = "override" if use_over else "active row"
             return json.dumps(res)
         except Exception as e:
             return json.dumps({"error": str(e)})

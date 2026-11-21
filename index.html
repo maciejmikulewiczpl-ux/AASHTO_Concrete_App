@@ -911,10 +911,13 @@ canvas { width: 100% !important; height: 100% !important; }
     <div class="card-body">
       <div class="form-row" style="flex-wrap:wrap;gap:10px;align-items:center">
         <label>Concrete model</label>
-        <select id="mphi_materials" class="wide" onchange="if(_mphiRes)runMphi()">
+        <select id="mphi_materials" class="wide" onchange="mphiModelChanged()">
           <option value="service" selected>Service &mdash; unconfined, tension to f<sub>r</sub>, zero after cracking</option>
           <option value="confined">Seismic &mdash; Mander confined core, steel strain hardening, no tension</option>
+          <option value="sgs">AASHTO Seismic (SGS) &mdash; Mander, expected materials, to ultimate, equal-area bilinear</option>
         </select>
+        <label title="Leave blank to use Ps of the active demand row">Axial P <small>(+ tension, <span data-unit-kind="force">kip</span>)</small></label>
+        <input type="number" id="mphi_P" placeholder="active row" style="width:90px" onchange="if(_mphiRes)runMphi()">
         <label title="Default: nominal f'c"><input type="checkbox" id="mphi_exp_c" onchange="if(_mphiRes)runMphi()"> Expected concrete f&prime;<sub>ce</sub> = 1.3 f&prime;c</label>
         <label title="Default: nominal fy"><input type="checkbox" id="mphi_exp_s" onchange="if(_mphiRes)runMphi()"> Expected steel (A706: f<sub>ye</sub> = 68/60&middot;f<sub>y</sub>, f<sub>ue</sub> = 95/60&middot;f<sub>y</sub>)</label>
         <label>Stiffness at</label>
@@ -928,7 +931,14 @@ canvas { width: 100% !important; height: 100% !important; }
       </div>
       <div class="grid grid-2" style="margin-top:10px">
         <div id="mphiResults"><div style="color:#888;font-size:0.85em">Press <b>Run M&ndash;&phi;</b> to compute the moment&ndash;curvature curve for the active demand row. It then updates automatically on every Calculate.</div></div>
-        <div style="text-align:center"><canvas id="mphiCanvas" width="600" height="400" style="width:100%;border-radius:4px;background:#fff;"></canvas></div>
+        <div style="text-align:center"><canvas id="mphiCanvas" width="600" height="400" style="width:100%;border-radius:4px;background:#fff;"></canvas>
+          <div style="font-size:0.85em;margin:8px 0 4px;text-align:left"><b>Moment &ndash; effective stiffness</b> (secant EI = M/&phi; at constant P)
+            &nbsp;<select id="mphi_stiff_axis" onchange="if(_mphiRes)drawMstiffChart(_mphiRes)">
+              <option value="EI" selected>EI (kip-in&sup2;)</option>
+              <option value="ratio">I<sub>eff</sub>/I<sub>g</sub></option>
+            </select></div>
+          <canvas id="mstiffCanvas" width="600" height="360" style="width:100%;border-radius:4px;background:#fff;"></canvas>
+        </div>
       </div>
       <div style="font-size:0.8em;color:#666;margin-top:6px">
         Fibre-section moment&ndash;curvature analysis (a &ldquo;more comprehensive analysis&rdquo; than the tabulated I<sub>e</sub>, cf. AASHTO 5.6.3.5.2a wording; no AASHTO equation is used).
@@ -948,6 +958,8 @@ canvas { width: 100% !important; height: 100% !important; }
             <li><b>Moment:</b> M = &Sigma; force &times; distance from the centroid &rarr; one point (&phi;, M).</li>
             <li><b>Repeat</b> with a larger &phi;. The curve shows: uncracked (slope &asymp; E<sub>c</sub>I<sub>g</sub>) &rarr; cracking at M<sub>cr</sub> (slope drops towards E<sub>c</sub>I<sub>cr</sub>) &rarr; first yield &rarr; plastic plateau &rarr; ultimate.</li>
             <li><b>Secant stiffness:</b> EI = M/&phi; on a straight line from the origin to the chosen point (service M<sub>s</sub>, first yield, or the equal-area bilinear M<sub>p</sub>/&phi;<sub>y</sub>, which passes through first yield). I<sub>eff</sub> = EI/E<sub>c</sub>.</li>
+            <li><b>Moment &ndash; effective stiffness chart:</b> the same secant M/&phi; evaluated at every point of the curve and plotted against M (axial load held constant) &mdash; intended to match the moment&ndash;stiffness charts of programs such as Oasys AdSec (secant definition assumed, not yet confirmed against AdSec documentation). It starts near E<sub>c</sub>I<sub>g</sub>, drops sharply at cracking and keeps falling after yield.</li>
+            <li><b>AASHTO Seismic preset:</b> Mander confined core, expected concrete and steel, curve stopped at ultimate curvature &phi;<sub>u</sub> (confined concrete reaches &epsilon;<sub>cu</sub> or the extreme bar reaches the reduced ultimate strain &epsilon;<sub>su</sub><sup>R</sup>, whichever is first). The curve is replaced by an elastic&ndash;perfectly-plastic line through first yield whose plateau M<sub>p</sub> makes the areas under both lines equal; &mu;<sub>&phi;</sub> = &phi;<sub>u</sub>/&phi;<sub>y</sub>. Material values are those of the ported column-on-shaft models (Caltrans SDC 2.1 basis) &mdash; not yet checked against the SGS text.</li>
           </ol>
           <b>Centroid vs. neutral axis</b>
           <ul style="margin:4px 0 6px 18px;padding:0">
@@ -4611,7 +4623,8 @@ function runMphi(){
   const demandRows=[];
   for(let r=1;r<=demandRowCount;r++){ const d=getDemandRow(r); demandRows.push(d||{Ms:0,Ps:0}); }
   const payload=JSON.stringify({inputs,demandRows,activeRow:Math.max(0,activeRow-1),
-    options:{model:document.getElementById('mphi_materials').value,expected_concrete:document.getElementById('mphi_exp_c').checked,expected_steel:document.getElementById('mphi_exp_s').checked}});
+    options:{model:document.getElementById('mphi_materials').value,expected_concrete:document.getElementById('mphi_exp_c').checked,expected_steel:document.getElementById('mphi_exp_s').checked,
+      P_override:(()=>{ const v=parseFloat(document.getElementById('mphi_P').value); return isNaN(v)?null:toEngine(v,'force'); })()}});
   st.textContent='Running...';
   window.pywebview.api.moment_curvature(payload).then(json=>{
     let r; try{ r=JSON.parse(json); }catch(e){ st.textContent='Bad reply'; return; }
@@ -4620,20 +4633,28 @@ function runMphi(){
     try{ renderMphi(r); }catch(e){ console.error('renderMphi error:',e); st.textContent='Render error: '+e.message; }
   });
 }
+function mphiModelChanged(){
+  // SGS preset = expected concrete + expected steel; lock the boxes while it is selected
+  const sgs=document.getElementById('mphi_materials').value==='sgs';
+  ['mphi_exp_c','mphi_exp_s'].forEach(id=>{ const el=document.getElementById(id); if(sgs) el.checked=true; el.disabled=sgs; });
+  if(sgs) document.getElementById('mphi_point').value='idealised';
+  if(_mphiRes) runMphi();
+}
 function mphiSelected(r){
   const k=document.getElementById('mphi_point').value;
   return {key:k, pt:r[k]||null};
 }
 function renderMphi(r){
   const box=document.getElementById('mphiResults');
-  if(!r.available){ box.innerHTML='<div style="color:#c0392b">'+r.reason+'</div>'; drawMphiChart(null); return; }
+  if(!r.available){ box.innerHTML='<div style="color:#c0392b">'+r.reason+'</div>'; drawMphiChart(null); drawMstiffChart(null); return; }
   const fl=window._lastFlex||{}, Ig=r.Ig, Icr=fl.Icr, inf=r.info||{};
   const sel=mphiSelected(r);
   const pct=(I)=>F(I/Ig,3)+(Icr?' &middot; '+F(I/Icr,2)+'&times;I<sub>cr</sub>':'');
   let o='';
   o+=R('Direction',r.direction==='hogging'?'Hogging (bottom in compression)':'Sagging (top in compression)');
   o+=R('M<sub>s</sub> (active row)',F(r.Ms,1),'kip-in');
-  o+=R('P<sub>s</sub> (active row, + tension)',F(r.Ps,1),'kip');
+  o+=R('P<sub>s</sub> ('+(r.Ps_source==='override'?'entered':'active row')+', + tension)',F(r.Ps,1),'kip');
+  if(r.model==='sgs') o+='<div style="font-size:0.8em;color:#b54708;margin:2px 4px">&#9888; AASHTO Seismic preset: material values come from the ported column-on-shaft models (Caltrans SDC 2.1 basis); not yet checked against the SGS text (OPEN_VERIFICATION_ITEMS MP2).</div>';
   o+=R('f&prime;c used',F(inf.fc_used,2),'ksi');
   o+=R('f<sub>y</sub> used',F(inf.fy_used,1),'ksi');
   o+=R('E<sub>c</sub> used (for I<sub>eff</sub> = EI/E<sub>c</sub>)',F(r.Ec_used,0),'ksi');
@@ -4652,6 +4673,10 @@ function renderMphi(r){
   else o+=SH('At service demand M<sub>s</sub>')+'<div style="color:#c0392b;font-size:0.85em">'+(r.service_error||'Not available (M<sub>s</sub> = 0).')+'</div>';
   if(r.first_yield) o+=block('first_yield','At first yield',r.first_yield.M,r.first_yield.phi,r.first_yield.EI,r.first_yield.Ieff);
   if(r.idealised) o+=block('idealised','Idealised bilinear (equal area)',r.idealised.Mp,r.idealised.phi_y,r.idealised.EI,r.idealised.Ieff);
+  o+=SH('Ultimate');
+  o+=R('Ultimate curvature &phi;<sub>u</sub> ('+r.ultimate.failure+')',(isFinite(r.ultimate.phi)?r.ultimate.phi.toExponential(4):'&mdash;'),'1/in');
+  o+=R('M at &phi;<sub>u</sub>',F(r.ultimate.M,1),'kip-in');
+  if(r.idealised&&isFinite(r.idealised.mu_phi)) o+=R('Curvature ductility &mu;<sub>&phi;</sub> = &phi;<sub>u</sub>/&phi;<sub>y</sub>',F(r.idealised.mu_phi,2));
   o+=SH('Reference');
   if(r.cracking) o+=R('M<sub>cr</sub> (M&ndash;&phi;, incl. P<sub>s</sub> and steel)',F(r.cracking.M,1),'kip-in');
   o+=R('M<sub>ult</sub> ('+r.ultimate.failure+')',F(r.ultimate.M,1),'kip-in');
@@ -4662,6 +4687,7 @@ function renderMphi(r){
   box.innerHTML=o;
   try{ convertRenderedOutputs(box); }catch(e){}
   drawMphiChart(r);
+  try{ drawMstiffChart(r); }catch(e){ console.error('drawMstiffChart error:',e); }
 }
 function drawMphiChart(r){
   const cv=document.getElementById('mphiCanvas'); if(!cv) return;
@@ -4703,8 +4729,67 @@ function drawMphiChart(r){
     ctx.fillStyle=c; ctx.beginPath(); ctx.arc(tX(p.phi),tY(mU(p.M)),4,0,2*Math.PI); ctx.fill();
     ctx.textAlign='left'; ctx.fillText(lbl,tX(p.phi)+6,tY(mU(p.M))-6);
   });
+  if(r.idealised&&isFinite(r.idealised.phi_y)){  // idealised yield point (phi_y, Mp)
+    const x=tX(r.idealised.phi_y), y=tY(mU(r.idealised.Mp));
+    ctx.strokeStyle='#27ae60'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x-4,y-4); ctx.lineTo(x+4,y+4); ctx.moveTo(x-4,y+4); ctx.lineTo(x+4,y-4); ctx.stroke();
+    ctx.fillStyle='#27ae60'; ctx.textAlign='left'; ctx.fillText('φy, Mp',x+6,y+14);
+  }
+  if(r.ultimate&&isFinite(r.ultimate.phi)&&r.ultimate.failure!=='curve end'){  // ultimate curvature
+    const x=tX(r.ultimate.phi), y=tY(mU(r.ultimate.M));
+    ctx.fillStyle='#8e44ad'; ctx.fillRect(x-4,y-4,8,8);
+    ctx.textAlign='right'; ctx.fillText('φu ('+r.ultimate.failure+')',x-6,y-8);
+  }
   ctx.textAlign='left'; ctx.fillStyle='#27ae60'; if(r.idealised) ctx.fillText('-- idealised bilinear',m.l+8,m.t+14);
   ctx.fillStyle='#c0392b'; ctx.fillText('-- secant (selected)',m.l+8,m.t+28);
+}
+function drawMstiffChart(r){
+  // Moment vs secant stiffness EI = M/phi at constant axial load (AdSec-style moment-stiffness chart)
+  const cv=document.getElementById('mstiffCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  if(!r||!r.available||!r.stiffness_curve||!r.stiffness_curve.M.length) return;
+  const ratio=document.getElementById('mphi_stiff_axis').value==='ratio';
+  const EIg=r.Ec_used*r.Ig;
+  const yv=EI=>ratio?EI/EIg:EI, mU=v=>fromEngine(v,'moment');
+  const sc=r.stiffness_curve, X=sc.M.map(mU), Y=sc.EI.map(yv);
+  const Mmax=Math.max(...sc.M);
+  // asymmetric sections: M != 0 at phi = 0 makes the secant blow up near the origin -> scale on M >= 5 % Mmax
+  const asym=Math.abs(r.M0||0)>1e-6*Mmax;
+  const Yscale=Y.filter((y,i)=>!asym||sc.M[i]>=0.05*Mmax);
+  const m={l:78,r:16,t:20,b:46}, pW=W-m.l-m.r, pH=H-m.t-m.b;
+  const xMax=Math.max(...X)*1.05||1, yMax=Math.max(...Yscale,ratio?1:EIg)*1.1||1;
+  const tX=x=>m.l+x/xMax*pW, tY=y=>m.t+(yMax-y)/yMax*pH;
+  ctx.fillStyle='#fafbfc'; ctx.fillRect(m.l,m.t,pW,pH);
+  ctx.strokeStyle='#e8e8e8'; ctx.lineWidth=0.5; ctx.fillStyle='#666'; ctx.font='11px sans-serif';
+  for(let i=0;i<=5;i++){
+    const x=m.l+pW*i/5, y=m.t+pH*i/5, yl=yMax*(1-i/5);
+    ctx.beginPath();ctx.moveTo(x,m.t);ctx.lineTo(x,m.t+pH);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(m.l,y);ctx.lineTo(m.l+pW,y);ctx.stroke();
+    ctx.textAlign='center'; ctx.fillText((xMax*i/5).toFixed(0),x,m.t+pH+14);
+    ctx.textAlign='right'; ctx.fillText(ratio?yl.toFixed(2):yl.toExponential(1),m.l-4,y+4);
+  }
+  ctx.textAlign='center'; ctx.fillText('M ('+unitLabel('moment')+')',m.l+pW/2,H-6);
+  ctx.save(); ctx.translate(12,m.t+pH/2); ctx.rotate(-Math.PI/2); ctx.fillText(ratio?'I_eff / I_g':'EI = M/φ (kip-in²)',0,0); ctx.restore();
+  ctx.save(); ctx.beginPath(); ctx.rect(m.l,m.t,pW,pH); ctx.clip();
+  // gross-section reference Ec*Ig
+  ctx.strokeStyle='#95a5a6'; ctx.lineWidth=1; ctx.setLineDash([4,4]); ctx.beginPath();
+  ctx.moveTo(m.l,tY(yv(EIg))); ctx.lineTo(m.l+pW,tY(yv(EIg))); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle='#2c3e50'; ctx.lineWidth=2; ctx.beginPath();
+  X.forEach((x,i)=>{ i?ctx.lineTo(tX(x),tY(Y[i])):ctx.moveTo(tX(x),tY(Y[i])); }); ctx.stroke();
+  const pts=[['cracking','#7f8c8d','M_cr','M','EI'],['service','#c0392b','M_s','M','EI'],['first_yield','#e67e22','M_y','M','EI'],['idealised','#27ae60','Mp','Mp','EI']];
+  pts.forEach(([k,c,lbl,mk,ek])=>{
+    const p=r[k]; if(!p||!isFinite(p[mk])||!isFinite(p[ek])) return;
+    const x=tX(mU(p[mk])), y=tY(yv(p[ek]));
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(x,y,4,0,2*Math.PI); ctx.fill();
+    ctx.textAlign='left'; ctx.fillText(lbl,x+6,y-6);
+  });
+  if(r.ultimate&&r.ultimate.phi>0&&r.ultimate.M>0){
+    const x=tX(mU(r.ultimate.M)), y=tY(yv(r.ultimate.M/r.ultimate.phi));
+    ctx.fillStyle='#8e44ad'; ctx.fillRect(x-4,y-4,8,8); ctx.textAlign='right'; ctx.fillText('φu',x-6,y-6);
+  }
+  ctx.restore();
+  ctx.textAlign='left'; ctx.fillStyle='#95a5a6'; ctx.fillText('-- E_c I_g (gross)',m.l+8,m.t+14);
+  ctx.fillStyle='#666'; ctx.fillText('P = '+F(fromEngine(r.Ps,'force'),1)+' '+unitLabel('force')+' (+ tension)',m.l+8,m.t+28);
 }
 
 function runAllCalculations(){
@@ -7901,9 +7986,9 @@ function generateReport(){
     if(mr&&mr.available){
       const mi=mr.info||{};
       h2+=`<h3>13.4 Secant Stiffness from Moment&ndash;Curvature Analysis</h3>`;
-      h2+=`<div class="rpt-note">Fibre-section moment&ndash;curvature analysis for the active demand row (a more comprehensive analysis than the tabulated I<sub>e</sub>; no AASHTO equation is used). EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Concrete model: ${mr.model==='confined'?'Mander confined core, steel strain hardening, no concrete tension (rectangular/I confinement approximate)':'unconfined, concrete tension to f<sub>r</sub>, zero after cracking'}. Strengths: concrete ${mr.expected_concrete?'expected (1.3 f&prime;c)':'nominal'}, steel ${mr.expected_steel?'expected (A706, 68/60&middot;f<sub>y</sub>)':'nominal'}. Direction: ${mr.direction}.</div>`;
+      h2+=`<div class="rpt-note">Fibre-section moment&ndash;curvature analysis for the active demand row (a more comprehensive analysis than the tabulated I<sub>e</sub>; no AASHTO equation is used). EI = M/&phi; (secant from the origin), I<sub>eff</sub> = EI/E<sub>c</sub>. Concrete model: ${mr.model==='sgs'?'AASHTO Seismic preset &mdash; Mander confined core, expected materials, curve to the ultimate strain, equal-area elasto-plastic idealisation (material values from the ported Caltrans SDC 2.1 models; not yet checked against the SGS text)':mr.model==='confined'?'Mander confined core, steel strain hardening, no concrete tension (rectangular/I confinement approximate)':'unconfined, concrete tension to f<sub>r</sub>, zero after cracking'}. Strengths: concrete ${mr.expected_concrete?'expected (1.3 f&prime;c)':'nominal'}, steel ${mr.expected_steel?'expected (A706, 68/60&middot;f<sub>y</sub>)':'nominal'}. Direction: ${mr.direction}.</div>`;
       h2+=RR('M<sub>s</sub> (active row)',F(mr.Ms,1),'kip-in');
-      h2+=RR('P<sub>s</sub> (active row, + tension)',F(mr.Ps,1),'kip');
+      h2+=RR('P<sub>s</sub> ('+(mr.Ps_source==='override'?'entered':'active row')+', + tension)',F(mr.Ps,1),'kip');
       h2+=RR('f&prime;c used',F(mi.fc_used,2),'ksi');
       h2+=RR('f<sub>y</sub> used',F(mi.fy_used,1),'ksi');
       h2+=RR('E<sub>c</sub> used',F(mr.Ec_used,0),'ksi');
@@ -7916,6 +8001,21 @@ function generateReport(){
       if(mr.service_error) h2+=`<div class="rpt-note" style="color:#c0392b">${mr.service_error}</div>`;
       if(mr.cracking) h2+=RR('M<sub>cr</sub> (M&ndash;&phi;)',F(mr.cracking.M,1),'kip-in');
       h2+=RR('M<sub>ult</sub> ('+mr.ultimate.failure+')',F(mr.ultimate.M,1),'kip-in');
+      h2+=RR('Ultimate curvature &phi;<sub>u</sub>',isFinite(mr.ultimate.phi)?mr.ultimate.phi.toExponential(4):'&mdash;','1/in');
+      if(mr.idealised&&isFinite(mr.idealised.mu_phi)) h2+=RR('Curvature ductility &mu;<sub>&phi;</sub> = &phi;<sub>u</sub>/&phi;<sub>y</sub>',F(mr.idealised.mu_phi,2));
+      const sc=mr.stiffness_curve;
+      if(sc&&sc.M.length){
+        // moment-stiffness table at ~10 levels of M (secant EI = M/phi, constant P)
+        h2+='<div class="rpt-note">Moment &ndash; effective stiffness (secant EI = M/&phi; at constant P), ascending branch:</div>';
+        h2+='<table class="rpt-table"><tr><th>M (kip-in)</th><th>EI (kip-in&sup2;)</th><th>I<sub>eff</sub>/I<sub>g</sub></th></tr>';
+        const iPk=sc.M.indexOf(Math.max(...sc.M)), used=new Set();
+        for(let j=1;j<=10;j++){
+          const tgt=sc.M[iPk]*j/10; let i=0; while(i<iPk&&sc.M[i]<tgt) i++;
+          if(used.has(i)) continue; used.add(i);
+          h2+=`<tr><td>${F(sc.M[i],1)}</td><td>${sc.EI[i].toExponential(4)}</td><td>${F(sc.Ieff[i]/mr.Ig,3)}</td></tr>`;
+        }
+        h2+='</table>';
+      }
       (mr.notes||[]).forEach(n=>{ h2+=`<div class="rpt-note">${n}</div>`; });
     }
   }

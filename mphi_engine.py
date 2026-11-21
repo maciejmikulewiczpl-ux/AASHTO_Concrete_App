@@ -297,7 +297,8 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, model="service", expect
                              n_kappa=N_KAPPA, materials=None):
     """M-phi curve and secant stiffnesses. Returns a JSON-ready dict.
 
-    model: 'service' (unconfined, tension to fr) or 'confined' (Mander core, no tension).
+    model: 'service' (unconfined, tension to fr), 'confined' (Mander core, no tension) or
+           'sgs' (AASHTO Seismic preset = confined + expected concrete + expected steel).
     materials: legacy alias - 'nominal' = service/nominal, 'expected' = confined with expected concrete+steel.
     """
     if materials is not None:
@@ -305,8 +306,14 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, model="service", expect
             raise ValueError(f"materials must be 'nominal' or 'expected', not {materials!r}")
         if materials == "expected":
             model, expected_concrete, expected_steel = "confined", True, True
+    preset = None
+    if model == "sgs":
+        # AASHTO Seismic (SGS) style preset: Mander confined core, expected concrete AND steel,
+        # curve ends at the ultimate strain, equal-area elasto-plastic idealisation.
+        # Material values come from seismic_port (Caltrans SDC 2.1 port) - OPEN_VERIFICATION_ITEMS MP2.
+        preset, model, expected_concrete, expected_steel = "sgs", "confined", True, True
     if model not in ("service", "confined"):
-        raise ValueError(f"model must be 'service' or 'confined', not {model!r}")
+        raise ValueError(f"model must be 'service', 'confined' or 'sgs', not {model!r}")
     I = _prepare(raw_inputs)
     if I.get("hasPT"):
         return {"available": False,
@@ -383,7 +390,8 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, model="service", expect
         EI = m / k if k > 0 else None
         return {"M": m, "phi": k, "EI": EI, "Ieff": EI / Ec if EI else None}
 
-    out = {"available": True, "model": model, "expected_concrete": bool(expected_concrete),
+    out = {"available": True, "model": preset or model, "preset": preset,
+           "expected_concrete": bool(expected_concrete),
            "expected_steel": bool(expected_steel), "direction": "hogging" if hog else "sagging",
            "Ms": Ms, "Ps": Ps, "Ec_used": Ec, "Ig": I["Ig"], "M0": M[0], "info": info, "notes": notes,
            "ultimate": {"M": M_u, "phi": phi_u, "failure": failure}}
@@ -420,7 +428,8 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, model="service", expect
         Mp, phi_y = _idealise(phi, M, k_fy, out["first_yield"]["M"], phi_u)
         # Equal-area bilinear through first yield: Mp/phi_y = My/phi_y' (same EI as first yield).
         out["idealised"] = {"Mp": Mp, "phi_y": phi_y, "EI": Mp / phi_y if phi_y > 0 else None,
-                            "Ieff": Mp / phi_y / Ec if phi_y > 0 else None}
+                            "Ieff": Mp / phi_y / Ec if phi_y > 0 else None,
+                            "phi_u": phi_u, "mu_phi": phi_u / phi_y if phi_y > 0 else None}
 
     # Secant at the service moment (first crossing; after cracking the curve dips below Mcr)
     Ma = abs(Ms)
@@ -443,4 +452,18 @@ def moment_curvature_section(raw_inputs, Ms=0.0, Ps=0.0, model="service", expect
         notes.append("Axial load about the gross centroid gives M ≠ 0 at zero curvature "
                      "(asymmetric reinforcement / section).")
     out["curve"] = dict(zip(("phi", "M"), _downsample(phi, M, CURVE_POINTS)))
+    out["stiffness_curve"] = stiffness_curve(out["curve"]["phi"], out["curve"]["M"], Ec)
     return out
+
+
+def stiffness_curve(phi, M, Ec):
+    """Moment vs secant stiffness at constant axial load: EI = M/phi from the origin to each
+    curve point (the 'moment-stiffness' presentation, cf. Oasys AdSec). Points with phi = 0 or
+    M <= 0 are dropped (secant undefined)."""
+    Ms, EIs, Ies = [], [], []
+    for k, m in zip(phi, M):
+        if k > 0 and m > 0:
+            Ms.append(m)
+            EIs.append(m / k)
+            Ies.append(m / k / Ec if Ec > 0 else None)
+    return {"M": Ms, "EI": EIs, "Ieff": Ies}
