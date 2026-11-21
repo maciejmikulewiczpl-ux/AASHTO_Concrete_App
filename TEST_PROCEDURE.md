@@ -170,6 +170,8 @@ Regenerate the seismic-port golden only for an intended, reviewed change:
 - `test_batch_vba_static.py`: static checks of `batch/excel/BatchRunner.bas` and the template builder
   (locale-safe Str / Val exchange, quoted paths, layout constants = `batch/columns.py`, ASCII, CRLF).
 - `test_project_run_options.py`: the app saves / restores `project.runOptions` (shear method, M-phi options).
+- `test_build_inputs_from_state.py`: `buildInputsFromState(state)` (Project Summary D/C, optimiser) builds the same
+  engine inputs as `gatherInputs()` for every case and unit system, including a state saved in other units.
 
 Not covered automatically: running the macro inside Excel. Manual check: `build_batch_exe.bat`, then
 `batch\excel\build_template.bat` (needs Excel's "Trust access to the VBA project object model"), copy

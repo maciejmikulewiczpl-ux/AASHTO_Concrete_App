@@ -24,8 +24,10 @@ const grabLine = start => { const i = src.indexOf(start); return src.slice(i, sr
 
 const FUNCS = ['VE', 'setVE', 'unitFactor', 'fromEngine', 'toEngine', 'computeWc', 'computeEcAASHTO',
   'barsFromSpacing', 'clearWidthAt', 'widthAtDepth', 'circParamsFromDOM', 'circParamsFromState',
-  'circPayload', 'resolveMRRows', 'isCircUI', 'gatherInputs', 'buildInputsFromState'];
+  'circPayload', 'resolveMRRows', 'isCircUI', 'gatherInputs', '_stateInputsToEngine', '_buildInputsExtras',
+  'buildInputsFromState'];
 const code = [grabLine('const V=id=>'), grabBlock('const BARS='), grabBlock('const INPUT_FIELD_KINDS'),
+  grabBlock('const _STATE_INPUT_KINDS='),
   ...FUNCS.map(f => grabBlock('function ' + f + '('))].join(';\n');
 
 let FORM = {};

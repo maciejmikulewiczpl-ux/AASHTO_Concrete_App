@@ -3080,15 +3080,65 @@ function setDCShear(n,demand,Vr1,Vr2,Vr3){
    ==================================================================== */
 /* Build a Python-calc-ready "inputs" payload from a saved section state
    (mirrors gatherInputs() but without touching the DOM). */
+// Section state -> engine-unit copy of its inputs. Field values are stored in the display units
+// recorded in state.units (saveCurrentSectionState); older files without units are kip/in.
+// Uses the same field kinds as VE() so it converts exactly what gatherInputs converts.
+const _STATE_INPUT_KINDS={fc:'fc',fy:'fy',fy_trans:'fy_trans',Es:'Es',fpu:'fpu',Ept:'Ept',ag:'ag',
+  wc_val:'wc',b:'b_flange',h:'h_total',bw_input:'b_web',hf_top:'hf_top',hf_bot:'hf_bot',cover:'cover',
+  Ec_val:'Ec',fpy_val:'fpy',d_top_val:'d_top_override',d_bot_val:'d_bot_override',strand_area:'strand_area',
+  dp_input:'dp_input',duct_dia:'duct_dia',shear_s:'shear_s',at_add_s:'at_add_s',circ_D:'circ_D',circ_Dr2:'circ_Dr2'};
+function _stateInputsToEngine(state){
+  const src=state.inputs||{}, out=Object.assign({},src);
+  const u=state.units||{force:'kip',length:'in'};
+  const saved=displayUnits;
+  displayUnits=u;
+  try{
+    for(const [key,id] of Object.entries(_STATE_INPUT_KINDS)){
+      const kind=INPUT_FIELD_KINDS[id];
+      const v=parseFloat(src[key]);
+      if(kind && kind!=='dimensionless' && !isNaN(v)) out[key]=toEngine(v,kind);
+    }
+  } finally { displayUnits=saved; }
+  const K1=parseFloat(src.K1_val); out.K1_val=K1||1.0;  // as gatherInputs: V('K1')||1.0
+  return out;
+}
+// Keys gatherInputs adds that buildInputsFromState did not. Factor overrides, crack mode, PT flags,
+// PT profile and f'ci are page-wide controls (not stored per section): read from the DOM exactly as
+// gatherInputs reads them.
+function _buildInputsExtras(inp){
+  const num=(v,d=0)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
+  const fc=num(inp.fc,5);
+  const at_add_bar_N=parseInt(inp.at_add_bar_N)||0;
+  const factor_overrides={};
+  document.querySelectorAll('.factor-ovr-cb').forEach(cb=>{
+    if(cb.checked){
+      const key=cb.dataset.factor;
+      const el=document.getElementById(key+'_ovr_val');
+      if(el) factor_overrides[key]=parseFloat(el.value)||0;
+    }
+  });
+  const crackModeEl=document.getElementById('crack_mode');
+  const pickF=(id,dflt)=>{const el=document.getElementById(id);if(!el)return dflt;const v=parseFloat(el.value);return isNaN(v)?dflt:v;};
+  const pickSel=(id,dflt)=>{const el=document.getElementById(id);return el?el.value:dflt;};
+  const bondedEl=document.getElementById('pt_bonded');
+  const bonded=bondedEl?(bondedEl.value==='true'):true;
+  const ptR=window._ptResult||null;
+  return {fy_trans:num(inp.fy_trans,num(inp.fy,60)),fci:pickF('pt_fci_chk',null)??pickF('pt_fci',fc),
+    astm_spec:inp.astm_spec||'A615_60',factor_overrides,crack_mode:crackModeEl?crackModeEl.value:'capped',
+    at_add_bar_N,s_at_add:at_add_bar_N>0?num(inp.at_add_s,0):0,
+    pt_flags:{bonded,temp_comp_case:pickSel('pt_temp_comp_case','general'),temp_tens_case:pickSel('pt_temp_tens_case','bonded'),
+      srv3_tens_case:bonded?pickSel('pt_srv3_tens_case','moderate'):'none',phi_w:pickF('pt_phi_w',1.0)},
+    pt_profile:ptR&&ptR.profile?ptR.profile:null,pt_loss_summary:ptR&&ptR.loss_summary?ptR.loss_summary:null};
+}
 function buildInputsFromState(state){
-  const inp=state.inputs||{};
+  const inp=_stateInputsToEngine(state);
   const num=(v,d=0)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
   const fc=num(inp.fc,5), fy=num(inp.fy,60), Es=num(inp.Es,29000);
   const fpu=num(inp.fpu,270), Ept=num(inp.Ept,28500);
   const ag=num(inp.ag,0.75), lam=num(inp.lam,1), phi_v=num(inp.phi_v,0.9);
   const gamma_e=num(inp.gamma_e,0.75);
   const codeEdition=inp.codeEdition||'CA';
-  const sectionClass=inp.sectionClass||'CIP_PT';
+  const sectionClass=inp.sectionClass||'NP';
   const K1 = num(inp.K1_val, 1.0);
   const wc = inp.wc_ovr ? num(inp.wc_val, 0.145) : computeWc(fc);
   const Ec = inp.Ec_ovr ? num(inp.Ec_val) : computeEcAASHTO(fc, K1, wc);
@@ -3162,7 +3212,7 @@ function buildInputsFromState(state){
     b,h,bw_input,hf_top,hf_bot,cover,barN_top,nBars_top,d_top,barN_bot,nBars_bot,d_bot,
     nStrands,strand_area,dp,fpe,ductDia,
     shN:shN_eff===0?4:shN_eff,shear_legs,s_shear,tN,s_torsion,As_top_ovr,As_bot_ovr,mr_rows_bot,mr_rows_top},
-    secType==='CIRCULAR'?circPayload(circParamsFromState(inp)):{});
+    _buildInputsExtras(inp), secType==='CIRCULAR'?circPayload(circParamsFromState(inp)):{});
 }
 
 /* Draw a simplified cross-section to a small canvas from a section state. */
