@@ -61,6 +61,7 @@ Design choices awaiting a **DECIDE**:
 | MP3 | VERIFY (added 2026-11-21) | Moment–effective-stiffness chart (Service tab, report §13.4 table) plots secant EI = M/φ from the origin at each M–φ point, constant P. Assumed to be the same definition as Oasys AdSec's moment–stiffness output — not checked against AdSec documentation (AdSec may also offer a tangent stiffness). |
 | BT1 | VERIFY (added 2026-11-21) | Excel batch (`batch/`, `AASHTO_Batch_Template.xlsm`): the Results moment–curvature / effective-stiffness columns use the same `mphi_engine` code, so MP1–MP3 apply to them unchanged. The workbook and the Results sheet say so. Also not yet checked: the template macro has not been run in Excel (needs "Trust access to the VBA project object model" to build it), including with a decimal-comma Windows locale. |
 | BT2 | DECIDE (added 2026-11-21) | Engine: `row_results[i].Mr` differs from `flexure.Mr` for the same active row (example rect section: 5434.8 vs 5437.0 kip-in sagging; hogging with no top bars 239 vs 0). The batch and the app's demand table both use the row value. Pinned by the strict xfail `tests/test_batch_runner.py::test_row_and_active_flexure_mr_agree`. Decide which is right before changing the engine. |
+| BT3 | FIX (added 2026-11-21, needs approval) | `gatherInputs()` sends f<sub>pe</sub> (`fpe_input`) and f′<sub>ci</sub> (`pt_fci_chk` / `pt_fci`) to the engine **without unit conversion**: `INPUT_FIELD_KINDS` lists them as `fpe` / `fci`, which are not the element ids, so `VE()` is not used. Wrong for PT sections when the display units are not kip/in (e.g. ksf or psi). `buildInputsFromState` and the batch port mirror it for parity; fix all three together. |
 
 ---
 
@@ -96,7 +97,7 @@ Ported verbatim from `Seismic Column` @ 9265d67 into `seismic_port/provisions.py
 
 | Need | Closes |
 |---|---|
-| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, B5-LB, H1, H3, E13, E14, E17, E18, E20, E21, E22, E23, BT2 |
+| User decision | D-F2, F5b, M7, M10, M11, C4, C9, C10, D-C1, D-C3–D-C6, B5-LB, H1, H3, E13, E14, E17, E18, E20, E21, E22, E23, BT2, BT3 |
 
 Not implemented (optional): the C5.7.2.8-1 alternative for circular members (d<sub>v</sub> = M<sub>n</sub>/(A<sub>s</sub>f<sub>y</sub> + A<sub>ps</sub>f<sub>ps</sub>) with M<sub>n</sub> ignoring axial load and half-section steel); the engine uses the permitted 0.9d<sub>e</sub> alternative.
 
