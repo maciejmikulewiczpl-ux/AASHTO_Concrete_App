@@ -41,3 +41,4 @@ probe_out/
 _batch_*.tsv
 _batch_progress.txt
 _batch_summary.txt
+AASHTO_Batch_Template.xlsx
