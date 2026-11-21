@@ -36,3 +36,8 @@ verification_report*.txt
 # CSiBridge extractor: probe output and interrupted workbook temp files
 probe_out/
 *.part_*.xlsx
+
+# Excel batch runner exchange files (written next to the workbook)
+_batch_*.tsv
+_batch_progress.txt
+_batch_summary.txt

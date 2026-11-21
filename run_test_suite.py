@@ -42,6 +42,12 @@ PYTEST_STAGES = [
                                           "tests/test_colshaft_engine.py",
                                           "tests/test_colshaft_api.py",
                                           "tests/test_colshaft_ui_static.py"]),
+    ("Pytest:  excel batch runner",      ["tests/test_batch_form.py",
+                                          "tests/test_batch_inputs_parity.py",
+                                          "tests/test_batch_project.py",
+                                          "tests/test_batch_sheet_io.py",
+                                          "tests/test_batch_runner.py",
+                                          "tests/test_batch_cli.py"]),
 ]
 
 # Stage 2: existing standalone scripts at project root (kept for back-compat).
