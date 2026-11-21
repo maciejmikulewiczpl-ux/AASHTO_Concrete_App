@@ -47,3 +47,9 @@ def test_cli_bad_setting_is_fatal_with_message(tmp_path):
 def test_cli_version():
     p = _run("--version")
     assert p.returncode == 0 and p.stdout.startswith("AASHTO_Batch ")
+
+
+def test_build_script_has_crlf_line_endings():
+    # cmd.exe mis-parses LF-only .bat files (labels/goto and quoted lines break)
+    raw = (Path(__file__).resolve().parents[1] / "build_batch_exe.bat").read_bytes()
+    assert raw.count(b"\n") == raw.count(b"\r\n") > 0
