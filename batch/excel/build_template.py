@@ -92,6 +92,11 @@ def default_text(col) -> str:
     return str(d)
 
 
+def text_result_columns() -> list[int]:
+    """0-based indices of the Results columns that hold text (formatted "@" so values stay text)."""
+    return [i for i, c in enumerate(C.RESULT_COLUMNS) if c.kind == "text"]
+
+
 class Builder:
     def __init__(self, xl, layout_only: bool):
         global pythoncom
@@ -240,6 +245,9 @@ class Builder:
                 prev = col.group
             ws.Cells(rh, n).Value = col.header
         n_r = len(C.RESULT_COLUMNS)
+        for i in text_result_columns():
+            L = col_letter(i + 1)
+            ws.Range(f"{L}{C.RESULTS_FIRST_DATA_ROW}:{L}{C.RESULTS_FIRST_DATA_ROW + N_DATA_ROWS - 1}").NumberFormat = "@"
         ws.Cells(rh - 1, n_r + 2).Value = MPHI_NOTE
         ws.Rows(rh - 1).Font.Bold = True
         ws.Rows(rh).Font.Bold = True

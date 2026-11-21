@@ -101,3 +101,32 @@ def test_bas_has_crlf():
     # VBComponents.Import mis-reads LF-only modules (Attribute VB_Name ends up as code)
     raw = (XL / "BatchRunner.bas").read_bytes()
     assert raw.count(b"\n") == raw.count(b"\r\n") > 0
+
+
+def _code():
+    return "\n".join(l for l in BAS.splitlines() if not l.strip().startswith("'"))
+
+
+def test_file_ops_unicode_safe():
+    # Final review I2: Dir$ / Kill use the ANSI code page and fail for paths outside it
+    code = _code()
+    assert not re.search(r"\bDir\$?\(", code) and not re.search(r"^\s*Kill\b", code, re.M)
+    assert "Scripting.FileSystemObject" in code and ".FileExists(" in code and ".DeleteFile" in code
+
+
+def test_results_text_columns_kept_as_text():
+    # Final review I1: Section ID "1-2" came back as 1 (Val on a text column)
+    imp = _proc("ImportResults")
+    assert 'NumberFormat = "@"' in imp or "NumberFormat = \"@\"" in imp
+    m = _builder_module()
+    assert [C.RESULT_COLUMNS[i].header for i in m.text_result_columns()] == \
+        [c.header for c in C.RESULT_COLUMNS if c.kind == "text"]
+    assert "text_result_columns()" in BUILDER.split("def build_results", 1)[1]
+
+
+def test_is_number_text_is_strict():
+    body = _proc("IsNumberText")
+    # a real number grammar, not "any mix of digits and +-.eE"
+    assert 'InStr(1, "+-.eE", ch)' not in body
+    for token in ("sign", "mant", "expo"):
+        assert token in body

@@ -182,3 +182,13 @@ def test_blank_unit_cells_use_converted_base_form():
     secs, errs = group_rows([HDR, row(**dict(RECT, h_total=2.5, b_flange=1.5, cover=0.2, shear_s=0.5))],
                             default_base_form({}, ft), ft)
     assert not errs and float(secs[0].form["at_add_s"]) == pytest.approx(1.0)
+
+
+def test_later_row_sets_value_blank_on_first_row_is_error():
+    # Final review I3: row 5 fy=75 on a section whose first row left fy blank (ASTM 60) was silently ignored
+    r1 = row(**RECT)
+    r2 = row(**{**RECT, "fy": 75, "Mu": 1000})
+    secs, errs = group_rows([HDR, r1, r2], base_form(), KIP_IN)
+    assert secs == [] and len(errs) == 1
+    e = errs[0]
+    assert e.row == 5 and e.section_id == "B1" and "fy" in e.message and "blank on the first row" in e.message

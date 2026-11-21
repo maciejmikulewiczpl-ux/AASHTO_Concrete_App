@@ -201,7 +201,11 @@ def group_rows(rows: list[list[str]], base_form: dict, units: dict):
                     except CellError as e:
                         err(f"{col.header}: {e}")
                         continue
-                    if col.key in first_vals[sid] and not _same(v, first_vals[sid][col.key]):
+                    if col.key not in first_vals[sid]:
+                        # the first row left it blank (default / ASTM value), so this value would be ignored
+                        err(f"{col.header}: set here but blank on the first row of section {sid} "
+                            f"(row {first_row[sid]}); put section properties on its first row")
+                    elif not _same(v, first_vals[sid][col.key]):
                         err(f"{col.header}: differs from the first row of section {sid} (row {first_row[sid]})")
                 continue
             if not text:

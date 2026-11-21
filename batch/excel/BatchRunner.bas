@@ -44,7 +44,7 @@ Public Sub RunBatch()
 
     exe = Trim$(SettingValue("Engine exe"))
     If exe = "" Then exe = folder & "\" & EXE_NAME
-    If Dir$(exe) = "" Then
+    If Not FileExists(exe) Then
         MsgBox "Engine not found:" & vbLf & exe & vbLf & vbLf & _
                "Put " & EXE_NAME & " next to the workbook, or set 'Engine exe' on the Settings sheet.", vbExclamation
         Exit Sub
@@ -73,14 +73,14 @@ Public Sub RunBatch()
     Do
         DoEvents
         Sleep POLL_MS
-        If Dir$(summaryPath) <> "" Then Exit Do
-        If Dir$(progressPath) <> "" Then
+        If FileExists(summaryPath) Then Exit Do
+        If FileExists(progressPath) Then
             txt = ReadUtf8(progressPath)
             If txt <> "" Then Application.StatusBar = "AASHTO batch: section " & Replace(Replace(txt, vbCr, ""), vbLf, " ")
         End If
         If Abs(Timer - t0) > 3 Then
             If ProcessCount(procName) = 0 Then gone = gone + 1 Else gone = 0
-            If gone >= 3 And Dir$(summaryPath) = "" Then
+            If gone >= 3 And Not FileExists(summaryPath) Then
                 Application.StatusBar = False
                 MsgBox "The engine stopped without writing a summary." & vbLf & "Command: " & cmd, vbCritical
                 Exit Sub
@@ -102,7 +102,7 @@ Private Sub ShowSummary(ByVal s As Object, ByVal resultsPath As String)
         MsgBox "The engine could not run:" & vbLf & s("message"), vbCritical
         Exit Sub
     End If
-    If Dir$(resultsPath) <> "" Then ImportResults resultsPath
+    If FileExists(resultsPath) Then ImportResults resultsPath
     msg = "Sections: " & s("sections") & vbLf & "Rows: " & s("rows") & vbLf & "Rows with errors: " & s("errors")
     If s("project") <> "" Then msg = msg & vbLf & vbLf & "Project file:" & vbLf & s("project")
     If s("project_error") <> "" Then msg = msg & vbLf & vbLf & s("project_error")
@@ -188,7 +188,7 @@ End Function
 Public Sub ImportResults(ByVal path As String)
     Dim ws As Worksheet, lines() As String, hdr() As String, f() As String
     Dim colOf() As Long, nTsv As Long, nRows As Long, maxCol As Long, lastRow As Long
-    Dim i As Long, j As Long, k As Long, data() As Variant, s As String, statusCol As Long
+    Dim i As Long, j As Long, k As Long, data() As Variant, s As String, statusCol As Long, isText() As Boolean
 
     Set ws = ThisWorkbook.Worksheets(SH_RESULTS)
     s = Replace(ReadUtf8(path), vbCrLf, vbLf)
@@ -231,12 +231,18 @@ Public Sub ImportResults(ByVal path As String)
     Next j
     nRows = UBound(lines) - 1
     If nRows < 1 Then Exit Sub
+    ' Text columns (Section ID, Status, Message...) are formatted "@" by the template builder: keep their
+    ' values as text so an ID like "1-2" or "001" is not turned into a number or a date.
+    ReDim isText(0 To nTsv - 1)
+    For j = 0 To nTsv - 1
+        isText(j) = (ws.Cells(RESULTS_FIRST_DATA_ROW, colOf(j)).NumberFormat = "@")
+    Next j
     ReDim data(1 To nRows, 1 To maxCol)
     For i = 1 To nRows
         f = Split(lines(i + 1), vbTab)
         For j = 0 To nTsv - 1
             If j <= UBound(f) Then
-                If IsNumberText(f(j)) Then data(i, colOf(j)) = Val(UCase$(f(j))) Else data(i, colOf(j)) = f(j)
+                If isText(j) Or Not IsNumberText(f(j)) Then data(i, colOf(j)) = f(j) Else data(i, colOf(j)) = Val(UCase$(f(j)))
             End If
         Next j
     Next i
@@ -255,20 +261,60 @@ Public Sub ImportResults(ByVal path As String)
     End If
 End Sub
 
-' True for plain decimal / exponent numbers ("12", "-0.5", "1.2e-05"); "inf", "nan", text -> False.
+' True only for a plain number: [sign] mantissa [e|E [sign] digits], mantissa = digits[.digits] or .digits.
+' "inf", "nan", "1-2", "3e", "--1" and any other text -> False.
 Private Function IsNumberText(ByVal s As String) As Boolean
-    Dim i As Long, ch As String, digits As Boolean
+    Dim i As Long, n As Long, ch As String, state As String, mant As Long, expo As Long
     s = Trim$(s)
-    If s = "" Then Exit Function
-    For i = 1 To Len(s)
+    n = Len(s)
+    If n = 0 Then Exit Function
+    state = "sign"
+    For i = 1 To n
         ch = Mid$(s, i, 1)
-        If ch Like "#" Then
-            digits = True
-        ElseIf InStr(1, "+-.eE", ch) = 0 Then
-            Exit Function
-        End If
+        Select Case state
+            Case "sign"   ' optional leading sign, then the mantissa
+                If ch = "+" Or ch = "-" Then
+                    state = "mant"
+                ElseIf ch Like "#" Then
+                    mant = mant + 1: state = "mant"
+                ElseIf ch = "." Then
+                    state = "frac"
+                Else
+                    Exit Function
+                End If
+            Case "mant"   ' integer digits
+                If ch Like "#" Then
+                    mant = mant + 1
+                ElseIf ch = "." Then
+                    state = "frac"
+                ElseIf (ch = "e" Or ch = "E") And mant > 0 Then
+                    state = "esign"
+                Else
+                    Exit Function
+                End If
+            Case "frac"   ' fraction digits
+                If ch Like "#" Then
+                    mant = mant + 1
+                ElseIf (ch = "e" Or ch = "E") And mant > 0 Then
+                    state = "esign"
+                Else
+                    Exit Function
+                End If
+            Case "esign"  ' optional exponent sign
+                If ch = "+" Or ch = "-" Then
+                    state = "expo"
+                ElseIf ch Like "#" Then
+                    expo = expo + 1: state = "expo"
+                Else
+                    Exit Function
+                End If
+            Case "expo"   ' exponent digits
+                If ch Like "#" Then expo = expo + 1 Else Exit Function
+        End Select
     Next i
-    IsNumberText = digits
+    If mant = 0 Then Exit Function
+    If state = "esign" Or (state = "expo" And expo = 0) Then Exit Function
+    IsNumberText = True
 End Function
 
 Private Function ReadSummary(ByVal path As String) As Object
@@ -310,8 +356,16 @@ Private Function ReadUtf8(ByVal path As String) As String
 Done:
 End Function
 
+' Scripting.FileSystemObject is Unicode-safe; Dir / Kill go through the ANSI code page and miss
+' paths with characters outside it.
+Private Function FileExists(ByVal path As String) As Boolean
+    FileExists = CreateObject("Scripting.FileSystemObject").FileExists(path)
+End Function
+
 Private Sub KillIfExists(ByVal path As String)
-    If Dir$(path) <> "" Then Kill path
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FileExists(path) Then fso.DeleteFile path, True
 End Sub
 
 Private Function ProcessCount(ByVal exeName As String) As Long
