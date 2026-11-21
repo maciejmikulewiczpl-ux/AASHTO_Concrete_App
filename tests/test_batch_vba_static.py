@@ -95,3 +95,9 @@ def test_macro_and_builder_are_ascii():
 def test_template_bat_has_crlf():
     raw = (XL / "build_template.bat").read_bytes()
     assert raw.count(b"\n") == raw.count(b"\r\n") > 0
+
+
+def test_bas_has_crlf():
+    # VBComponents.Import mis-reads LF-only modules (Attribute VB_Name ends up as code)
+    raw = (XL / "BatchRunner.bas").read_bytes()
+    assert raw.count(b"\n") == raw.count(b"\r\n") > 0

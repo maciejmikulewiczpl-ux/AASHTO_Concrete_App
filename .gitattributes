@@ -1,2 +1,3 @@
 build_batch_exe.bat text eol=crlf
 batch/excel/build_template.bat text eol=crlf
+batch/excel/BatchRunner.bas text eol=crlf
