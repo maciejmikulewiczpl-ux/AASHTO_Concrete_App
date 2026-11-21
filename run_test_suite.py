@@ -47,7 +47,9 @@ PYTEST_STAGES = [
                                           "tests/test_batch_project.py",
                                           "tests/test_batch_sheet_io.py",
                                           "tests/test_batch_runner.py",
-                                          "tests/test_batch_cli.py"]),
+                                          "tests/test_batch_cli.py",
+                                          "tests/test_batch_vba_static.py",
+                                          "tests/test_project_run_options.py"]),
 ]
 
 # Stage 2: existing standalone scripts at project root (kept for back-compat).

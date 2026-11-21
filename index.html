@@ -1652,6 +1652,7 @@ function saveProjectQuick(){
   try{ readOptParamsFromDOM(); }catch(e){}
   const project={version:1,activeSection:activeSection,sections:sections,optParams:optParams,displayUnits:displayUnits};
   project.columnShaft=(window.ColShaft? window.ColShaft.getState(): undefined);
+  project.runOptions=getRunOptions();
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project_to_path){
     window.pywebview.api.save_project_to_path(json, currentFilePath).then(res=>{
@@ -1673,7 +1674,8 @@ function saveProject(){
     sections:sections,
     optParams:optParams,
     columnShaft:(window.ColShaft? window.ColShaft.getState(): undefined),
-    displayUnits:displayUnits
+    displayUnits:displayUnits,
+    runOptions:getRunOptions()
   };
   const json=JSON.stringify(project,null,2);
   if(window.pywebview && window.pywebview.api && window.pywebview.api.save_project){
@@ -1728,6 +1730,29 @@ function loadProject(){
   }
 }
 
+// Run options stored in the project file (same shape as the Excel batch runner writes):
+// shear capacity used for D/C, and the moment-curvature options.
+function getRunOptions(){
+  const g=id=>document.getElementById(id);
+  return {shearCapacityMethod:shearCapacityMethod,
+          mphi:{model:g('mphi_materials').value,expected_concrete:!!g('mphi_exp_c').checked,expected_steel:!!g('mphi_exp_s').checked}};
+}
+function applyRunOptions(ro){
+  // Each value is restored only when present and valid; files without runOptions load unchanged.
+  if(!ro||typeof ro!=='object') return;
+  if(['gp','simp','b5'].includes(ro.shearCapacityMethod)){
+    shearCapacityMethod=ro.shearCapacityMethod;
+    const sel=document.getElementById('shearCapSelect'); if(sel) sel.value=shearCapacityMethod;
+  }
+  const m=ro.mphi;
+  if(m&&typeof m==='object'){
+    if(['service','confined','sgs'].includes(m.model)) document.getElementById('mphi_materials').value=m.model;
+    if(typeof m.expected_concrete==='boolean') document.getElementById('mphi_exp_c').checked=m.expected_concrete;
+    if(typeof m.expected_steel==='boolean') document.getElementById('mphi_exp_s').checked=m.expected_steel;
+    mphiModelChanged();  // locks the expected boxes for SGS; re-runs only if an M-phi result is shown
+  }
+}
+
 function applyProjectData(data){
   sections=data.sections||{};
   const names=Object.keys(sections);
@@ -1754,6 +1779,7 @@ function applyProjectData(data){
     });
     try{ localStorage.setItem('displayUnits', JSON.stringify(displayUnits)); }catch(e){}
   }
+  applyRunOptions(data.runOptions);
   loadSectionState(activeSection);
   if(window.ColShaft) window.ColShaft.setState(data.columnShaft||null);
   updateSectionDropdown();

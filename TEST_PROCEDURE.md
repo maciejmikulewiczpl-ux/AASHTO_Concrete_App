@@ -156,6 +156,25 @@ Regenerate the seismic-port golden only for an intended, reviewed change:
 "C:\Users\macie\VSC\Seismic Column\.venv\Scripts\python.exe" -I tools/make_seismic_golden.py "C:\Users\macie\VSC\Seismic Column" tests/golden/seismic_port_golden.json
 ```
 
+### Excel batch stage (added 2026-11-21)
+
+`Pytest:  excel batch runner` covers `batch/` (the engine behind `AASHTO_Batch_Template.xlsm`):
+
+- `test_batch_form.py`, `test_batch_project.py`, `test_batch_sheet_io.py`: form defaults and units,
+  project-file writer, TSV parsing / row grouping / validation.
+- `test_batch_inputs_parity.py`: the Python port of `gatherInputs()` against the app's own JavaScript,
+  run by `tests/batch_parity_harness.js` under Node (skipped without `node`).
+- `test_batch_runner.py`, `test_batch_cli.py`: whole runs (result columns, errors per row, project file),
+  the `batch_runner.py` CLI, and CRLF line endings of `build_batch_exe.bat`. The strict xfail
+  `test_row_and_active_flexure_mr_agree` pins engine finding BT2 (OPEN_VERIFICATION_ITEMS.md).
+- `test_batch_vba_static.py`: static checks of `batch/excel/BatchRunner.bas` and the template builder
+  (locale-safe Str / Val exchange, quoted paths, layout constants = `batch/columns.py`, ASCII, CRLF).
+- `test_project_run_options.py`: the app saves / restores `project.runOptions` (shear method, M-phi options).
+
+Not covered automatically: running the macro inside Excel. Manual check: `build_batch_exe.bat`, then
+`batch\excel\build_template.bat` (needs Excel's "Trust access to the VBA project object model"), copy
+`dist\AASHTO_Batch.exe` next to the workbook, fill rows of the three section types, and press Run.
+
 ### Sign conventions to know
 Two engine-internal sign conventions surfaced during the May 2026
 verification cleanup:
