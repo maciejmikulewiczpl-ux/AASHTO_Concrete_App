@@ -90,3 +90,20 @@ def test_bars_and_kinds_match_index_html():
 def test_unit_factor(kind, units, expected):
     assert form.unit_factor(kind, units) == pytest.approx(expected)
     assert form.to_engine(form.from_engine(7.5, kind, units), kind, units) == pytest.approx(7.5)
+
+
+def test_non_prestressed_class_zeroes_pt_fields_like_updatePTFields():
+    # updatePTFields (index.html): NP -> strand_area, n_strands, duct_dia set to '0' (dp_input untouched)
+    f = form.apply_section_class(dict(form.FORM_DEFAULTS))
+    assert f["n_strands"] == "0" and f["strand_area"] == "0" and f["duct_dia"] == "0"
+    assert f["dp_input"] == form.FORM_DEFAULTS["dp_input"]
+    pt = form.apply_section_class(dict(form.FORM_DEFAULTS, sectionClass="CIP_PT", n_strands="0"))
+    assert pt["n_strands"] == "10"  # restored from PT_DEFAULTS when switching back to a PT class
+    assert "PT_DEFAULTS={strand_area:'0.217',n_strands:'10',dp_input:'15.5',duct_dia:'6'}" in HTML
+
+
+def test_form_defaults_converted_to_display_units():
+    ft = form.form_defaults_for({"force": "kip", "length": "ft"})
+    assert float(ft["at_add_s"]) == pytest.approx(1.0) and float(ft["h_total"]) == pytest.approx(27.5 / 12)
+    assert float(ft["Es"]) == pytest.approx(29000 * 144) and ft["d_top_override"] == ""
+    assert form.form_defaults_for({"force": "kip", "length": "in"}) == form.FORM_DEFAULTS

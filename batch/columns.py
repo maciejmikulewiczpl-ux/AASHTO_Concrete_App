@@ -143,7 +143,79 @@ SETTINGS_ROWS += [
 RUN_KEYS = ("shear_method", "mphi_model", "mphi_exp_c", "mphi_exp_s", "project_path", "overwrite_project",
             "engine_exe", "unit_force", "unit_length")
 
-RESULT_COLUMNS: list = []  # defined in Task 5
+class RCol(NamedTuple):
+    header: str
+    source: str   # dotted path into {"res", "row", "mphi", "calc"} (see batch.runner)
+    kind: str     # unit kind for display conversion, "fixed:<label>" (no conversion), or "text"
+    group: str = ""
+
+
+def _r(group, *cols):
+    return [RCol(h, s, k, group) for h, s, k in cols]
+
+
+RESULT_COLUMNS: list[RCol] = (
+    _r("Row", ("Section ID", "calc.section_id", "text"), ("Input row", "calc.input_row", "text"),
+       ("Status", "calc.status", "text"), ("Message", "calc.message", "text"))
+    + _r("Flexure",
+         ("Mr", "row.Mr", "moment"), ("Mn", "res.flexure.Mn", "moment"), ("φf", "res.flexure.phi_f", "dimensionless"),
+         ("c", "res.flexure.c", "length"), ("a", "res.flexure.a", "length"), ("ds", "res.flexure.ds", "length"),
+         ("dt", "res.flexure.dt", "length"), ("εt", "res.flexure.eps_t", "dimensionless"),
+         ("As (tension)", "res.flexure.As", "area"), ("Mcr", "res.flexure.Mcr", "moment"),
+         ("Min. flexural steel OK", "res.flexure.min_flex_ok", "text"),
+         ("Mr at Pu", "res.flexure.Mr_atPu", "moment"), ("D/C flexure", "calc.dc_M", "dimensionless"),
+         ("Flexure status", "row.flexStatus", "text"))
+    + _r("Shear",
+         ("Shear method", "calc.shear_method", "text"), ("Vr (selected)", "calc.Vr", "force"),
+         ("Vr simplified", "row.Vr1", "force"), ("Vr general", "row.Vr2", "force"), ("Vr B5", "row.Vr3", "force"),
+         ("dv", "res.shear.dv", "length"), ("bv", "res.shear.bv", "length"),
+         ("β", "calc.beta", "dimensionless"), ("θ", "calc.theta", "fixed:deg"),
+         ("Vc", "calc.Vc", "force"), ("Vs", "calc.Vs", "force"), ("εs", "res.shear.eps_s", "dimensionless"),
+         ("Vn,max", "res.shear.Vnmax", "force"), ("Av,min", "res.shear.Av_min", "area"),
+         ("Has min. Av", "res.shear.has_min_av", "text"), ("s,max", "res.shear.s_max_sh", "length"),
+         ("D/C shear", "calc.dc_V", "dimensionless"),
+         ("Long. steel D/C (V)", "calc.long_dc", "dimensionless"), ("Long. steel OK (V)", "calc.long_ok", "text"),
+         ("Shear status (engine, GP)", "row.shearStatus", "text"))
+    + _r("Torsion",
+         ("Torsion considered", "res.torsion.consider", "text"), ("Tcr", "res.torsion.Tcr", "moment"),
+         ("Torsion threshold", "res.torsion.thresh", "moment"), ("Tr", "res.torsion.Tr", "moment"),
+         ("At/s design", "res.torsion.At_s_design", "area_per_length"),
+         ("Long. V+T demand","res.torsion.long_dem_comb", "force"),
+         ("Long. V+T capacity", "res.torsion.long_cap_val", "force"),
+         ("Long. V+T OK", "res.torsion.long_comb_ok", "text"), ("D/C torsion", "calc.dc_T", "dimensionless"))
+    + _r("Crack control / service",
+         ("fss", "res.flexure.fss_used", "stress"), ("s,max crack", "res.flexure.s_crack", "length"),
+         ("s actual", "res.flexure.s_crack_actual", "length"), ("Crack status", "row.crackStatus", "text"),
+         ("Icr", "res.flexure.Icr", "fixed:in⁴"), ("Ieff", "res.flexure.Ieff", "fixed:in⁴"),
+         ("Ig", "res.flexure.Ig", "fixed:in⁴"))
+    + _r("Moment-curvature",
+         ("M-φ model", "mphi.model", "text"),
+         ("Ieff (M-φ, at Ms)", "mphi.service.Ieff", "fixed:in⁴"),
+         ("Ieff/Ig (M-φ, at Ms)", "calc.mphi_Ieff_Ig_service", "dimensionless"),
+         ("EI at Ms", "mphi.service.EI", "fixed:kip-in²"),
+         ("My (first yield)", "mphi.first_yield.M", "moment"), ("φy (first yield)", "mphi.first_yield.phi", "fixed:1/in"),
+         ("Mp (idealised)", "mphi.idealised.Mp", "moment"), ("φy (idealised)", "mphi.idealised.phi_y", "fixed:1/in"),
+         ("EI idealised", "mphi.idealised.EI", "fixed:kip-in²"),
+         ("φu", "mphi.ultimate.phi", "fixed:1/in"), ("Ultimate limit", "mphi.ultimate.failure", "text"),
+         ("μφ", "mphi.idealised.mu_phi", "dimensionless"), ("Mcr (M-φ)", "mphi.cracking.M", "moment"),
+         ("M-φ note", "calc.mphi_note", "text"))
+)
+
+UNIT_LABELS = {  # unitLabel (index.html ~4186), keyed by force|length
+    "force": {"kip|in": "kip", "kip|ft": "kip", "lbf|in": "lbf", "lbf|ft": "lbf"},
+    "length": {"kip|in": "in", "kip|ft": "ft", "lbf|in": "in", "lbf|ft": "ft"},
+    "stress": {"kip|in": "ksi", "kip|ft": "ksf", "lbf|in": "psi", "lbf|ft": "psf"},
+    "moment": {"kip|in": "kip-in", "kip|ft": "kip-ft", "lbf|in": "lbf-in", "lbf|ft": "lbf-ft"},
+    "area": {"kip|in": "in²", "kip|ft": "ft²", "lbf|in": "in²", "lbf|ft": "ft²"},
+    "area_per_length": {"kip|in": "in²/in", "kip|ft": "ft²/ft", "lbf|in": "in²/in", "lbf|ft": "ft²/ft"},
+    "unit_weight": {"kip|in": "kcf", "kip|ft": "kcf", "lbf|in": "pcf", "lbf|ft": "pcf"},
+}
+
+
+def unit_label(kind: str, units: dict) -> str:
+    if kind.startswith("fixed:"):
+        return kind[6:]
+    return UNIT_LABELS.get(kind, {}).get(f"{units['force']}|{units['length']}", "")
 
 
 def _col_dict(c) -> dict:
@@ -158,6 +230,7 @@ def columns_json() -> str:
         "input": [_col_dict(c) for c in INPUT_COLUMNS],
         "settings": [_col_dict(c) for c in SETTINGS_ROWS],
         "results": [_col_dict(c) for c in RESULT_COLUMNS],
+        "unit_labels": UNIT_LABELS,
         "layout": {"input_header_row": INPUT_HEADER_ROW, "input_first_data_row": INPUT_FIRST_DATA_ROW,
                    "settings_first_row": SETTINGS_FIRST_ROW, "results_header_row": RESULTS_HEADER_ROW,
                    "results_first_data_row": RESULTS_FIRST_DATA_ROW},

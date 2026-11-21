@@ -90,3 +90,40 @@ def from_engine(v: float, kind: str, units: dict) -> float:
 
 def to_engine(v: float, kind: str, units: dict) -> float:
     return v / unit_factor(kind, units)
+
+
+# PT_DEFAULTS (index.html ~8362) and updatePTFields(): a Non-Prestressed class zeroes the strand
+# inputs (dp_input is left to its mode select); a PT class restores a '0' field to its default.
+PT_DEFAULTS = {"strand_area": "0.217", "n_strands": "10", "dp_input": "15.5", "duct_dia": "6"}
+
+
+def apply_section_class(form: dict) -> dict:
+    """The form after the page's updatePTFields() ran for form['sectionClass']."""
+    f = dict(form)
+    is_np = f.get("sectionClass") == "NP"
+    for k, dflt in PT_DEFAULTS.items():
+        if k == "dp_input":
+            continue
+        if is_np:
+            f[k] = "0"
+        elif f.get(k) == "0" and dflt != "0":
+            f[k] = dflt
+    return f
+
+
+def js_num_str(v: float) -> str:
+    """String(number) as the page writes numbers into fields (integers without '.0')."""
+    return str(int(v)) if float(v).is_integer() else repr(float(v))
+
+
+def form_defaults_for(units: dict) -> dict:
+    """FORM_DEFAULTS as the page shows them in `units`: the unit switcher converts every
+    INPUT_FIELD_KINDS field (engine kip/in/ksi defaults -> display units)."""
+    f = dict(FORM_DEFAULTS)
+    for k, v in FORM_DEFAULTS.items():
+        kind = FIELD_KINDS.get(k)
+        if not kind or kind == "dimensionless" or v in ("", None) or isinstance(v, bool):
+            continue
+        if unit_factor(kind, units) != 1.0:
+            f[k] = js_num_str(from_engine(float(v), kind, units))
+    return f

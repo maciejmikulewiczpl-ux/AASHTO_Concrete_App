@@ -10,9 +10,11 @@ from dataclasses import dataclass, field
 
 from batch.columns import (ASTM_FY, DEMAND_KEYS, INPUT_COLUMNS, INPUT_FIRST_DATA_ROW, RUN_KEYS,
                            SETTINGS_ROWS, Col)
-from batch.form import FORM_DEFAULTS, from_engine, to_engine
+from batch.form import (DEFAULT_UNITS, apply_section_class, form_defaults_for, from_engine, js_num_str,
+                        to_engine)
 
 NUMERIC_KINDS = {"length", "stress", "force", "moment", "dimensionless", "unit_weight"}
+UNIT_KINDS = NUMERIC_KINDS - {"dimensionless"}
 POSITIVE_KEYS = {"fc", "b_flange", "h_total", "b_web", "circ_D"}
 SIGNED_KEYS = set(DEMAND_KEYS)
 _TRUE = {"true", "1", "yes", "y"}
@@ -46,11 +48,6 @@ def read_tsv(path: str) -> list[list[str]]:
     while lines and lines[-1] == "":
         lines.pop()
     return [ln.split("\t") for ln in lines]
-
-
-def js_num_str(v: float) -> str:
-    """String(number) for the values the app writes into fields (integers without '.0')."""
-    return str(int(v)) if float(v).is_integer() else repr(v)
 
 
 def parse_bool(text) -> bool:
@@ -115,10 +112,16 @@ def parse_settings(rows: list[list[str]]) -> tuple[dict, dict, dict]:
         if r and r[0].strip():
             by_label[r[0].strip().lower()] = r[1] if len(r) > 1 else ""
     vals = {}
-    for col in SETTINGS_ROWS:
+    unit_cols = [c for c in SETTINGS_ROWS if c.key in ("unit_force", "unit_length")]
+    rest = [c for c in SETTINGS_ROWS if c not in unit_cols]
+    for col in unit_cols + rest:  # units first: blank unit-bearing defaults are converted to them
         raw = by_label.get(col.header.lower(), "")
         if str(raw).strip() == "":
-            vals[col.key] = col.default
+            if col.kind in UNIT_KINDS and col.default not in ("", None):
+                u = {"force": vals["unit_force"], "length": vals["unit_length"]}
+                vals[col.key] = js_num_str(from_engine(float(col.default), col.kind, u))
+            else:
+                vals[col.key] = col.default
             continue
         try:
             vals[col.key] = parse_cell(col, raw)
@@ -207,8 +210,8 @@ def group_rows(rows: list[list[str]], base_form: dict, units: dict):
                 elif col.key in ("fy", "fy_trans"):
                     sec.form[col.key] = _astm_fy(base_form, units)
                     sec.form[col.key + "_ovr"] = False
-                elif col.default is not None:
-                    sec.form[col.key] = col.default
+                elif col.kind not in UNIT_KINDS and col.default is not None:
+                    sec.form[col.key] = col.default  # unit-bearing blanks keep the converted base form
                 continue
             try:
                 v = parse_cell(col, text)
@@ -237,7 +240,7 @@ def group_rows(rows: list[list[str]], base_form: dict, units: dict):
     return good, errors
 
 
-def default_base_form(settings_form: dict) -> dict:
-    f = dict(FORM_DEFAULTS)
+def default_base_form(settings_form: dict, units: dict = DEFAULT_UNITS) -> dict:
+    f = form_defaults_for(units)
     f.update(settings_form)
-    return f
+    return apply_section_class(f)  # NP: the page zeroes the strand inputs (updatePTFields)

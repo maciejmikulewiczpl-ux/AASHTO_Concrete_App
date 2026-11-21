@@ -162,3 +162,23 @@ def test_columns_json_round_trip():
     assert [c["key"] for c in d["input"]] == [c.key for c in C.INPUT_COLUMNS]
     assert d["layout"]["input_first_data_row"] == C.INPUT_FIRST_DATA_ROW
     assert {"settings", "results"} <= set(d)
+
+
+def test_sections_are_non_prestressed():
+    from batch.sheet_io import default_base_form
+    secs, _ = group_rows([HDR, row(**RECT), row(**CIRC)], default_base_form({}), KIP_IN)
+    assert all(s.form["n_strands"] == "0" and s.form["strand_area"] == "0" for s in secs)
+
+
+def test_settings_unit_defaults_follow_units():
+    lab = {c.key: c.header for c in C.SETTINGS_ROWS}
+    form, units, _ = parse_settings([["Setting", "Value"], [lab["unit_force"], "lbf"]])
+    assert float(form["Es"]) == pytest.approx(29000 * 1000) and float(form["ag"]) == pytest.approx(0.75)
+
+
+def test_blank_unit_cells_use_converted_base_form():
+    from batch.sheet_io import default_base_form
+    ft = {"force": "kip", "length": "ft"}
+    secs, errs = group_rows([HDR, row(**dict(RECT, h_total=2.5, b_flange=1.5, cover=0.2, shear_s=0.5))],
+                            default_base_form({}, ft), ft)
+    assert not errs and float(secs[0].form["at_add_s"]) == pytest.approx(1.0)
