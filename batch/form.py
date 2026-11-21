@@ -30,6 +30,7 @@ FORM_DEFAULTS: dict[str, str | bool] = {
     "circ_trans_type": "hoop", "circ_hoop_closure": "hooked", "circ_tie_legs": "0", "circ_tie_bar": "4",
     # Prestressing (read by gatherInputs; not used by the batch, kept at defaults)
     "n_strands": "10", "strand_area": "0.217", "dp_input": "15.5", "fpe_input": "0", "duct_dia": "6",
+    "dp_mode": "layout", "fpe_mode": "layout",
     "pt_bonded": "true", "pt_temp_comp_case": "general", "pt_temp_tens_case": "bonded",
     "pt_srv3_tens_case": "moderate", "pt_phi_w": "1.00", "pt_fci_chk": "4.0", "pt_fci": "4.0",
     # Service
